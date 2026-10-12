@@ -24,22 +24,26 @@ MAX_RETRIES = 3
 RETRY_BASE_DELAY = 15.0  # Base delay for exponential backoff (seconds): 15s, 30s, 60s
 
 
-def _get_valid_token(
+def get_valid_token(
     db: DbSession,
     user_id: UUID,
     provider_name: str,
     connection_repo: UserConnectionRepository,
     oauth: BaseOAuthTemplate,
+    *,
+    revoke_on_failure: bool = True,
 ) -> str:
     """Get a valid access token, refreshing if necessary.
 
-    Private function used internally by make_authenticated_request.
+    Used by make_authenticated_request and by calls that send the token outside
+    of it, e.g. provider deregistration.
 
     Which account's token this is depends on the caller: inside an
     :func:`~app.utils.connection_context.active_connection` scope - what the sync
     task and the webhook handlers establish - it is that account's. Outside one,
     for a user holding several accounts with the provider, the repository picks
-    the oldest and logs it.
+    the oldest and logs it. A caller acting on one known account (deregistering
+    it, checking its grant) must bind that scope.
     """
     connection = connection_repo.get_by_user_and_provider(db, user_id, provider_name)
     if not connection:
@@ -102,7 +106,9 @@ def _get_valid_token(
             # binding the scope here keeps it on the row whose refresh token we
             # just read instead of letting it pick a different account.
             with active_connection(connection.id):
-                token_response = oauth.refresh_access_token(db, user_id, connection.refresh_token)
+                token_response = oauth.refresh_access_token(
+                    db, user_id, connection.refresh_token, revoke_on_failure=revoke_on_failure
+                )
             return token_response.access_token
 
     return connection.access_token
@@ -162,7 +168,7 @@ def make_authenticated_request(
         raise ValueError("form_data and json_data are mutually exclusive")
 
     # Get valid token (will auto-refresh if needed)
-    access_token = _get_valid_token(db, user_id, provider_name, connection_repo, oauth)
+    access_token = get_valid_token(db, user_id, provider_name, connection_repo, oauth)
 
     # Prepare headers
     request_headers = {
@@ -322,7 +328,7 @@ def download_binary_content(
     The URL may contain additional auth params (e.g. token=...) alongside the Bearer header.
     Retries up to MAX_RETRIES times on 429 with exponential backoff.
     """
-    access_token = _get_valid_token(db, user_id, provider_name, connection_repo, oauth)
+    access_token = get_valid_token(db, user_id, provider_name, connection_repo, oauth)
     headers = {"Authorization": f"Bearer {access_token}"}
 
     for attempt in range(MAX_RETRIES + 1):

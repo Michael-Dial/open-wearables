@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -666,6 +667,18 @@ class TestActivitySummaryPerAccount:
 
 class TestActivitySummaryEndpoint:
     """Test suite for activity summaries endpoint."""
+
+    @pytest.mark.parametrize("start_date", ["inf", "-inf", "1e20"])
+    def test_out_of_range_numeric_date_returns_400(self, client: TestClient, db: Session, start_date: str) -> None:
+        user = UserFactory()
+
+        response = client.get(
+            f"/api/v1/users/{user.id}/summaries/activity",
+            headers=api_key_headers(ApiKeyFactory().plain_key),
+            params={"start_date": start_date, "end_date": "2026-10-12"},
+        )
+
+        assert response.status_code == 400
 
     def test_get_activity_summary_empty(self, client: TestClient, db: Session) -> None:
         """Test activity summary returns empty data when no data points exist."""

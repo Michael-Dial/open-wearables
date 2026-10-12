@@ -10,6 +10,7 @@ from app.services.providers.garmin.backfill_state import (
 
 from .archival_task import run_daily_archival
 from .close_stale_sync_runs_task import close_stale_sync_runs
+from .delete_user_webhook_payloads_task import delete_user_webhook_payloads
 from .detect_device_switches_task import detect_device_switches
 from .emit_webhook_event_task import emit_webhook_event
 from .extension_events_task import dispatch_extension_events
@@ -79,4 +80,5 @@ __all__ = [
     "send_telemetry_ping",
     # Outgoing webhooks
     "emit_webhook_event",
+    "delete_user_webhook_payloads",
 ]

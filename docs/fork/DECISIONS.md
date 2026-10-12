@@ -1107,3 +1107,21 @@ then tell the watch's own data from an app's.
   into startup: a row keeps no HealthKit type, so the script finds wrist temperature by
   its Apple Watch data source (see its docstring), and that rule should be checked with
   `--dry-run` against a deployment before applying.
+
+## Disconnect, deregistration and stale-ping checks act on one account
+
+- **Area**: backend
+- **Status**: active, upstreamable
+- **On conflict**: reconcile (keep `connection_id` scoping in `UserConnectionRepository.disconnect`,
+  the `connection` argument to `deregister_from_provider`, and the `active_connection` scope in
+  `garmin/handlers/lifecycle._current_grant_is_active`)
+- **Why**: two upstream fixes assumed one account per provider. #1814 clears tokens on
+  disconnect and refreshes an expired token before deregistering; its token clearing matched
+  (user, provider), so disconnecting one of a participant's two Garmin accounts would have wiped
+  the other's tokens and stopped it syncing. #1822 asks Garmin whether the current grant is still
+  active before honouring a deregistration ping; it fetched the token by (user, provider), so a
+  stale ping for the newer account would be checked with the older one's token, mismatch, and
+  revoke an account still connected. Both now act on the named account: the token clearing is
+  scoped like the revoke, deregistration fetches each account's own token, user deletion
+  deregisters each account with its own, and the grant check runs in the pinged account's scope.
+  Tests for each fail without the change.
