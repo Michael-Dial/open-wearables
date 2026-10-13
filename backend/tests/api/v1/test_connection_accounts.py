@@ -6,8 +6,11 @@ one of several accounts: relabel it, correct the e-mail that records where its
 data came from, or drop it without touching the device worn beside it.
 """
 
+from collections.abc import Generator
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -151,9 +154,21 @@ class TestUpdate:
         assert response.status_code == 404
 
 
+@pytest.fixture
+def mock_deregistration() -> Generator[MagicMock, None, None]:
+    """Disconnect calls the provider's deregistration endpoint; keep it off the network."""
+    with patch("httpx.delete") as mock:
+        yield mock
+
+
 class TestDisconnectOne:
     def test_disconnecting_one_account_leaves_the_other_active(
-        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+        self,
+        client: TestClient,
+        db: Session,
+        user: User,
+        api_key_header: dict[str, str],
+        mock_deregistration: MagicMock,
     ) -> None:
         left = UserConnectionFactory(user=user, provider="garmin", provider_user_id="g-left")
         right = UserConnectionFactory(user=user, provider="garmin", provider_user_id="g-right")
@@ -166,9 +181,15 @@ class TestDisconnectOne:
         db.refresh(right)
         assert left.status == ConnectionStatus.REVOKED
         assert right.status == ConnectionStatus.ACTIVE
+        assert mock_deregistration.call_count == 1
 
     def test_the_provider_route_still_disconnects_every_account(
-        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+        self,
+        client: TestClient,
+        db: Session,
+        user: User,
+        api_key_header: dict[str, str],
+        mock_deregistration: MagicMock,
     ) -> None:
         left = UserConnectionFactory(user=user, provider="garmin", provider_user_id="g-left")
         right = UserConnectionFactory(user=user, provider="garmin", provider_user_id="g-right")
@@ -181,3 +202,4 @@ class TestDisconnectOne:
         db.refresh(right)
         assert left.status == ConnectionStatus.REVOKED
         assert right.status == ConnectionStatus.REVOKED
+        assert mock_deregistration.call_count == 2
