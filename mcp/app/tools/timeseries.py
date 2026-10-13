@@ -115,7 +115,11 @@ async def get_timeseries(
         - "pulse_to_pulse_interval" holds optical beat-to-beat intervals (Apple
           Watch heartbeat series, Polar PPI), one sample per beat in ms. A sample
           with `preceded_by_gap: true` spans a gap in the recording and is not a
-          beat interval: exclude it before computing HRV from the intervals.
+          beat interval: exclude it before computing HRV from the intervals. The
+          summary already leaves those values out (`gap_spanning_excluded`).
+          `beat_series_id` appears on a beat only where the series changes; a
+          beat without it belongs to the series last named by a beat from the
+          same source.
     """
     try:
         # Fetch user details
@@ -131,6 +135,8 @@ async def get_timeseries(
 
         # Walk cursor pagination until exhausted or safety ceiling hit.
         records: list[dict[str, Any]] = []
+        # Last beat series named per source: a beat row names its series only where it changes.
+        last_series_by_source: dict[Any, str] = {}
         cursor: str | None = None
         truncated = False
         for _ in range(_MAX_PAGES):
@@ -152,7 +158,12 @@ async def get_timeseries(
                     "unit": sample.get("unit"),
                     "source": source.get("provider") if isinstance(source, dict) else source,
                 }
-                # Only on the beat rows that need it, so a raw beat-to-beat pull stays small.
+                # Beat fields only where they say something, so a raw beat-to-beat pull stays
+                # small: the series id where it changes, the gap flag where it is set.
+                series_id = sample.get("beat_series_id")
+                if series_id and last_series_by_source.get(record["source"]) != series_id:
+                    record["beat_series_id"] = series_id
+                    last_series_by_source[record["source"]] = series_id
                 if sample.get("preceded_by_gap") is True:
                     record["preceded_by_gap"] = True
                 records.append(record)
@@ -164,10 +175,15 @@ async def get_timeseries(
 
         # Per-type aggregates
         by_type: dict[str, dict[str, Any]] = {}
+        gap_spanning: dict[str, int] = {}
         for rec in records:
             series_type = rec["type"]
             value = rec["value"]
             if series_type is None or value is None:
+                continue
+            # A gap-spanning beat value is not a beat interval; keep the row, not its value.
+            if rec.get("preceded_by_gap"):
+                gap_spanning[series_type] = gap_spanning.get(series_type, 0) + 1
                 continue
             bucket = by_type.setdefault(
                 series_type,
@@ -186,6 +202,7 @@ async def get_timeseries(
                 "avg": round(bucket["sum"] / bucket["count"], 2) if bucket["count"] else None,
                 "min": bucket["min"],
                 "max": bucket["max"],
+                **({"gap_spanning_excluded": gap_spanning[series_type]} if series_type in gap_spanning else {}),
             }
             for series_type, bucket in by_type.items()
         }

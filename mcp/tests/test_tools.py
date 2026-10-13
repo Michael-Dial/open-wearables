@@ -381,7 +381,7 @@ async def test_get_menstrual_cycles_handles_empty_data(httpx_mock: HTTPXMock) ->
 
 
 async def test_get_timeseries_flags_gap_spanning_beats_only(httpx_mock: HTTPXMock) -> None:
-    """A beat whose interval spans a recording gap says so; ordinary beats stay compact."""
+    """Beat fields appear only where they carry information, and gap-spanning values stay out of the summary."""
     httpx_mock.add_response(method="GET", url=f"https://api.test.com/api/v1/users/{USER_ID}", json=USER_PAYLOAD)
     beat = {"type": "pulse_to_pulse_interval", "unit": "ms", "source": {"provider": "apple"}}
     httpx_mock.add_response(
@@ -389,8 +389,16 @@ async def test_get_timeseries_flags_gap_spanning_beats_only(httpx_mock: HTTPXMoc
         url=re.compile(rf"https://api\.test\.com/api/v1/users/{USER_ID}/timeseries.*"),
         json={
             "data": [
-                {**beat, "timestamp": "2026-10-12T07:14:15.050Z", "value": 840.0, "preceded_by_gap": False},
-                {**beat, "timestamp": "2026-10-12T07:14:22.400Z", "value": 6520.0, "preceded_by_gap": True},
+                {**beat, "timestamp": "2026-10-12T07:14:15.050Z", "value": 840.0, "beat_series_id": "A"},
+                {**beat, "timestamp": "2026-10-12T07:14:15.880Z", "value": 830.0, "beat_series_id": "A"},
+                {
+                    **beat,
+                    "timestamp": "2026-10-12T07:14:22.400Z",
+                    "value": 6520.0,
+                    "beat_series_id": "A",
+                    "preceded_by_gap": True,
+                },
+                {**beat, "timestamp": "2026-10-12T07:19:15.000Z", "value": 850.0, "beat_series_id": "B"},
             ],
             "pagination": {"next_cursor": None},
         },
@@ -403,5 +411,11 @@ async def test_get_timeseries_flags_gap_spanning_beats_only(httpx_mock: HTTPXMoc
         types=["pulse_to_pulse_interval"],
     )
 
-    assert [r.get("preceded_by_gap") for r in result["records"]] == [None, True]
-    assert "preceded_by_gap" not in result["records"][0]
+    records = result["records"]
+    assert [r.get("beat_series_id") for r in records] == ["A", None, None, "B"]
+    assert [r.get("preceded_by_gap") for r in records] == [None, None, True, None]
+    summary = result["summary"]["by_type"]["pulse_to_pulse_interval"]
+    assert summary["count"] == 3
+    assert summary["avg"] == 840.0
+    assert summary["max"] == 850.0
+    assert summary["gap_spanning_excluded"] == 1

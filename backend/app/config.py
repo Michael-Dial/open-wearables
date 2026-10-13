@@ -116,10 +116,12 @@ class Settings(BaseSettings):
     # BEAT-TO-BEAT CAPTURE (Apple Watch heartbeat series, read by the iOS SDK)
     # What a participant with no beat_capture_setting row gets: off | sleep | all_day.
     beat_capture_default_mode: Literal["off", "sleep", "all_day"] = "sleep"
-    beat_capture_default_lookback_days: int = 7
-    beat_capture_default_sleep_padding_minutes: int = 30
+    # Bounded like the beat_capture_setting columns, so a bad default fails at startup
+    # instead of turning a researcher's partial update into a constraint violation.
+    beat_capture_default_lookback_days: int = Field(7, ge=1, le=30)
+    beat_capture_default_sleep_padding_minutes: int = Field(30, ge=0, le=240)
     # Longest single window a researcher may request; ask for several to cover more.
-    beat_capture_max_window_days: int = 7
+    beat_capture_max_window_days: int = Field(7, ge=1)
 
     # SYNC SETTINGS
     sync_interval_seconds: int = 3600  # Default: 1 hour (3600 seconds)
