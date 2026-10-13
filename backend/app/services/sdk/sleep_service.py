@@ -7,6 +7,8 @@ from logging import getLogger
 from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
+from celery import current_app as celery_app
+
 from app.config import settings
 from app.constants.series_types.sdk import (
     SleepPhase,
@@ -38,6 +40,8 @@ from app.utils.connection_context import get_active_connection_id
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
+
+_FINALIZE_STALE_SLEEPS_TASK = "app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps"
 
 _STAGE_TO_METRIC: dict[str, str] = {
     "awake": "awake_seconds",
@@ -439,12 +443,9 @@ def handle_sleep_data(
         with contextlib.suppress(Exception):
             lock.release()
 
-    # import not at module level in order to avoid circular import
-    from app.integrations.celery.tasks.finalize_stale_sleep_task import finalize_stale_sleeps
-
     # Dispatch the stale-sleep task so sessions that have gone quiet (including
     # other users' sessions) are finalised promptly without waiting for the next beat.
-    finalize_stale_sleeps.delay()
+    celery_app.send_task(_FINALIZE_STALE_SLEEPS_TASK)
 
     return {
         "applied": applied,
