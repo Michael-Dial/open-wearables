@@ -1125,3 +1125,27 @@ then tell the watch's own data from an app's.
   scoped like the revoke, deregistration fetches each account's own token, user deletion
   deregisters each account with its own, and the grant check runs in the pinged account's scope.
   Tests for each fail without the change.
+
+## Beat-to-beat capture from Apple Watch heartbeat series
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (the `APPLE_HEARTBEAT_SERIES` mapping in
+  `constants/series_types/sdk/metric_types.py`, `UNARCHIVED_SERIES` in
+  `repositories/archival_repository.py`, the two routers in `api/routes/v1/__init__.py`);
+  the `beat_capture` model, schema, repository, service and routes are fork-only
+- **Why**: a validation study needs the beat times behind Apple Watch HRV, not only the
+  SDNN/RMSSD summaries. HealthKit keeps them as `HKHeartbeatSeriesSample` on the phone,
+  so the decision of what to collect has to reach the phone: `beat_capture_setting` holds
+  a participant's mode (`off`, `sleep`, `all_day`; no row means `BEAT_CAPTURE_DEFAULT_MODE`,
+  default `sleep`) and `beat_capture_window` holds spans a researcher asked for, which the
+  phone uploads in any mode and reports back on. The forked iOS SDK reads them from
+  `GET /sdk/users/{id}/beat-capture` after each sync and sends one record per beat with
+  type `HKDataTypeIdentifierHeartbeatSeries`: the interval since the previous beat,
+  stamped with the beat's own time to the millisecond, with `seriesId`, `beatIndex` and
+  `precededByGap` in the metadata. It maps to `pulse_to_pulse_interval`, never
+  `rr_interval`, because the series is optical. Gap-spanning intervals are kept and
+  flagged rather than dropped so every beat time stays recoverable. Archival now skips
+  `rr_interval` and `pulse_to_pulse_interval`: averaging a day of beat intervals into one
+  archive row would destroy exactly what these series are kept for (Polar's PPI and RR were
+  exposed to the same loss); retention still deletes them.

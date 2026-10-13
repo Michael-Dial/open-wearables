@@ -113,6 +113,14 @@ class Settings(BaseSettings):
     # Time between sleep phases to conclude end of sleep session
     sleep_end_gap_minutes: int = 120  # 2 hours
 
+    # BEAT-TO-BEAT CAPTURE (Apple Watch heartbeat series, read by the iOS SDK)
+    # What a participant with no beat_capture_setting row gets: off | sleep | all_day.
+    beat_capture_default_mode: Literal["off", "sleep", "all_day"] = "sleep"
+    beat_capture_default_lookback_days: int = 7
+    beat_capture_default_sleep_padding_minutes: int = 30
+    # Longest single window a researcher may request; ask for several to cover more.
+    beat_capture_max_window_days: int = 7
+
     # SYNC SETTINGS
     sync_interval_seconds: int = 3600  # Default: 1 hour (3600 seconds)
     sleep_sync_interval_seconds: int = 3600  # Default: 1 hour (3600 seconds)

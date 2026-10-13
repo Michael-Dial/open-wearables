@@ -81,6 +81,7 @@
                 "pages": [
                   "sdk/ios/index",
                   "sdk/ios/integration",
+                  "sdk/ios/beat-to-beat",
                   "sdk/ios/troubleshooting"
                 ]
               },

@@ -112,6 +112,10 @@ async def get_timeseries(
         - The `source` field indicates which wearable produced the sample
           (garmin, whoop, apple_health, etc.) and may differ across samples
           in the same response when a user has multiple connected devices.
+        - "pulse_to_pulse_interval" holds optical beat-to-beat intervals (Apple
+          Watch heartbeat series, Polar PPI), one sample per beat in ms. A sample
+          with `preceded_by_gap: true` spans a gap in the recording and is not a
+          beat interval: exclude it before computing HRV from the intervals.
     """
     try:
         # Fetch user details
@@ -141,15 +145,17 @@ async def get_timeseries(
             )
             for sample in response.get("data", []):
                 source = sample.get("source", {})
-                records.append(
-                    {
-                        "timestamp": str(sample.get("timestamp")) if sample.get("timestamp") else None,
-                        "type": sample.get("type"),
-                        "value": sample.get("value"),
-                        "unit": sample.get("unit"),
-                        "source": source.get("provider") if isinstance(source, dict) else source,
-                    }
-                )
+                record: dict[str, Any] = {
+                    "timestamp": str(sample.get("timestamp")) if sample.get("timestamp") else None,
+                    "type": sample.get("type"),
+                    "value": sample.get("value"),
+                    "unit": sample.get("unit"),
+                    "source": source.get("provider") if isinstance(source, dict) else source,
+                }
+                # Only on the beat rows that need it, so a raw beat-to-beat pull stays small.
+                if sample.get("preceded_by_gap") is True:
+                    record["preceded_by_gap"] = True
+                records.append(record)
             cursor = (response.get("pagination") or {}).get("next_cursor")
             if not cursor:
                 break
