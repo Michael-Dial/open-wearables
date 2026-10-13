@@ -17,6 +17,7 @@ from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.providers.factory import ProviderFactory
 from app.services.timeseries_service import timeseries_service
+from app.services.user_attribution import SEED_CREATOR
 from app.services.user_service import user_service
 
 from .constants import DAILY_ACTIVITY_SERIES, PAIRED_SERIES_SPECS, PROVIDER_CONFIGS, SERIES_TYPE_SPECS, Cadence
@@ -151,6 +152,7 @@ class SeedDataService:
                     email=identity_fake.unique.email(),
                     external_user_id=identity_fake.unique.uuid4() if fake.boolean(chance_of_getting_true=80) else None,
                 ),
+                SEED_CREATOR,
             )
             summary["users"] += 1
 

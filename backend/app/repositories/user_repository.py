@@ -4,7 +4,20 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, Exists, case, func, literal, null, nullsfirst, nullslast, or_, select, true
+from sqlalchemy import (
+    ColumnElement,
+    Exists,
+    case,
+    func,
+    literal,
+    null,
+    nullsfirst,
+    nullslast,
+    or_,
+    select,
+    true,
+    update,
+)
 from sqlalchemy.dialects.postgresql import aggregate_order_by, array_agg
 from sqlalchemy.orm import Query, aliased
 
@@ -14,7 +27,9 @@ from app.models.user_connection import UserConnection
 from app.repositories.repositories import CrudRepository
 from app.schemas.auth import ConnectionStatus
 from app.schemas.model_crud.user_management import (
+    CREATED_BY_UNKNOWN,
     USER_SORT_COLUMNS,
+    UserCreatedVia,
     UserCreateInternal,
     UserInclude,
     UserQueryParams,
@@ -170,7 +185,31 @@ class UserRepository(CrudRepository[User, UserCreateInternal, UserUpdateInternal
             # includes users whose connections never synced.
             query = query.filter(~_connection_exists(UserConnection.last_synced_at >= query_params.last_synced_before))
 
+        if query_params.created_by is not None:
+            query = query.filter(self._created_by_condition(query_params.created_by))
+
         return query
+
+    def _created_by_condition(self, created_by: UUID | UserCreatedVia | str) -> ColumnElement[bool]:
+        """Narrow to users created by one API key, one kind of creator, or neither (unknown)."""
+        if isinstance(created_by, UUID):
+            return self.model.created_by_api_key_id == created_by
+        if created_by == CREATED_BY_UNKNOWN:
+            return self.model.created_via.is_(None)
+        return self.model.created_via == UserCreatedVia(created_by)
+
+    def ids_created_by_api_key(self, db_session: DbSession, api_key_id: UUID) -> list[UUID]:
+        """Users attributed to one API key."""
+        return list(db_session.scalars(select(self.model.id).where(self.model.created_by_api_key_id == api_key_id)))
+
+    def reassign_created_by_api_key(self, db_session: DbSession, user_ids: Sequence[UUID], api_key_id: UUID) -> None:
+        """Attribute users to another API key, e.g. the one that replaced theirs on rotation."""
+        if not user_ids:
+            return
+        db_session.execute(
+            update(self.model).where(self.model.id.in_(user_ids)).values(created_by_api_key_id=api_key_id)
+        )
+        db_session.commit()
 
     def _order_columns(
         self,

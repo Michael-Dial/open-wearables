@@ -323,6 +323,32 @@
             "description": "Users whose connections have all been idle since this timestamp, including those that never synced"
           },
           {
+            "name": "created_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "$ref": "#/components/schemas/UserCreatedVia"
+                },
+                {
+                  "const": "unknown",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by what created the user: an API key's id, `api_key` for any API key (including deleted ones), `portal` for the developer dashboard, `seed` for the seed-data generator, or `unknown` for users created before this was recorded",
+              "title": "Created By"
+            },
+            "description": "Filter by what created the user: an API key's id, `api_key` for any API key (including deleted ones), `portal` for the developer dashboard, `seed` for the seed-data generator, or `unknown` for users created before this was recorded"
+          },
+          {
             "name": "include",
             "in": "query",
             "required": false,
@@ -381,6 +407,7 @@
           "External: Users"
         ],
         "summary": "Create User",
+        "description": "Create a user, attributed to the credential that sent the request.\n\nAn API key attributes the user to that key, so each integration should use its own key,\nnamed after the app. A developer's dashboard session attributes it to the portal.",
         "operationId": "create_user_api_v1_users_post",
         "security": [
           {
@@ -24696,6 +24723,59 @@
         "type": "object",
         "title": "UserCreate"
       },
+      "UserCreatedBy": {
+        "properties": {
+          "via": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserCreatedVia"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`api_key` (an integration, named by its key), `portal` (a developer in the dashboard) or `seed` (the seed-data generator). Null for users created before this was recorded"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Name to show for the creator: the API key's current name, or its name at creation if the key has since been deleted; `Portal`; `Seed data`. Null when unknown"
+          },
+          "api_key_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key Id",
+            "description": "The API key that created the user, while that key exists. Null otherwise"
+          }
+        },
+        "type": "object",
+        "title": "UserCreatedBy",
+        "description": "What created a user: the app behind an API key, the portal, or the seed generator."
+      },
+      "UserCreatedVia": {
+        "type": "string",
+        "enum": [
+          "api_key",
+          "portal",
+          "seed"
+        ],
+        "title": "UserCreatedVia",
+        "description": "Which kind of credential created a user.\n\nRead from the request's credential, never from the payload, so it cannot be claimed."
+      },
       "UserDataSummaryResponse": {
         "properties": {
           "user_id": {
@@ -24887,12 +24967,18 @@
             "title": "Has Womens Health Data",
             "description": "Whether the user has any menstrual cycle events, from any provider",
             "default": false
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/UserCreatedBy",
+            "description": "What created the user. Taken from the credential of the request that created it: an API key (each integration should have its own, named after the app), the portal, or the seed-data generator",
+            "readOnly": true
           }
         },
         "type": "object",
         "required": [
           "id",
-          "created_at"
+          "created_at",
+          "created_by"
         ],
         "title": "UserDetailRead",
         "description": "A single user. Carries what the list rows carry, plus the tab-gating flags."
@@ -25063,12 +25149,18 @@
             ],
             "title": "Connections",
             "description": "Connections of every status. Present only when requested via `include=connections`"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/UserCreatedBy",
+            "description": "What created the user. Taken from the credential of the request that created it: an API key (each integration should have its own, named after the app), the portal, or the seed-data generator",
+            "readOnly": true
           }
         },
         "type": "object",
         "required": [
           "id",
-          "created_at"
+          "created_at",
+          "created_by"
         ],
         "title": "UserRead"
       },

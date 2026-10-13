@@ -16,9 +16,10 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.schemas.model_crud.user_management import UserCreate, UserUpdate
+from app.schemas.model_crud.user_management import UserCreate, UserCreatedVia, UserUpdate
+from app.services.user_attribution import SEED_CREATOR, RequestCreator
 from app.services.user_service import user_service
-from tests.factories import UserFactory
+from tests.factories import ApiKeyFactory, UserFactory
 
 
 class TestUserServiceCreate:
@@ -34,7 +35,7 @@ class TestUserServiceCreate:
         )
 
         # Act
-        user = user_service.create(db, payload)
+        user = user_service.create(db, payload, SEED_CREATOR)
 
         # Assert
         assert user.id is not None
@@ -52,7 +53,7 @@ class TestUserServiceCreate:
         payload = UserCreate(email="minimal@example.com")
 
         # Act
-        user = user_service.create(db, payload)
+        user = user_service.create(db, payload, SEED_CREATOR)
 
         # Assert
         assert user.id is not None
@@ -70,7 +71,7 @@ class TestUserServiceCreate:
         )
 
         # Act
-        user = user_service.create(db, payload)
+        user = user_service.create(db, payload, SEED_CREATOR)
 
         # Assert
         assert user.external_user_id == "ext_12345"
@@ -81,7 +82,7 @@ class TestUserServiceCreate:
         payload = UserCreate(email="persist@example.com")
 
         # Act
-        user = user_service.create(db, payload)
+        user = user_service.create(db, payload, SEED_CREATOR)
 
         # Assert - verify in database
         db_user = user_service.get(db, user.id)
@@ -93,9 +94,22 @@ class TestUserServiceCreate:
         UserFactory(email="taken@example.com")
 
         with pytest.raises(HTTPException) as exc_info:
-            user_service.create(db, UserCreate(email="taken@example.com"))
+            user_service.create(db, UserCreate(email="taken@example.com"), SEED_CREATOR)
 
         assert exc_info.value.status_code == 409
+
+    def test_create_user_records_the_creator(self, db: Session) -> None:
+        """Every attribution field of the creator lands on the row."""
+        api_key = ApiKeyFactory(name="Sleep Hub")
+        creator = RequestCreator(via=UserCreatedVia.API_KEY, api_key_id=api_key.id, label="Sleep Hub")
+
+        user = user_service.create(db, UserCreate(), creator)
+
+        assert user.created_via == UserCreatedVia.API_KEY
+        assert user.created_by_api_key_id == api_key.id
+        assert user.created_by_label == "Sleep Hub"
+        assert user.created_by_developer_id is None
+        assert user.created_by_api_key_name == "Sleep Hub"
 
 
 class TestUserServiceUpdate:

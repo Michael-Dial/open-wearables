@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
 
 from app.schemas.auth import ConnectionStatus
 from app.schemas.enums import ProviderName
@@ -12,6 +12,24 @@ from app.schemas.enums import ProviderName
 USER_SORT_COLUMNS: frozenset[str] = frozenset(
     {"created_at", "email", "first_name", "last_name", "name", "last_synced_at"}
 )
+
+
+class UserCreatedVia(StrEnum):
+    """Which kind of credential created a user.
+
+    Read from the request's credential, never from the payload, so it cannot be claimed.
+    """
+
+    API_KEY = "api_key"  # an integration, named by its API key
+    PORTAL = "portal"  # a developer signed in to the dashboard
+    SEED = "seed"  # the seed-data generator
+
+
+# Labels for the creators that are not an API key. An API key is labelled with its name.
+CREATED_BY_PORTAL_LABEL = "Portal"
+CREATED_BY_SEED_LABEL = "Seed data"
+# Filter value for users created before attribution was recorded.
+CREATED_BY_UNKNOWN = "unknown"
 
 
 class UserInclude(StrEnum):
@@ -43,6 +61,7 @@ class UserQueryParams(BaseModel):
         connection_status: Narrow the provider filter to a single connection status.
         has_active_connection: Filter by presence of at least one active connection.
         last_synced_before: Filter by absence of recent syncs.
+        created_by: Filter by the credential that created the user.
         include: Optional expansions to embed in each user.
     """
 
@@ -95,6 +114,15 @@ class UserQueryParams(BaseModel):
         ),
     )
 
+    created_by: UUID | UserCreatedVia | Literal["unknown"] | None = Field(
+        None,
+        description=(
+            "Filter by what created the user: an API key's id, `api_key` for any API key "
+            "(including deleted ones), `portal` for the developer dashboard, `seed` for the seed-data "
+            "generator, or `unknown` for users created before this was recorded"
+        ),
+    )
+
     include: list[UserInclude] = Field(
         default_factory=list,
         description="Optional expansions to embed in each user; repeat the parameter for several",
@@ -107,6 +135,48 @@ class UserConnectionSummary(BaseModel):
     provider: str
     status: ConnectionStatus
     last_synced_at: datetime | None = None
+
+
+class UserCreatedBy(BaseModel):
+    """What created a user: the app behind an API key, the portal, or the seed generator."""
+
+    via: UserCreatedVia | None = Field(
+        None,
+        description=(
+            "`api_key` (an integration, named by its key), `portal` (a developer in the dashboard) or "
+            "`seed` (the seed-data generator). Null for users created before this was recorded"
+        ),
+    )
+    label: str | None = Field(
+        None,
+        description=(
+            "Name to show for the creator: the API key's current name, or its name at creation if the key "
+            "has since been deleted; `Portal`; `Seed data`. Null when unknown"
+        ),
+    )
+    api_key_id: UUID | None = Field(
+        None, description="The API key that created the user, while that key exists. Null otherwise"
+    )
+
+    @classmethod
+    def resolve(
+        cls,
+        via: UserCreatedVia | None,
+        api_key_id: UUID | None,
+        api_key_name: str | None,
+        label_at_creation: str | None,
+    ) -> "UserCreatedBy":
+        """Pick the label: a live key's current name wins over the name it had at creation."""
+        match via:
+            case UserCreatedVia.API_KEY:
+                label = api_key_name if api_key_name is not None else label_at_creation
+            case UserCreatedVia.PORTAL:
+                label = CREATED_BY_PORTAL_LABEL
+            case UserCreatedVia.SEED:
+                label = CREATED_BY_SEED_LABEL
+            case _:
+                label = None
+        return cls(via=via, label=label, api_key_id=api_key_id if via == UserCreatedVia.API_KEY else None)
 
 
 class UserRead(BaseModel):
@@ -130,6 +200,28 @@ class UserRead(BaseModel):
         description="Connections of every status. Present only when requested via `include=connections`",
     )
 
+    # Read from the model to build `created_by`; not serialized themselves.
+    created_via: UserCreatedVia | None = Field(None, exclude=True)
+    created_by_api_key_id: UUID | None = Field(None, exclude=True)
+    created_by_api_key_name: str | None = Field(None, exclude=True)
+    created_by_label: str | None = Field(None, exclude=True)
+
+    @computed_field(  # type: ignore[prop-decorator]
+        description=(
+            "What created the user. Taken from the credential of the request that created it: "
+            "an API key (each integration should have its own, named after the app), the portal, "
+            "or the seed-data generator"
+        )
+    )
+    @property
+    def created_by(self) -> UserCreatedBy:
+        return UserCreatedBy.resolve(
+            self.created_via,
+            self.created_by_api_key_id,
+            self.created_by_api_key_name,
+            self.created_by_label,
+        )
+
 
 class UserDetailRead(UserRead):
     """A single user. Carries what the list rows carry, plus the tab-gating flags."""
@@ -149,6 +241,11 @@ class UserCreate(BaseModel):
 class UserCreateInternal(UserCreate):
     id: UUID = Field(default_factory=uuid4)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Attribution, from the request's credential (see UserService.create); not client input.
+    created_via: UserCreatedVia | None = None
+    created_by_api_key_id: UUID | None = None
+    created_by_developer_id: UUID | None = None
+    created_by_label: str | None = Field(None, max_length=100)
 
 
 class UserUpdate(BaseModel):
