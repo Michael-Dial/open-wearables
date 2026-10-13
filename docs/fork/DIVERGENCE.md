@@ -6,11 +6,11 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-10-12 19:23 UTC |
-| Our ref | `HEAD` — ad527c30 (2026-10-12) Merge upstream the-momentum/open-wearables main (12 commits, 456b8250) |
-| Upstream `main` | 456b8250 (2026-10-12) fix(backend): forward SIGTERM to workers so containers stop gracefully (#1771) |
-| Last common commit | 456b8250 (2026-10-12) fix(backend): forward SIGTERM to workers so containers stop gracefully (#1771) |
-| Commits we are ahead | 224 |
+| Generated | 2026-10-13 15:19 UTC |
+| Our ref | `HEAD` — c1f14cf2 (2026-10-13) Merge upstream the-momentum/open-wearables main (8 commits, 097c3db0) |
+| Upstream `main` | 097c3db0 (2026-10-13) docs: move new provider integrations section to supported providers page (#1854) |
+| Last common commit | 097c3db0 (2026-10-13) docs: move new provider integrations section to supported providers page (#1854) |
+| Commits we are ahead | 227 |
 | Upstream commits not merged | 0 |
 | Latest sync tag | _none yet_ |
 
@@ -28,7 +28,7 @@ git diff upstream-sync/<date>..HEAD
 git show upstream/main:<path>
 
 # which of our commits touched a file
-git log --oneline 456b82502fea1c5c2bc5c8953f9a87be5163b93d..HEAD -- <path>
+git log --oneline 097c3db0a4c602089912885d0909e14c69818dc6..HEAD -- <path>
 ```
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
