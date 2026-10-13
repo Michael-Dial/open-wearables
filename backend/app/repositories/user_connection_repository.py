@@ -3,7 +3,7 @@ from logging import getLogger
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, and_, func, select, tuple_, update
+from sqlalchemy import CursorResult, and_, func, or_, select, tuple_, update
 from sqlalchemy.orm import Query
 from sqlalchemy.orm.exc import MultipleResultsFound
 
@@ -394,25 +394,27 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         provider: str,
         connection_id: UUID | None = None,
     ) -> int:
-        """Revoke a user's connection(s) to a provider. Returns rows updated.
+        """Revoke a user's connection(s) to a provider and clear their tokens.
 
-        With ``connection_id`` this revokes that one account. Without it, every
-        account the user holds with the provider is revoked - which is what the
-        provider-level endpoint has always meant, and stays the right reading of
-        "disconnect me from Garmin".
+        Returns the number of connections that went from non-revoked to revoked. Tokens
+        are cleared even on an already revoked connection, e.g. one revoked by a failed
+        token refresh during provider deregistration (upstream #1814).
+
+        With ``connection_id`` this acts on that one account, the revoke and the token
+        clearing alike. Without it, every account the user holds with the provider -
+        which is what the provider-level endpoint has always meant, and stays the right
+        reading of "disconnect me from Garmin". Fork: upstream's token clearing matched
+        on (user, provider) alone, which on a user with two Garmin accounts would wipe
+        the tokens of the one still connected when the other was disconnected.
         """
-        conditions = [
-            UserConnection.user_id == user_id,
-            UserConnection.provider == provider,
-            UserConnection.status != ConnectionStatus.REVOKED,
-        ]
+        scope = [UserConnection.user_id == user_id, UserConnection.provider == provider]
         if connection_id is not None:
-            conditions.append(UserConnection.id == connection_id)
+            scope.append(UserConnection.id == connection_id)
         result = cast(
             CursorResult[tuple[()]],
             db_session.execute(
                 update(UserConnection)
-                .where(and_(*conditions))
+                .where(and_(*scope, UserConnection.status != ConnectionStatus.REVOKED))
                 .values(
                     status=ConnectionStatus.REVOKED,
                     access_token=None,
@@ -421,6 +423,16 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
                     updated_at=datetime.now(timezone.utc),
                 ),
             ),
+        )
+        db_session.execute(
+            update(UserConnection)
+            .where(
+                and_(
+                    *scope,
+                    or_(UserConnection.access_token.is_not(None), UserConnection.refresh_token.is_not(None)),
+                ),
+            )
+            .values(access_token=None, refresh_token=None, token_expires_at=None),
         )
         db_session.commit()
         return result.rowcount

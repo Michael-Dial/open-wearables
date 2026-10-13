@@ -15,8 +15,10 @@ from app.schemas.model_crud.user_management import (
 from app.schemas.responses.upload import ConnectionsCoverage, ProviderConnectionCount
 from app.services.devices.detection import ACCOUNT_SETTINGS_ACTOR, DeviceDetectionService
 from app.services.outgoing_webhooks.events import on_connection_created, on_connection_revoked
+from app.services.providers.api_client import get_valid_token
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.services import AppService
+from app.utils.connection_context import active_connection
 from app.utils.device_timeline import load_timeline
 from app.utils.exceptions import (
     DeviceTimelineConflictError,
@@ -332,7 +334,7 @@ class UserConnectionService(
         revoked_any = False
         for connection in targets:
             if oauth:
-                self._deregister_from_provider(db_session, user_id, provider, oauth, connection)
+                self.deregister_from_provider(db_session, user_id, provider, oauth, connection)
 
             if not self.crud.disconnect(db_session, user_id, provider, connection.id):
                 # Already revoked - nothing changed, so nothing to announce.
@@ -431,7 +433,7 @@ class UserConnectionService(
         if connection:
             self.crud.update_last_synced_at(db_session, connection)
 
-    def _deregister_from_provider(
+    def deregister_from_provider(
         self,
         db_session: DbSession,
         user_id: UUID,
@@ -439,15 +441,27 @@ class UserConnectionService(
         oauth: BaseOAuthTemplate,
         connection: UserConnection | None = None,
     ) -> None:
-        """Best-effort call to provider's deregistration API, for one account."""
+        """Best-effort call to provider's deregistration API, for one account.
+
+        Refreshes the access token first if it is expired (upstream #1814). Push-based
+        providers like Garmin rarely call their API after the initial backfill, so the
+        stored token is usually stale by the time the user disconnects.
+
+        Fork: ``connection`` names the account. The token is fetched inside that
+        account's scope, so a user with two accounts with the provider deregisters each
+        with its own token rather than the oldest one's twice. Without it, the oldest
+        account is used, as before.
+        """
         if connection is None:
             connection = self.crud.get_by_user_and_provider(db_session, user_id, provider)
         if not connection or not connection.access_token:
             return
 
         try:
+            with active_connection(connection.id):
+                access_token = get_valid_token(db_session, user_id, provider, self.crud, oauth)
             oauth.deregister_user(
-                connection.access_token,
+                access_token,
                 provider_user_id=connection.provider_user_id,
             )
             log_structured(
