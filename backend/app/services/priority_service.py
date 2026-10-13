@@ -18,6 +18,7 @@ from app.schemas.model_crud.data_priority import (
     ProviderPriorityResponse,
 )
 from app.schemas.model_crud.user_management import account_display_label
+from app.services.providers.factory import ProviderFactory
 from app.services.sources.relay_dedup import classify_sources
 from app.utils.device_registry import (
     handset_name,
@@ -37,10 +38,6 @@ class PriorityService:
 
     def _to_provider_response(self, priority: ProviderPriority) -> ProviderPriorityResponse:
         """Enrich a priority row with the strategy's display name and icon, like provider settings do."""
-        # Imported here: provider strategies import event_record_service, which imports this
-        # module, so a top-level import of the factory would be a circular import.
-        from app.services.providers.factory import ProviderFactory
-
         response = ProviderPriorityResponse.model_validate(priority)
         with contextlib.suppress(ValueError):
             strategy = ProviderFactory().get_provider(str(priority.provider))
