@@ -1341,3 +1341,117 @@ class TestSDKImportAndroidFoodCorrelation:
         assert get_series_type_from_metric_type("DIETARY_ENERGY_FROM_FAT") == SeriesType.dietary_energy_from_fat
         assert get_series_type_from_metric_type("DIETARY_UNSATURATED_FAT") == SeriesType.dietary_fat_unsaturated
         assert get_series_type_from_metric_type("DIETARY_FOLIC_ACID") == SeriesType.dietary_folic_acid
+
+
+class TestSDKImportHeartbeatSeries:
+    """Apple Watch beat-to-beat intervals, one record per beat of an HKHeartbeatSeriesSample.
+
+    The iOS SDK sends each beat as the interval since the previous beat, stamped with the
+    beat's own time to the millisecond, and carries the series id and HealthKit's
+    ``precededByGap`` flag in the record metadata. The series is the watch's optical
+    tachogram, so it lands in ``pulse_to_pulse_interval``, never ``rr_interval``.
+    """
+
+    SERIES_ID = "6F4E2B1A-3C5D-4E7F-8A9B-0C1D2E3F4A5B"
+
+    SOURCE: dict[str, Any] = {
+        "appId": "com.apple.health.4C3B2A19-8E7D-4F6A-B5C4-D3E2F1A0B9C8",
+        "name": "Test User's Apple Watch",
+        "deviceName": "Apple Watch",
+        "deviceManufacturer": "Apple Inc.",
+        "deviceModel": "Watch8,1",
+        "deviceType": "watch",
+        "operatingSystemVersion": {"majorVersion": 27, "minorVersion": 0, "patchVersion": 0},
+    }
+
+    @pytest.fixture
+    def import_service(self) -> ImportService:
+        return ImportService(log=logging.getLogger("test"))
+
+    def _beat(self, index: int, at: str, interval_ms: float, preceded_by_gap: bool = False) -> dict[str, Any]:
+        return {
+            "id": f"{self.SERIES_ID}:{index}",
+            "type": "HKDataTypeIdentifierHeartbeatSeries",
+            "unit": "ms",
+            "value": interval_ms,
+            "startDate": at,
+            "endDate": at,
+            "zoneOffset": "-04:00",
+            "source": self.SOURCE,
+            "metadata": {"seriesId": self.SERIES_ID, "beatIndex": index, "precededByGap": preceded_by_gap},
+        }
+
+    def test_beats_map_to_pulse_to_pulse_interval(self) -> None:
+        assert get_series_type_from_metric_type("HKDataTypeIdentifierHeartbeatSeries") == (
+            SeriesType.pulse_to_pulse_interval
+        )
+
+    def test_beat_keeps_its_interval_time_and_flags(self, import_service: ImportService) -> None:
+        request = SDKSyncRequest(
+            provider="apple",
+            sdkVersion="0.16.0",
+            syncTimestamp="2026-10-12T08:00:00Z",
+            data={"records": [self._beat(7, "2026-10-12T07:14:15.250Z", 812.5, preceded_by_gap=True)]},
+        )
+
+        samples = import_service._build_statistic_bundles(request.data.records, request.provider, str(uuid4()))
+
+        assert len(samples) == 1
+        beat = samples[0]
+        assert beat.series_type == SeriesType.pulse_to_pulse_interval
+        assert beat.value == Decimal("812.5")
+        assert beat.recorded_at.microsecond == 250_000
+        assert beat.external_id == f"{self.SERIES_ID}:7"
+        # Not a windowed statistic: a beat states no measurement window.
+        assert beat.provider_metadata == {"seriesId": self.SERIES_ID, "beatIndex": 7, "precededByGap": True}
+
+    def test_beats_within_one_second_are_stored_apart(self, db: Session, import_service: ImportService) -> None:
+        """Above 60 bpm two beats regularly share a wall-clock second; neither may overwrite the other."""
+        user = UserFactory()
+        payload = {
+            "provider": "apple",
+            "sdkVersion": "0.16.0",
+            "syncTimestamp": "2026-10-12T08:00:00Z",
+            "data": {
+                "records": [
+                    self._beat(1, "2026-10-12T07:14:15.050Z", 840.0),
+                    self._beat(2, "2026-10-12T07:14:15.880Z", 830.0),
+                    self._beat(3, "2026-10-12T07:14:22.400Z", 6520.0, preceded_by_gap=True),
+                ]
+            },
+        }
+
+        import_service.load_data(db, payload, str(user.id))
+
+        rows = (
+            db.query(DataPointSeries)
+            .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+            .join(SeriesTypeDefinition, SeriesTypeDefinition.id == DataPointSeries.series_type_definition_id)
+            .filter(DataSource.user_id == user.id, SeriesTypeDefinition.code == "pulse_to_pulse_interval")
+            .order_by(DataPointSeries.recorded_at)
+            .all()
+        )
+        assert [r.value for r in rows] == [Decimal("840.000"), Decimal("830.000"), Decimal("6520.000")]
+        assert [r.recorded_at.microsecond for r in rows] == [50_000, 880_000, 400_000]
+        # The gap-spanning interval is kept, flagged, so every beat time stays recoverable.
+        assert [r.provider_metadata["precededByGap"] for r in rows] == [False, False, True]
+
+    def test_resending_a_series_does_not_duplicate_beats(self, db: Session, import_service: ImportService) -> None:
+        user = UserFactory()
+        payload = {
+            "provider": "apple",
+            "sdkVersion": "0.16.0",
+            "syncTimestamp": "2026-10-12T08:00:00Z",
+            "data": {"records": [self._beat(1, "2026-10-12T07:14:15.050Z", 840.0)]},
+        }
+
+        import_service.load_data(db, payload, str(user.id))
+        import_service.load_data(db, payload, str(user.id))
+
+        count = (
+            db.query(DataPointSeries)
+            .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+            .filter(DataSource.user_id == user.id)
+            .count()
+        )
+        assert count == 1

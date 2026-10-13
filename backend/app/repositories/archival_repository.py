@@ -29,6 +29,17 @@ if TYPE_CHECKING:
     # Annotation only: the rule lives in the service layer and hands the plan down.
     from app.services.sources.relay_dedup import RelayDedupPlan
 
+# Beat-to-beat intervals are never averaged into the archive. A daily mean of RR or
+# pulse-to-pulse intervals keeps nothing a validation study can use - the beat times
+# are the measurement - so these rows stay live until retention deletes them.
+UNARCHIVED_SERIES: frozenset[SeriesType] = frozenset({SeriesType.rr_interval, SeriesType.pulse_to_pulse_interval})
+
+
+def _archivable() -> ColumnElement[bool]:
+    """Live rows the archival pass may aggregate: everything but beat-to-beat series."""
+    return DataPointSeries.series_type_definition_id.notin_([get_series_type_id(t) for t in UNARCHIVED_SERIES])
+
+
 # ---------------------------------------------------------------------------
 # Archival Settings repository
 # ---------------------------------------------------------------------------
@@ -172,7 +183,7 @@ class DataPointSeriesArchiveRepository:
             # Step 1: Find data_source_ids with archivable data (batch by source)
             source_ids = (
                 db.query(DataPointSeries.data_source_id)
-                .filter(cast(DataPointSeries.recorded_at, Date) < cutoff_date)
+                .filter(cast(DataPointSeries.recorded_at, Date) < cutoff_date, _archivable())
                 .distinct()
                 .limit(10)
                 .all()
@@ -207,6 +218,7 @@ class DataPointSeriesArchiveRepository:
                 .filter(
                     DataPointSeries.data_source_id.in_(source_id_list),
                     cast(DataPointSeries.recorded_at, Date) < cutoff_date,
+                    _archivable(),
                 )
                 .group_by(
                     DataPointSeries.data_source_id,
@@ -275,6 +287,7 @@ class DataPointSeriesArchiveRepository:
                 .filter(
                     DataPointSeries.data_source_id.in_(source_id_list),
                     cast(DataPointSeries.recorded_at, Date) < cutoff_date,
+                    _archivable(),
                 )
                 .delete(synchronize_session=False)
             )

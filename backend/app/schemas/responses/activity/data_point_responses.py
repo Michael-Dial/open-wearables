@@ -32,6 +32,12 @@ class TimeSeriesSample(BaseModel):
     # recorded. Raw samples only.
     route: str | None = None
     route_kind: str | None = None
+    # Beat-to-beat rows only (Apple heartbeat series in pulse_to_pulse_interval): the
+    # HealthKit series the beat belongs to, and HealthKit's flag that beats may be missing
+    # just before it - in which case `value` spans the gap and is not a beat interval.
+    # None on every other sample. Raw samples only.
+    beat_series_id: str | None = None
+    preceded_by_gap: bool | None = None
 
 
 class ActivityAggregateResult(TypedDict):

@@ -4,6 +4,8 @@ from .api_keys import router as api_keys_router
 from .applications import router as applications_router
 from .archival import router as archival_router
 from .auth import router as auth_router
+from .beat_capture import router as beat_capture_router
+from .beat_capture import sdk_router as beat_capture_sdk_router
 from .config import router as config_router
 from .connections import router as connections_router
 from .dashboard import router as dashboard_router
@@ -45,6 +47,7 @@ v1_router.include_router(personal_record_router, tags=["External: Users"])
 v1_router.include_router(connections_router, tags=["External: Connections"])
 v1_router.include_router(summaries_router, tags=["External: Summaries"])
 v1_router.include_router(timeseries_router, tags=["External: Timeseries"])
+v1_router.include_router(beat_capture_router, tags=["External: Beat Capture"])
 v1_router.include_router(events_router, tags=["External: Events"])
 v1_router.include_router(health_scores_router, tags=["External: Health Scores"])
 v1_router.include_router(oauth_router, prefix="/oauth")
@@ -54,6 +57,7 @@ v1_router.include_router(vendor_workouts_router, prefix="/providers", tags=["Sys
 v1_router.include_router(import_xml_router, tags=["External: Apple Health Import"])
 v1_router.include_router(sdk_logs_router, tags=["External: Mobile SDK"])
 v1_router.include_router(sdk_sync_router, tags=["External: Mobile SDK"])
+v1_router.include_router(beat_capture_sdk_router, tags=["External: Mobile SDK"])
 v1_router.include_router(sdk_token_router, tags=["External: Mobile SDK"])
 v1_router.include_router(user_invitation_code_router, tags=["External: Mobile SDK"])
 v1_router.include_router(token_router, tags=["External: Token"])

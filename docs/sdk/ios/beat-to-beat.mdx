@@ -1,0 +1,71 @@
+---
+title: "Beat-to-beat intervals from Apple Watch"
+sidebarTitle: "Beat-to-beat capture"
+description: "Collect Apple Watch heartbeat series (pulse-to-pulse intervals) per participant: off, during sleep, or all day, plus on-demand windows."
+---
+
+Apple Watch records a short optical tachogram behind each HRV reading. HealthKit keeps it
+on the phone as a heartbeat series (`HKHeartbeatSeriesSample`). The forked iOS SDK can read
+it and upload one row per beat, so you can line up beat times against a reference device.
+
+<Note>
+These are **pulse-to-pulse intervals from the optical sensor (PPG)**, not ECG R-R intervals.
+They land in the `pulse_to_pulse_interval` series, separate from `rr_interval`, so they can
+never be mistaken for the criterion measure in a validation study.
+</Note>
+
+## What gets collected
+
+Collection is set per participant from the backend; the participant does nothing beyond
+granting the Heartbeat Series permission in the app. The phone reads its instructions
+after each sync.
+
+| Mode | Uploads |
+|---|---|
+| `off` | Nothing automatically. Requested windows are still uploaded. |
+| `sleep` | Every heartbeat series that overlaps a HealthKit sleep session, padded by `sleep_padding_minutes` either side (default 30). |
+| `all_day` | Every heartbeat series. |
+
+`lookback_days` (1-30, default 7) bounds how far back `sleep` and `all_day` reach.
+A participant with nothing set gets `BEAT_CAPTURE_DEFAULT_MODE` (default `sleep`).
+
+```bash
+# Collect all day for one participant
+curl -X PUT "$HOST/api/v1/users/$USER_ID/beat-capture" \
+  -H "X-Open-Wearables-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"mode": "all_day"}'
+```
+
+## Requesting a window
+
+To get beats for a specific span (a PSG night, a lab visit, a time point for checking
+all-day RMSSD), request a window. The phone uploads every heartbeat series overlapping it on
+its next sync, whatever the participant's mode, then reports how many beats and series it
+sent. Opening the app makes that sync immediate. A window may span at most 7 days.
+
+```bash
+curl -X POST "$HOST/api/v1/users/$USER_ID/beat-capture/windows" \
+  -H "X-Open-Wearables-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"start_at": "2026-10-12T02:00:00Z", "end_at": "2026-10-12T11:00:00Z", "note": "PSG night 3"}'
+
+# status: pending -> fulfilled, with beats_reported and series_reported
+curl "$HOST/api/v1/users/$USER_ID/beat-capture/windows" -H "X-Open-Wearables-API-Key: $API_KEY"
+```
+
+A fulfilled window with zero beats means the watch recorded no heartbeat series in that span.
+HealthKit does not tell an app when read permission was denied, so the same answer also
+comes back when the participant did not grant Heartbeat Series.
+
+## What each row holds
+
+Query with `GET /api/v1/users/{user_id}/timeseries?types=pulse_to_pulse_interval`.
+
+- `timestamp`: the beat's own time, to the millisecond.
+- `value`: the interval in ms since the previous beat in the same series.
+- `beat_series_id`: the HealthKit series the beat belongs to. A series' first beat has no
+  row; its time is the second beat's time minus that beat's interval.
+- `preceded_by_gap`: HealthKit's flag that beats may be missing just before this one. The
+  interval then spans the gap. It is kept so every beat time is recoverable; exclude it
+  from interval-based statistics.
+
+Beat series are never averaged by archival. Retention, if configured, still deletes them.
