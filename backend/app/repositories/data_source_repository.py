@@ -5,7 +5,7 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, and_, asc, delete, func
+from sqlalchemy import CursorResult, and_, asc, delete, func, or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -16,7 +16,7 @@ from app.constants.devices_map import (
     reconcile_device_type,
 )
 from app.constants.devices_map.device_types import SINGLE_DEVICE_PROVIDER_TYPE
-from app.constants.sdk_providers import sdk_providers
+from app.constants.sdk_providers import SDK_PROVIDERS
 from app.database import DbSession
 from app.models import DataSource, HealthScore, ProviderPriority, UserConnection
 from app.repositories.provider_priority_repository import ProviderPriorityRepository
@@ -705,7 +705,7 @@ class DataSourceRepository(
         unset = (None, DeviceType.UNKNOWN.value)
         if resolved is DeviceType.UNKNOWN:
             return current if current not in unset else DeviceType.UNKNOWN.value
-        if provider.value not in sdk_providers():
+        if provider.value not in SDK_PROVIDERS:
             return resolved.value
         if current in (*unset, DeviceType.OTHER.value):
             return resolved.value
@@ -740,8 +740,6 @@ class DataSourceRepository(
             user_connection_id = get_active_connection_id()
 
         identities_list = list(identities)
-
-        from sqlalchemy import or_
 
         # Fill device_model from the connection's device_label when the provider didn't
         # report one, mirroring ensure_data_source. Without it, time series (which arrive
