@@ -22,6 +22,10 @@ class SDKMetricType(StrEnum):
     ANDROID_HEART_RATE_VARIABILITY = "HEART_RATE_VARIABILITY"
     HEART_RATE_RECOVERY_ONE_MINUTE = "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute"
     WALKING_HEART_RATE_AVERAGE = "HKQuantityTypeIdentifierWalkingHeartRateAverage"
+    # One record per beat of an HKHeartbeatSeriesSample: the interval in ms since the
+    # previous beat, stamped with the beat's own time. The series is Apple Watch's
+    # optical (PPG) tachogram, so it is pulse-to-pulse, never the ECG RR criterion.
+    APPLE_HEARTBEAT_SERIES = "HKDataTypeIdentifierHeartbeatSeries"
 
     # Blood & Respiratory
     APPLE_OXYGEN_SATURATION = "HKQuantityTypeIdentifierOxygenSaturation"
@@ -270,6 +274,7 @@ METRIC_TYPE_TO_SERIES_TYPE: dict[SDKMetricType, SeriesType] = {
     SDKMetricType.ANDROID_HEART_RATE_VARIABILITY: SeriesType.heart_rate_variability_rmssd,
     SDKMetricType.HEART_RATE_RECOVERY_ONE_MINUTE: SeriesType.heart_rate_recovery_one_minute,
     SDKMetricType.WALKING_HEART_RATE_AVERAGE: SeriesType.walking_heart_rate_average,
+    SDKMetricType.APPLE_HEARTBEAT_SERIES: SeriesType.pulse_to_pulse_interval,
     # Blood & Respiratory
     SDKMetricType.APPLE_OXYGEN_SATURATION: SeriesType.oxygen_saturation,
     SDKMetricType.ANDROID_OXYGEN_SATURATION: SeriesType.oxygen_saturation,

@@ -3,7 +3,8 @@ from app.constants.series_types.sdk.workout_statistics import WORKOUT_STATISTIC_
 from app.schemas.enums import SeriesType
 from app.schemas.enums.health_score_category import HealthScoreCategory
 
-# Apple HealthKit emits only HKQuantityTypeIdentifier... metrics (SDNN always, RMSSD from iOS 27).
+# Apple HealthKit emits HKQuantityTypeIdentifier... metrics (SDNN always, RMSSD from iOS 27), plus
+# HKDataTypeIdentifierHeartbeatSeries beats as pulse_to_pulse_interval when beat capture is on.
 TIMESERIES: frozenset[SeriesType] = frozenset(
     {
         *APPLE_METRIC_TYPE_TO_SERIES_TYPE.values(),

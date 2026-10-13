@@ -2901,6 +2901,376 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/beat-capture": {
+      "get": {
+        "tags": [
+          "External: Beat Capture"
+        ],
+        "summary": "Get a participant's beat-to-beat capture setting",
+        "description": "The mode the participant's phone follows. ``is_default`` is true when nothing is stored for them.",
+        "operationId": "get_beat_capture_setting_api_v1_users__user_id__beat_capture_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeatCaptureSettingRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "External: Beat Capture"
+        ],
+        "summary": "Set a participant's beat-to-beat capture setting",
+        "description": "Takes effect on the phone's next sync.\n\n- ``off``: nothing automatic; requested windows are still uploaded.\n- ``sleep``: heartbeat series overlapping a HealthKit sleep session, padded by\n  ``sleep_padding_minutes`` either side.\n- ``all_day``: every heartbeat series.\n\n``lookback_days`` (1-30) bounds how far back the automatic modes reach. Fields left\nout keep their current value.",
+        "operationId": "update_beat_capture_setting_api_v1_users__user_id__beat_capture_put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeatCaptureSettingUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeatCaptureSettingRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/beat-capture/windows": {
+      "get": {
+        "tags": [
+          "External: Beat Capture"
+        ],
+        "summary": "List requested beat-to-beat windows",
+        "operationId": "list_beat_capture_windows_api_v1_users__user_id__beat_capture_windows_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/BeatCaptureWindowStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BeatCaptureWindowRead"
+                  },
+                  "title": "Response List Beat Capture Windows Api V1 Users  User Id  Beat Capture Windows Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "External: Beat Capture"
+        ],
+        "summary": "Request beat-to-beat intervals for a span of time",
+        "description": "The phone uploads every heartbeat series overlapping the window on its next sync,\nwhatever the participant's mode, then reports how many beats and series it sent.\n\nOpening the app makes the next sync immediate; otherwise it waits for iOS to run a\nbackground sync. A window may span at most ``BEAT_CAPTURE_MAX_WINDOW_DAYS`` (default 7).",
+        "operationId": "create_beat_capture_window_api_v1_users__user_id__beat_capture_windows_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeatCaptureWindowCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeatCaptureWindowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/beat-capture/windows/{window_id}": {
+      "delete": {
+        "tags": [
+          "External: Beat Capture"
+        ],
+        "summary": "Cancel a pending beat-to-beat window",
+        "description": "409 when the window was already fulfilled: its beats are stored and cancelling would not remove them.",
+        "operationId": "cancel_beat_capture_window_api_v1_users__user_id__beat_capture_windows__window_id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "window_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Window Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeatCaptureWindowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/events/workouts": {
       "get": {
         "tags": [
@@ -8056,6 +8426,7 @@
                                     "HEART_RATE_VARIABILITY",
                                     "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute",
                                     "HKQuantityTypeIdentifierWalkingHeartRateAverage",
+                                    "HKDataTypeIdentifierHeartbeatSeries",
                                     "HKQuantityTypeIdentifierOxygenSaturation",
                                     "OXYGEN_SATURATION",
                                     "HKQuantityTypeIdentifierBloodGlucose",
@@ -9484,6 +9855,155 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UploadDataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sdk/users/{user_id}/beat-capture": {
+      "get": {
+        "tags": [
+          "External: Mobile SDK"
+        ],
+        "summary": "Beat-to-beat capture instructions for the phone",
+        "description": "Read by the iOS SDK before it collects heartbeat series: the participant's mode and pending windows.",
+        "operationId": "get_sdk_beat_capture_config_api_v1_sdk_users__user_id__beat_capture_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SDKBeatCaptureConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sdk/users/{user_id}/beat-capture/windows/{window_id}/fulfilled": {
+      "post": {
+        "tags": [
+          "External: Mobile SDK"
+        ],
+        "summary": "Report a requested beat-to-beat window as uploaded",
+        "operationId": "report_sdk_beat_capture_window_fulfilled_api_v1_sdk_users__user_id__beat_capture_windows__window_id__fulfilled_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "window_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Window Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SDKBeatCaptureFulfilment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeatCaptureWindowRead"
                 }
               }
             }
@@ -14351,6 +14871,240 @@
         ],
         "title": "AuthorizationURLResponse",
         "description": "Response containing authorization URL for user redirect."
+      },
+      "BeatCaptureMode": {
+        "type": "string",
+        "enum": [
+          "off",
+          "sleep",
+          "all_day"
+        ],
+        "title": "BeatCaptureMode",
+        "description": "Which heartbeat series the phone uploads without being asked.\n\nRequested windows are fulfilled in every mode, ``off`` included."
+      },
+      "BeatCaptureSettingRead": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/BeatCaptureMode"
+          },
+          "lookback_days": {
+            "type": "integer",
+            "title": "Lookback Days",
+            "description": "How far back the automatic modes reach on the phone, in days."
+          },
+          "sleep_padding_minutes": {
+            "type": "integer",
+            "title": "Sleep Padding Minutes",
+            "description": "Minutes added either side of each sleep session in sleep mode."
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "description": "True when nothing is stored for this user and the instance default applies."
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "mode",
+          "lookback_days",
+          "sleep_padding_minutes",
+          "is_default"
+        ],
+        "title": "BeatCaptureSettingRead"
+      },
+      "BeatCaptureSettingUpdate": {
+        "properties": {
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BeatCaptureMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lookback_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 30.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lookback Days"
+          },
+          "sleep_padding_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 240.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Padding Minutes"
+          }
+        },
+        "type": "object",
+        "title": "BeatCaptureSettingUpdate",
+        "description": "Fields left out keep their current value (or the instance default)."
+      },
+      "BeatCaptureWindowCreate": {
+        "properties": {
+          "start_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start At",
+            "description": "Window start (timezone-aware ISO 8601)."
+          },
+          "end_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End At",
+            "description": "Window end, exclusive (timezone-aware ISO 8601)."
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Free text, e.g. 'PSG night 3'."
+          }
+        },
+        "type": "object",
+        "required": [
+          "start_at",
+          "end_at"
+        ],
+        "title": "BeatCaptureWindowCreate"
+      },
+      "BeatCaptureWindowRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "start_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start At"
+          },
+          "end_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BeatCaptureWindowStatus"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "fulfilled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fulfilled At"
+          },
+          "beats_reported": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beats Reported",
+            "description": "Beats the phone uploaded for this window."
+          },
+          "series_reported": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Series Reported",
+            "description": "Heartbeat series the phone found in this window."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "start_at",
+          "end_at",
+          "status",
+          "created_at"
+        ],
+        "title": "BeatCaptureWindowRead"
+      },
+      "BeatCaptureWindowStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "fulfilled",
+          "cancelled"
+        ],
+        "title": "BeatCaptureWindowStatus"
       },
       "BloodPressure": {
         "properties": {
@@ -20294,6 +21048,85 @@
         "title": "Resolution",
         "description": "Bucket width requested when reading time series. RAW returns stored samples untouched."
       },
+      "SDKBeatCaptureConfig": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/BeatCaptureMode"
+          },
+          "lookback_days": {
+            "type": "integer",
+            "title": "Lookback Days"
+          },
+          "sleep_padding_minutes": {
+            "type": "integer",
+            "title": "Sleep Padding Minutes"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/SDKBeatCaptureWindow"
+            },
+            "type": "array",
+            "title": "Windows",
+            "description": "Pending windows to upload, whatever the mode."
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "lookback_days",
+          "sleep_padding_minutes",
+          "windows"
+        ],
+        "title": "SDKBeatCaptureConfig",
+        "description": "What the iOS SDK reads before each sync."
+      },
+      "SDKBeatCaptureFulfilment": {
+        "properties": {
+          "beats": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Beats"
+          },
+          "series": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Series"
+          }
+        },
+        "type": "object",
+        "required": [
+          "beats",
+          "series"
+        ],
+        "title": "SDKBeatCaptureFulfilment",
+        "description": "The phone's report that it has uploaded everything a window covers."
+      },
+      "SDKBeatCaptureWindow": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "start_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start At"
+          },
+          "end_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "start_at",
+          "end_at"
+        ],
+        "title": "SDKBeatCaptureWindow"
+      },
       "SDKLogRequest": {
         "properties": {
           "sdkVersion": {
@@ -23127,6 +23960,28 @@
               }
             ],
             "title": "Route Kind"
+          },
+          "beat_series_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beat Series Id"
+          },
+          "preceded_by_gap": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preceded By Gap"
           }
         },
         "type": "object",

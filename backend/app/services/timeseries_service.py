@@ -92,7 +92,25 @@ def _to_sample(
         interval_seconds=_interval_seconds(provider_metadata),
         route=route.value if route is not None else None,
         route_kind=ROUTE_KIND_BY_ROUTE[route].value if route is not None else None,
+        beat_series_id=_beat_series_id(provider_metadata),
+        preceded_by_gap=_preceded_by_gap(provider_metadata),
     )
+
+
+def _beat_series_id(provider_metadata: dict | None) -> str | None:
+    """The HealthKit heartbeat series a beat row belongs to, as the iOS SDK stated it."""
+    if not isinstance(provider_metadata, dict):
+        return None
+    value = provider_metadata.get("seriesId")
+    return value if isinstance(value, str) and value else None
+
+
+def _preceded_by_gap(provider_metadata: dict | None) -> bool | None:
+    """HealthKit's gap flag on a beat row, or None when the row is not a beat."""
+    if not isinstance(provider_metadata, dict):
+        return None
+    value = provider_metadata.get("precededByGap")
+    return value if isinstance(value, bool) else None
 
 
 def _interval_seconds(provider_metadata: dict | None) -> int | None:
