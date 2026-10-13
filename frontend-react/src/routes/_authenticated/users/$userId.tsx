@@ -17,6 +17,7 @@ import {
   Copy,
   Ellipsis,
   Heart,
+  HeartPulse,
   Layers,
   Watch,
   type LucideIcon,
@@ -43,6 +44,7 @@ import { ScoresSection } from '@/components/user/scores-section';
 import { WomensHealthSection } from '@/components/user/womens-health-section';
 import { CompareSection } from '@/components/user/compare-section';
 import { DevicesSection } from '@/components/user/devices-section';
+import { BeatCaptureSection } from '@/components/user/beat-capture-section';
 import type { DateRangeValue } from '@/components/ui/date-range-selector';
 import {
   AlertDialog,
@@ -180,6 +182,12 @@ function UserDetailPage() {
         label: 'Devices',
         icon: Watch,
         content: <DevicesSection userId={userId} />,
+      },
+      {
+        id: 'beats',
+        label: 'Beats',
+        icon: HeartPulse,
+        content: <BeatCaptureSection userId={userId} />,
       },
       {
         id: 'compare',

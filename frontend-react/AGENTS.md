@@ -97,14 +97,15 @@ src/
 
 ### user/
 
-| Component         | Description                                                       |
-| ----------------- | ----------------------------------------------------------------- |
-| `ProfileSection`  | User profile header with edit dialog and connected providers list |
-| `BodySection`     | Body metrics display with period toggle (7d/30d/90d)              |
-| `SleepSection`    | Sleep data with charts and session details                        |
-| `ActivitySection` | Activity metrics with dynamic chart selection                     |
-| `WorkoutSection`  | Workout list with heart rate time series chart                    |
-| `ConnectionCard`  | Provider connection status with sync button                       |
+| Component            | Description                                                       |
+| -------------------- | ----------------------------------------------------------------- |
+| `ProfileSection`     | User profile header with edit dialog and connected providers list |
+| `BodySection`        | Body metrics display with period toggle (7d/30d/90d)              |
+| `SleepSection`       | Sleep data with charts and session details                        |
+| `ActivitySection`    | Activity metrics with dynamic chart selection                     |
+| `WorkoutSection`     | Workout list with heart rate time series chart                    |
+| `ConnectionCard`     | Provider connection status with sync button                       |
+| `BeatCaptureSection` | Beat-to-beat mode, requested spans, beat CSV download             |
 
 ### users/
 
