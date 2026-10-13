@@ -164,6 +164,14 @@ export const queryKeys = {
     settings: () => [...queryKeys.archival.all, 'settings'] as const,
   },
 
+  beatCapture: {
+    all: ['beatCapture'] as const,
+    setting: (userId: string) =>
+      [...queryKeys.beatCapture.all, 'setting', userId] as const,
+    windows: (userId: string) =>
+      [...queryKeys.beatCapture.all, 'windows', userId] as const,
+  },
+
   developers: {
     all: ['developers'] as const,
     lists: () => [...queryKeys.developers.all, 'list'] as const,

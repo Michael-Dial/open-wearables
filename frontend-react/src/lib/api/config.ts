@@ -61,6 +61,11 @@ export const API_ENDPOINTS = {
     `/api/v1/users/${userId}/import/apple/xml/s3/multipart/abort`,
   userInvitationCode: (userId: string) =>
     `/api/v1/users/${userId}/invitation-code`,
+  userBeatCapture: (userId: string) => `/api/v1/users/${userId}/beat-capture`,
+  userBeatCaptureWindows: (userId: string) =>
+    `/api/v1/users/${userId}/beat-capture/windows`,
+  userBeatCaptureWindow: (userId: string, windowId: string) =>
+    `/api/v1/users/${userId}/beat-capture/windows/${windowId}`,
 
   // OAuth endpoints
   oauthAuthorize: (provider: string) => `/api/v1/oauth/${provider}/authorize`,
