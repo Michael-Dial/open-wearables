@@ -24,11 +24,20 @@ import {
   Loader2,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import type { UserRead, UserQueryParams } from '@/lib/api/types';
+import type {
+  UserRead,
+  UserQueryParams,
+  UserCreatedByFilter,
+} from '@/lib/api/types';
+import { useApiKeys } from '@/hooks/api/use-api-keys';
 import { ROUTES } from '@/lib/constants/routes';
 import { copyToClipboard } from '@/lib/utils/clipboard';
 import { truncateId } from '@/lib/utils/format';
 import { Badge } from '@/components/ui/badge';
+import {
+  CreatedByBadge,
+  CreatedByFilterSelect,
+} from '@/components/users/created-by';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -85,6 +94,8 @@ export function UsersTable({
   });
   const [globalFilter, setGlobalFilter] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [createdBy, setCreatedBy] = useState<UserCreatedByFilter | undefined>();
+  const { data: apiKeys } = useApiKeys();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedPairLink, setCopiedPairLink] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -94,6 +105,7 @@ export function UsersTable({
   });
 
   const prevSearchRef = useRef(debouncedSearch);
+  const prevCreatedByRef = useRef(createdBy);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -103,15 +115,19 @@ export function UsersTable({
   }, [globalFilter]);
 
   useEffect(() => {
-    const searchChanged = prevSearchRef.current !== debouncedSearch;
+    // A new search or creator filter starts again from the first page.
+    const filterChanged =
+      prevSearchRef.current !== debouncedSearch ||
+      prevCreatedByRef.current !== createdBy;
     prevSearchRef.current = debouncedSearch;
+    prevCreatedByRef.current = createdBy;
 
-    if (searchChanged && pagination.pageIndex !== 0) {
+    if (filterChanged && pagination.pageIndex !== 0) {
       setPagination((prev) => ({ ...prev, pageIndex: 0 }));
       return;
     }
 
-    const effectivePage = searchChanged ? 1 : pagination.pageIndex + 1;
+    const effectivePage = filterChanged ? 1 : pagination.pageIndex + 1;
     const sortColumn = sorting[0];
     const sortBy = sortColumn ? columnToSortBy[sortColumn.id] : 'created_at';
     const sortOrder = sortColumn?.desc ? 'desc' : 'asc';
@@ -122,8 +138,9 @@ export function UsersTable({
       sort_by: sortBy,
       sort_order: sortOrder,
       search: debouncedSearch || undefined,
+      created_by: createdBy,
     });
-  }, [pagination, sorting, debouncedSearch]);
+  }, [pagination, sorting, debouncedSearch, createdBy]);
 
   const handleCopyId = async (id: string) => {
     const success = await copyToClipboard(id, 'User ID copied to clipboard');
@@ -247,6 +264,16 @@ export function UsersTable({
       ),
     },
     {
+      id: 'created_by',
+      header: () => (
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          Created by
+        </span>
+      ),
+      cell: ({ row }) => <CreatedByBadge createdBy={row.original.created_by} />,
+      enableSorting: false,
+    },
+    {
       accessorKey: 'last_synced_at',
       header: ({ column }) => (
         <SortableHeader column={column}>Last Synced</SortableHeader>
@@ -365,8 +392,8 @@ export function UsersTable({
 
   return (
     <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-xl overflow-hidden">
-      <div className="p-4 border-b border-border/60">
-        <div className="relative">
+      <div className="p-4 border-b border-border/60 flex flex-col gap-3 sm:flex-row">
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             type="text"
@@ -379,6 +406,11 @@ export function UsersTable({
             <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground animate-spin" />
           )}
         </div>
+        <CreatedByFilterSelect
+          value={createdBy}
+          apiKeys={apiKeys ?? []}
+          onChange={setCreatedBy}
+        />
       </div>
 
       <div className="overflow-x-auto">
@@ -404,7 +436,7 @@ export function UsersTable({
               <tr>
                 <td colSpan={columns.length} className="px-4 py-12 text-center">
                   <p className="text-muted-foreground">
-                    {globalFilter
+                    {globalFilter || createdBy
                       ? 'No users match your search criteria.'
                       : 'No users found'}
                   </p>

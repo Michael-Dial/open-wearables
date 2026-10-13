@@ -41,6 +41,7 @@ the React code's line counts, tests excluded.
 | 8 | Priorities: per-account rows and the duplicate-relay notice | `routes/_authenticated/settings/-priorities-tab.tsx`, `lib/api/services/priority.service.ts` | `routes/(app)/settings/priorities/`, `lib/components/settings/priorities/` | ~110 |
 | 9 | Fork version and upstream sync date in the sidebar footer | `components/layout/version-footer.tsx`, `lib/utils/build-info.ts`, `fork-version.json` | `lib/components/layout/AppVersion.svelte` | ~100 |
 | 10 | WHOOP integration walkthrough page and screenshots | `public/whoop-integration.html`, `public/whoop-screenshots/` | `static/` (plain HTML, moves as is) | - |
+| 11 | Which app created a user: "Created by" column, filter and detail field | `components/users/created-by.tsx`, `users-table.tsx`, `components/user/profile-section.tsx` | `lib/components/users/` (users table, user detail header) | ~150 |
 
 ## Notes for whoever ports a row
 
