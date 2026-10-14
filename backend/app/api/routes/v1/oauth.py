@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
@@ -21,7 +22,9 @@ from app.services import DeveloperDep, user_connection_service
 from app.services.provider_settings_service import ProviderSettingsService
 from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.factory import ProviderFactory
+from app.utils.structured_logging import log_structured
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 factory = ProviderFactory()
 settings_service = ProviderSettingsService()
@@ -47,6 +50,52 @@ def get_oauth_strategy(provider: ProviderName) -> BaseProviderStrategy:
     return strategy
 
 
+def _polar_v4_goes_first(db: DbSession, user_id: UUID) -> bool:
+    """Whether connecting Polar should start with the AccessLink v4 grant.
+
+    Connecting Polar starts a historical sync at once, and that sync is what reads v4's
+    exact RR. Without a v4 token at that moment the backfill stores v3's reconstructed
+    beat clock, which a later v4 read cannot replace: the series upserts on timestamp and
+    the two place beats differently. So v4 is authorised first, in the same click, and its
+    callback hands on to the ordinary Polar consent. Nothing to add when the admin has
+    switched polar_v4 off or the user already holds a v4 token.
+    """
+    if not settings_service.is_enabled(db, ProviderName.POLAR_V4.value):
+        return False
+    return not user_connection_service.get_accounts_for_provider(
+        db, user_id, ProviderName.POLAR_V4.value, active_only=True
+    )
+
+
+def _continue_to_next_grant(oauth_state: OAuthState) -> RedirectResponse:
+    """Send a chained flow on to its next provider's consent screen, account details intact."""
+    assert oauth_state.then_provider
+    strategy = get_oauth_strategy(resolve_provider(oauth_state.then_provider))
+    assert strategy.oauth
+    auth_url, _ = strategy.oauth.get_authorization_url(
+        oauth_state.user_id,
+        oauth_state.redirect_uri,
+        new_account=oauth_state.new_account,
+        account_type=oauth_state.account_type,
+        account_label=oauth_state.account_label,
+        account_email=oauth_state.account_email,
+    )
+    return RedirectResponse(url=auth_url, status_code=303)
+
+
+def _declined_chained_grant(provider: str, state: str | None) -> OAuthState | None:
+    """The flow behind an error callback, when it was meant to continue to another grant."""
+    if not state:
+        return None
+    try:
+        strategy = get_oauth_strategy(resolve_provider(provider))
+    except HTTPException:
+        return None
+    assert strategy.oauth
+    oauth_state = strategy.oauth.consume_declined_state(state)
+    return oauth_state if oauth_state and oauth_state.then_provider else None
+
+
 @router.get(
     "/{provider}/authorize",
     summary="Get Provider Authorization URL",
@@ -55,6 +104,7 @@ def get_oauth_strategy(provider: ProviderName) -> BaseProviderStrategy:
 )
 def authorize_provider(
     provider: str,
+    db: DbSession,
     user_id: Annotated[UUID, Query(description="User ID to connect")],
     redirect_uri: Annotated[str | None, Query(description="Optional redirect URI after authorization")] = None,
     connection_id: Annotated[
@@ -98,15 +148,25 @@ def authorize_provider(
     back to the login it came from, so pass it for providers whose API does not
     expose it (Garmin, Polar, Suunto, Strava, Withings).
 
+    For Polar, the URL is for the AccessLink v4 grant first when that is enabled and the
+    user has none yet; its callback continues to the ordinary Polar consent. A reconnect of
+    one named account (``connection_id``) re-authorizes just that grant.
+
     Returns authorization URL where user should be redirected to log in.
     """
-    strategy = get_oauth_strategy(resolve_provider(provider))
+    provider_name = resolve_provider(provider)
+    strategy = get_oauth_strategy(provider_name)
 
     if connection_id is not None and new_account:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "connection_id re-authorizes an existing account and new_account adds one; pass at most one",
         )
+
+    then_provider = None
+    if provider_name == ProviderName.POLAR and connection_id is None and _polar_v4_goes_first(db, user_id):
+        strategy = get_oauth_strategy(ProviderName.POLAR_V4)
+        then_provider = ProviderName.POLAR.value
 
     assert strategy.oauth
     auth_url, state = strategy.oauth.get_authorization_url(
@@ -117,6 +177,7 @@ def authorize_provider(
         account_type=account_type.value if account_type else None,
         account_label=account_label,
         account_email=account_email,
+        then_provider=then_provider,
     )
     return AuthorizationURLResponse(authorization_url=auth_url, state=state)
 
@@ -156,6 +217,20 @@ def oauth_callback(
     Provider redirects here after user authorizes. Exchanges code for tokens.
     """
     if error:
+        # Declining an add-on grant still leads on to the main one: turning down Polar's
+        # beat-to-beat access is no reason to leave the person with no Polar at all.
+        declined = _declined_chained_grant(provider, state)
+        if declined is not None:
+            log_structured(
+                logger,
+                "warning",
+                "Chained OAuth grant declined, continuing to the next one",
+                provider=provider,
+                task="oauth_callback",
+                user_id=str(declined.user_id),
+                error=error,
+            )
+            return _continue_to_next_grant(declined)
         return RedirectResponse(
             url=f"/api/v1/oauth/error?message={error}:+{error_description or 'Unknown+error'}",
             status_code=303,
@@ -209,6 +284,9 @@ def oauth_callback(
                 # them on every new connection would be wasteful and rate-limited.
                 connection_ids=[str(connection_id)] if connection_id else None,
             )
+
+    if oauth_state.then_provider:
+        return _continue_to_next_grant(oauth_state)
 
     # If a specific redirect_uri was requested (e.g. by frontend), redirect there
     if oauth_state.redirect_uri:
