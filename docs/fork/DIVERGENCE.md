@@ -6,12 +6,12 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-10-13 19:20 UTC |
-| Our ref | `HEAD` — 48208353 (2026-10-13) docs: one API key per app, since the key names who created a user |
-| Upstream `main` | 10386814 (2026-10-13) docs: drop unsourced Google Health onboarding pause note (#1855) |
-| Last common commit | 097c3db0 (2026-10-13) docs: move new provider integrations section to supported providers page (#1854) |
-| Commits we are ahead | 221 |
-| Upstream commits not merged | 1 |
+| Generated | 2026-10-14 14:43 UTC |
+| Our ref | `HEAD` — bd7ccc8b (2026-10-14) chore(backend): merge revision joining upstream's refresh token origin and the fork's head |
+| Upstream `main` | e5bd025b (2026-10-14) feat(backend): run expensive data migrations once per instance (#1864) |
+| Last common commit | b7ae4578 (2026-10-14) docs: surface SDK payload offload in deployment and SDK guides (#1860) |
+| Commits we are ahead | 244 |
+| Upstream commits not merged | 2 |
 | Latest sync tag | _none yet_ |
 
 ## How to use this
@@ -28,17 +28,17 @@ git diff upstream-sync/<date>..HEAD
 git show upstream/main:<path>
 
 # which of our commits touched a file
-git log --oneline 097c3db0a4c602089912885d0909e14c69818dc6..HEAD -- <path>
+git log --oneline b7ae4578c91f730a78fa2883ecafb4b924beb1e2..HEAD -- <path>
 ```
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
 
-> **1 upstream commits are not merged yet.** The table below compares against the
+> **2 upstream commits are not merged yet.** The table below compares against the
 > last common commit, so it does not include changes upstream has made since.
 
 ## Diverged files
 
-575 files: 406 fork-only, 169 modified.
+576 files: 407 fork-only, 169 modified.
 
 ### `backend`
 
@@ -234,6 +234,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/migrations/versions/2026_10_08_1700-a7d3e9c1b2f4_data_point_series_route.py` | fork-only | — |
 | `backend/migrations/versions/2026_10_13_1444-7f1b94e46ff7_beat_capture.py` | fork-only | — |
 | `backend/migrations/versions/2026_10_13_1909-1bc6845b061f_user_creation_attribution.py` | fork-only | — |
+| `backend/migrations/versions/2026_10_14_1439-40f81f5301c7_merge_upstream_refresh_token_origin_.py` | fork-only | — |
 | `backend/scripts/audit_heart_rate_feeds.py` | fork-only | — |
 | `backend/scripts/check_patch_targets.py` | fork-only | — |
 | `backend/scripts/data_migrations/backfill_device_types.py` | modified | +20/-2 |
