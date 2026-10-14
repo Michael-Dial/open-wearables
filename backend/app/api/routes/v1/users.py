@@ -14,6 +14,7 @@ from app.schemas.model_crud.user_management import (
 )
 from app.schemas.utils import OldPaginatedResponse
 from app.services import ApiKeyDep, user_service
+from app.services.user_attribution import RequestCreatorDep
 
 router = APIRouter()
 
@@ -76,8 +77,13 @@ def get_user(
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED, response_model=UserRead)
-def create_user(payload: UserCreate, db: DbSession, _api_key: ApiKeyDep):
-    return user_service.create(db, payload)
+def create_user(payload: UserCreate, db: DbSession, created_by: RequestCreatorDep):
+    """Create a user, attributed to the credential that sent the request.
+
+    An API key attributes the user to that key, so each integration should use its own key,
+    named after the app. A developer's dashboard session attributes it to the portal.
+    """
+    return user_service.create(db, payload, created_by)
 
 
 @router.delete("/users/{user_id}", response_model=UserRead)

@@ -41,6 +41,7 @@ export const usersService = {
         search: params.search,
         email: params.email,
         external_user_id: params.external_user_id,
+        created_by: params.created_by,
       });
     }
 

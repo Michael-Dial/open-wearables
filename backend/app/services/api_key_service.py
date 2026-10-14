@@ -7,16 +7,20 @@ from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import DbSession, SessionLocal
-from app.models import ApiKey, Developer
+from app.models import ApiKey, Developer, User
 from app.repositories.api_key_repository import ApiKeyRepository
+from app.repositories.user_repository import UserRepository
 from app.schemas.model_crud.credentials import ApiKeyCreate, ApiKeyUpdate
 from app.services.services import AppService
 from app.utils.auth import get_current_developer_optional, oauth2_scheme, validate_api_key
 from app.utils.exceptions import ResourceNotFoundError, handle_exceptions
 from app.utils.security import hash_api_key
+from app.utils.sentry_helpers import log_and_capture_error
 
 # Number of leading characters of the raw key kept in clear for display ("sk-" + 7 hex chars).
 KEY_PREFIX_LENGTH = 10
+
+user_repository = UserRepository(User)
 
 
 class ApiKeyService(AppService[ApiKeyRepository, ApiKey, ApiKeyCreate, ApiKeyUpdate]):
@@ -64,18 +68,35 @@ class ApiKeyService(AppService[ApiKeyRepository, ApiKey, ApiKeyCreate, ApiKeyUpd
         The delete is only flushed, so the commit issued when the replacement is created
         covers both steps. If creating the replacement fails, the old key stays valid.
 
+        Users the old key created are attributed to the new one afterwards (fork): the same
+        app holds it, and the delete would otherwise leave them on the name snapshot only.
+
         Returns:
             Tuple of (new ApiKey, raw_key). The raw key is shown to the caller exactly once.
         """
         if not (old_key := self.get(db, key_id, raise_404=True)):
             raise ResourceNotFoundError(self.name, key_id)
         name = old_key.name
+        # Read before the delete, which sets their created_by_api_key_id to NULL.
+        attributed_user_ids = user_repository.ids_created_by_api_key(db, old_key.id)
         self.crud.delete_flush(db, old_key)
         try:
             new_key, raw_key = self.create_api_key(db, created_by, name)
         except Exception:
             db.rollback()
             raise
+        try:
+            user_repository.reassign_created_by_api_key(db, attributed_user_ids, new_key.id)
+        except Exception as e:
+            # The new key is committed and its raw value exists only in this response, so a
+            # failure here must not fail the rotation. The users keep their name snapshot.
+            db.rollback()
+            log_and_capture_error(
+                e,
+                self.logger,
+                "Failed to move users to the rotated API key",
+                extra={"api_key_id": str(new_key.id), "user_count": len(attributed_user_ids)},
+            )
         self.logger.debug(f"Rotated API key {key_id} to {new_key.id}")
         return new_key, raw_key
 

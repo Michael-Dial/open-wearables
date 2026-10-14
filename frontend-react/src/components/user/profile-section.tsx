@@ -17,6 +17,7 @@ import { formatDate, truncateId } from '@/lib/utils/format';
 import { copyToClipboard } from '@/lib/utils/clipboard';
 import { ConnectionCard } from '@/components/user/connection-card';
 import { AddProviderAccountDialog } from '@/components/user/add-provider-account-dialog';
+import { CreatedByBadge } from '@/components/users/created-by';
 import type { SyncStatusEvent, SyncRunSummary } from '@/lib/api';
 import type { UserConnection } from '@/lib/api/types';
 import { DataSummarySection } from '@/components/user/data-summary-section';
@@ -158,7 +159,7 @@ export function ProfileSection({ userId, activeRuns }: ProfileSectionProps) {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-6">
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">User ID</p>
                   <div className="flex items-center gap-1.5">
@@ -197,6 +198,15 @@ export function ProfileSection({ userId, activeRuns }: ProfileSectionProps) {
                   <p className="text-sm text-foreground/90">
                     {formatDate(user?.created_at)}
                   </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    Created by
+                  </p>
+                  <CreatedByBadge
+                    createdBy={user?.created_by}
+                    className="text-xs"
+                  />
                 </div>
               </div>
             )}

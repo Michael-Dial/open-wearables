@@ -25,9 +25,12 @@ from .invitation import (
     InvitationStatus,
 )
 from .user import (
+    CREATED_BY_UNKNOWN,
     USER_SORT_COLUMNS,
     UserConnectionSummary,
     UserCreate,
+    UserCreatedBy,
+    UserCreatedVia,
     UserCreateInternal,
     UserDetailRead,
     UserInclude,
@@ -75,10 +78,13 @@ __all__ = [
     "UserDetailRead",
     "UserInclude",
     "UserCreate",
+    "UserCreatedBy",
+    "UserCreatedVia",
     "UserCreateInternal",
     "UserUpdate",
     "UserUpdateInternal",
     "USER_SORT_COLUMNS",
+    "CREATED_BY_UNKNOWN",
     # UserConnection
     "UserConnectionAccountUpdate",
     "account_display_label",

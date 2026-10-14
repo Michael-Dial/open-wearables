@@ -1149,3 +1149,38 @@ then tell the watch's own data from an app's.
   `rr_interval` and `pulse_to_pulse_interval`: averaging a day of beat intervals into one
   archive row would destroy exactly what these series are kept for (Polar's PPI and RR were
   exposed to the same loss); retention still deletes them.
+
+## Every user records which app created it, from the creating credential
+
+- **Area**: backend, frontend, docs
+- **Status**: active, upstreamable
+- **On conflict**: keep ours; reconcile by re-applying it on top of upstream's change. Keep
+  `RequestCreatorDep` on `POST /users` (`api/routes/v1/users.py`); the required `created_by`
+  argument of `UserService.create` (an upstream caller that does not pass one is a creation
+  path that has to choose a value, not a call to patch with a default); the four `created_by_*`
+  / `created_via` columns and the `created_by_api_key_name` column property on `models/user.py`;
+  `UserCreatedVia`, `UserCreatedBy`, the hidden source fields and the `created_by` computed field
+  in `schemas/model_crud/user_management/user.py`, plus the `created_by` filter on
+  `UserQueryParams` and `UserRepository._apply_filters`; `SEED_CREATOR` in
+  `services/seed_data/service.py`; and the attribution carry-over in
+  `ApiKeyService.rotate_api_key`. `services/user_attribution.py`, migration `1bc6845b061f`,
+  `tests/api/v1/test_user_attribution.py` and `frontend-react/src/components/users/created-by.tsx`
+  are fork-only. `docs/openapi.json` is regenerated, never merged by hand.
+- **Why**: several apps (AMS, Sleep Hub, others) create participants in one Open Wearables
+  instance, and nothing said which one created a given user. The answer has to come from the
+  request's credential, not the payload, so it cannot be claimed and no app needs a code change
+  beyond using its own API key. `ApiKeyDep` could not supply it: it returns a bare id that is
+  either a developer or a key, and is used everywhere, so its meaning stays as is and
+  `RequestCreatorDep` (same order and same 401) runs only where users are created. An API key
+  records `api_key` with the key's id and a snapshot of its name; a developer JWT records
+  `portal` with the developer; the seed generator records `seed`. Users that existed before
+  have NULL `created_via` and read as unknown, since nothing records who made them.
+  `created_by.label` is the key's name *now* (a correlated subquery loaded with the row, not a
+  relationship, so `DELETE /users` can still serialize the deleted user), falling back to the
+  snapshot once the key is deleted. Rotation is delete-plus-create upstream, which would have
+  orphaned every user of a rotated key; the same app holds the new key, so its users move to
+  it. All additions to `UserRead` are new fields, so existing clients are unaffected. The
+  dashboard shows a Created by column, filter and detail field in `frontend-react/` only; the
+  SvelteKit portal row is in SVELTE_PORT.md. Documented in
+  `docs/developer-portal/settings/credentials.mdx` ("One API key per app") with a pointer from
+  `docs/dev-guides/integration-guide.mdx`.

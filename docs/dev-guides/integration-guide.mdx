@@ -96,6 +96,10 @@ async function createUser(email?: string): Promise<{ id: string }> {
 
 The response contains the user's `id` (UUID) along with the fields you sent - see [Create User](/api-reference/external:-users/create-user) for the full shape.
 
+<Tip>
+  The user is attributed to the API key that created it, and the response's `created_by.label` is that key's name. Give your integration its own key, named after your app, so its users can be told apart from other apps' in the dashboard and with `GET /api/v1/users?created_by=<api_key_id>`. See [One API key per app](/developer-portal/settings/credentials#one-api-key-per-app).
+</Tip>
+
 <Warning>
   **Store the Open Wearables user `id` on your own user row.** Every other call takes it, and Open Wearables doesn't enforce uniqueness - calling `POST /api/v1/users` twice with the same email creates two users. Check your stored ID before creating one. The legacy `external_user_id` field is deprecated and no data endpoint accepts it, so don't use it for deduplication.
 </Warning>

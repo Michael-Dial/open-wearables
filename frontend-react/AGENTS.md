@@ -109,9 +109,11 @@ src/
 
 ### users/
 
-| Component    | Description                                                  |
-| ------------ | ------------------------------------------------------------ |
-| `UsersTable` | Data table with sorting, search, pagination, and row actions |
+| Component               | Description                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `UsersTable`            | Data table with sorting, search, creator filter, pagination, and row actions |
+| `CreatedByBadge`        | App that created a user (API key name, Portal, Seed data)                    |
+| `CreatedByFilterSelect` | `created_by` filter: each API key, any key, portal, seed, unknown            |
 
 ## Common Patterns
 

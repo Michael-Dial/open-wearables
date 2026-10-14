@@ -10,6 +10,19 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
+/**
+ * What created a user, from the credential of the creating request.
+ *
+ * `label` is the API key's current name (or its name at creation once the key
+ * is deleted), `Portal`, or `Seed data`. Everything is null for users created
+ * before the backend recorded this.
+ */
+export interface UserCreatedBy {
+  via: 'api_key' | 'portal' | 'seed' | null;
+  label: string | null;
+  api_key_id: string | null;
+}
+
 export interface UserRead {
   id: string;
   created_at: string;
@@ -20,7 +33,16 @@ export interface UserRead {
   last_synced_at: string | null;
   last_synced_provider: string | null;
   has_active_connection: boolean;
+  /** Absent from a backend older than the attribution change. */
+  created_by?: UserCreatedBy;
 }
+
+/**
+ * `created_by` filter on the user list: an API key's id, or one of the
+ * non-key creators. `api_key` matches every API key, deleted ones included.
+ */
+export type UserCreatedByFilter =
+  'api_key' | 'portal' | 'seed' | 'unknown' | (string & {});
 
 export interface UserCreate {
   first_name?: string | null;
@@ -38,6 +60,7 @@ export interface UserQueryParams {
   search?: string;
   email?: string;
   external_user_id?: string;
+  created_by?: UserCreatedByFilter;
 }
 
 export interface PaginatedUsersResponse {

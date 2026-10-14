@@ -157,7 +157,7 @@ function UsersPage() {
         }
       />
 
-      {total > 0 || queryParams.search ? (
+      {total > 0 || queryParams.search || queryParams.created_by ? (
         <UsersTable
           data={users}
           total={total}
