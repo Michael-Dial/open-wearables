@@ -32,7 +32,7 @@ from sqlalchemy.orm import Query, aliased, selectinload
 
 from app.database import DbSession
 from app.models import DataPointSeries, DataSource, EventRecord, SleepDetails, WorkoutDetails
-from app.repositories.data_source_repository import DataSourceRepository
+from app.repositories.data_source_repository import SOURCE_ID_FIELDS, DataSourceRepository
 from app.repositories.repositories import CrudRepository, source_filter_conditions, utc_bucket_start
 from app.schemas.enums import ProviderName, SeriesType, TimelineBucket, get_series_type_id
 from app.schemas.model_crud.activities import (
@@ -101,6 +101,9 @@ class EventRecordRepository(
                 identity_claims=creator.identity_claims,
                 recorded_at=creator.start_datetime,
                 reported_type=creator.device_type,
+                provider_device_id=creator.provider_device_id,
+                source_app_id=creator.source_app_id,
+                device_manufacturer=creator.device_manufacturer,
             )
             data_source_id = data_source.id
 
@@ -118,6 +121,8 @@ class EventRecordRepository(
             # Consumed by ensure_data_source above (the platform's reported type).
             "device_type",
         ):
+            creation_data.pop(redundant_key, None)
+        for redundant_key in SOURCE_ID_FIELDS:
             creation_data.pop(redundant_key, None)
         return data_source_id, self.model(**creation_data)
 

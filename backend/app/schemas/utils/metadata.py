@@ -21,6 +21,10 @@ class SourceMetadata(BaseModel):
     source: str | None = Field(None, example="Connect")
     device: str | None = Field(None, example="iPhone15,2")
     device_type: DeviceType | None = Field(None, example="phone")
+    # Provider device identifier where one is reported (Samsung, Polar); tells same-model
+    # devices apart. Upstream #1781 calls it device_id; here device_id is the attributed
+    # device (below), so the provider's identifier keeps its own name.
+    provider_device_id: str | None = Field(None, example="R9ZW30ABC12")
 
     @computed_field
     @property
@@ -161,6 +165,7 @@ class SourceMetadata(BaseModel):
                 else None
             ),
             device_id=getattr(data_source, "device_id", None),
+            provider_device_id=getattr(data_source, "provider_device_id", None),
             user_connection_id=getattr(data_source, "user_connection_id", None),
             # device_type last: the registry's answer overrides the one inferred at
             # ingest from the provider's model string, which on a relayed stream names

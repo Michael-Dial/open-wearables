@@ -3,8 +3,9 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from app.constants.devices_map import normalize_device_model
 from app.schemas.enums import DeviceType, Resolution, SampleRoute, SeriesType
 from app.utils.dates import ZoneOffset
 from app.utils.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
@@ -28,6 +29,8 @@ class TimeSeriesSampleBase(BaseModel):
     # treats None as False. Set explicitly by the provider save path (Garmin dailies vs epochs).
     is_daily_total: bool | None = None
 
+    _normalize_device_model = field_validator("device_model")(normalize_device_model)
+
 
 class TimeSeriesSampleCreate(TimeSeriesSampleBase):
     id: UUID
@@ -43,6 +46,13 @@ class TimeSeriesSampleCreate(TimeSeriesSampleBase):
     # The feed that wrote this sample; stored as data_point_series.route_id. Two feeds of
     # one provider can share a data source, and this is the only thing telling them apart.
     route: SampleRoute | None = None
+    # Stable identifiers the provider reports for the data source (upstream #1781): the
+    # provider's own device id (Polar device_id, Samsung deviceId) and the writing app's
+    # id. Named provider_device_id here because data_source.device_id is the fork's
+    # device-registry link. See DataSource.provider_device_id.
+    provider_device_id: str | None = None
+    source_app_id: str | None = None
+    device_manufacturer: str | None = None
 
 
 class TimeSeriesSampleUpdate(TimeSeriesSampleBase):

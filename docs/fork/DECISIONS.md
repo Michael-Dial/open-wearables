@@ -1184,3 +1184,40 @@ then tell the watch's own data from an app's.
   SvelteKit portal row is in SVELTE_PORT.md. Documented in
   `docs/developer-portal/settings/credentials.mdx` ("One API key per app") with a pointer from
   `docs/dev-guides/integration-guide.mdx`.
+
+## Stable data source identity is per account
+
+- **Area**: backend, database, data migration
+- **Status**: active
+- **On conflict**: reconcile (keep `provider_device_id` as the name of upstream's provider device
+  identifier, `user_connection_id` in all three identity indexes, the fork's resolution in
+  `DataSourceRepository` with `_match` for upstream's tiers, and the per-account and
+  per-device guards in `scripts/data_migrations/merge_duplicate_data_sources.py`; keep that
+  script out of `scripts/start/app.sh`)
+- **Why**: upstream #1781 keys a data source on the provider's device id, then the writing app's
+  id with the model, then model + source, and #1864 runs a script at startup that merges sources
+  split by placeholder models and deletes events duplicated across a user's sources. Adopted, with
+  four changes:
+  1. Upstream adds `data_source.device_id` as a text column for the provider's identifier. Here
+     `device_id` is the device-registry foreign key (and the attributed device in API metadata),
+     so the provider's identifier is `provider_device_id` everywhere: column, creator schemas,
+     `SourceMetadata` and the data-source listing. Upstream's migration `2a52f24a8ccf` is reduced to
+     adding the columns under that name.
+  2. Upstream's three unique indexes match on (user, provider) and drop the account from
+     `uq_data_source_identity`. Each tier here includes `user_connection_id`, as the model + source
+     key already did, so two units of one model on two accounts stay two sources. The indexes are
+     built by the fork's `d7a3c9e15b20`, after the merge revision, so they cannot run before the
+     fork's own `b5d41c7a9e02` on a fresh database.
+  3. Matching (`DataSourceRepository._match`) follows upstream's order within one account, and
+     stamps the ids onto a row written before they were known, so history stays on one source.
+     Upstream's host-model rewrite - replacing a relaying iPhone's model with the producing
+     device's and merging the two - is left out: a stored model is a capture with a recorded
+     origin, and the device registry is where a relay and its producer are tied together.
+  4. The merge script matches within one account; never merges sources attributed to two
+     different registry devices; drops an event only when its copies cannot be two units (one
+     provider device id, one registry device and one non-null model at most); carries
+     attribution and `device_history` to the surviving source; and clears `device_model_origin`
+     when it renames a model away. Upstream's version, run against this fork's data, deletes an
+     event because an identical one exists on another account - the tests in
+     `TestMergeStaysWithinOneAccount` fail against it. It moves and deletes study data, so it is
+     not run at startup: run `--dry-run`, read the counts, then run it by hand.

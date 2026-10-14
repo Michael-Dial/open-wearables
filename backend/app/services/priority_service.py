@@ -106,6 +106,9 @@ class PriorityService:
                 source=ds.source,
                 device_type=ds.device_type,
                 original_source_name=ds.original_source_name,
+                provider_device_id=ds.provider_device_id,
+                source_app_id=ds.source_app_id,
+                device_manufacturer=ds.device_manufacturer,
                 display_name=self._build_display_name(
                     ds,
                     self._account_suffix(
@@ -179,6 +182,9 @@ class PriorityService:
             source=data_source.source,
             device_type=data_source.device_type,
             original_source_name=data_source.original_source_name,
+            provider_device_id=data_source.provider_device_id,
+            source_app_id=data_source.source_app_id,
+            device_manufacturer=data_source.device_manufacturer,
             display_name=self._build_display_name(data_source),
             device_id=data_source.device_id,
             attribution_locked_at=data_source.attribution_locked_at,

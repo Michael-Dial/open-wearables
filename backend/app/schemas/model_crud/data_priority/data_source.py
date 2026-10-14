@@ -15,6 +15,10 @@ class DataSourceBase(BaseModel):
     source: str | None = None
     device_type: str | None = None
     original_source_name: str | None = None
+    # Stable identifiers the provider reports (upstream #1781); see DataSource.provider_device_id.
+    provider_device_id: str | None = None
+    source_app_id: str | None = None
+    device_manufacturer: str | None = None
 
 
 class DataSourceCreate(DataSourceBase):
@@ -43,6 +47,21 @@ class DataSourceResponse(BaseModel):
     source: str | None = None
     device_type: str | None = None
     original_source_name: str | None = None
+    provider_device_id: str | None = Field(
+        None,
+        description=(
+            "The provider's own identifier for the physical unit (Polar device id, Samsung "
+            "deviceId), where it reports one. Tells same-model units on one account apart. "
+            "Not to be confused with `device_id`, the device this source is attributed to."
+        ),
+        example="R9ZW30ABC12",
+    )
+    source_app_id: str | None = Field(
+        None,
+        description="The writing app's id on SDK routes (HealthKit bundle id, Health Connect package).",
+        example="com.ouraring.oura",
+    )
+    device_manufacturer: str | None = None
     display_name: str | None = None
     device_id: UUID | None = Field(
         None,

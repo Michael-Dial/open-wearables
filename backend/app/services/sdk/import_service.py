@@ -48,7 +48,7 @@ from app.services.timeseries_service import timeseries_service
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
-from .device_resolution import extract_device_info, extract_reported_device_type
+from .device_resolution import extract_device_ids, extract_device_info, extract_reported_device_type
 from .measurement_window import with_measurement_window
 from .record_metadata import normalize_record_metadata
 from .sleep_service import handle_sleep_data
@@ -171,6 +171,7 @@ class ImportService:
 
             device_model, software_version, original_source_name = extract_device_info(wjson.source)
             device_type = extract_reported_device_type(provider, wjson.source)
+            provider_device_id, source_app_id, device_manufacturer = extract_device_ids(wjson.source)
 
             metrics, time_series_samples, duration = self._extract_metrics_from_workout_stats(
                 wjson.values,
@@ -182,6 +183,9 @@ class ImportService:
                 provider,
                 original_source_name,
                 device_type,
+                provider_device_id,
+                source_app_id,
+                device_manufacturer,
             )
 
             if duration is None:
@@ -204,6 +208,9 @@ class ImportService:
                 source=original_source_name,
                 software_version=software_version,
                 device_type=device_type,
+                provider_device_id=provider_device_id,
+                source_app_id=source_app_id,
+                device_manufacturer=device_manufacturer,
                 provider=provider,
                 user_id=user_uuid,
                 provider_metadata=normalize_record_metadata(wjson.metadata),
@@ -319,6 +326,7 @@ class ImportService:
 
             # Extract device info
             device_model, software_version, original_source_name = extract_device_info(rjson.source)
+            provider_device_id, source_app_id, device_manufacturer = extract_device_ids(rjson.source)
 
             sample = TimeSeriesSampleCreate(
                 route=SampleRoute.SDK_RECORDS,
@@ -329,6 +337,9 @@ class ImportService:
                 device_model=device_model,
                 software_version=software_version,
                 device_type=extract_reported_device_type(provider, rjson.source),
+                provider_device_id=provider_device_id,
+                source_app_id=source_app_id,
+                device_manufacturer=device_manufacturer,
                 provider=provider,
                 recorded_at=rjson.startDate,
                 zone_offset=rjson.zoneOffset,
@@ -369,6 +380,9 @@ class ImportService:
         provider: str,
         source_name: str | None,
         device_type: DeviceType | None = None,
+        provider_device_id: str | None = None,
+        source_app_id: str | None = None,
+        device_manufacturer: str | None = None,
     ) -> tuple[EventRecordMetrics, list[TimeSeriesSampleCreate], int | float | None]:
         """
         Returns a tuple with the metrics, time series samples, and duration.
@@ -398,6 +412,9 @@ class ImportService:
                         device_model=device_model,
                         software_version=software_version,
                         device_type=device_type,
+                        provider_device_id=provider_device_id,
+                        source_app_id=source_app_id,
+                        device_manufacturer=device_manufacturer,
                         provider=provider,
                         recorded_at=end_date,
                         zone_offset=zone_offset,

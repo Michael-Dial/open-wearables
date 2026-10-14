@@ -91,6 +91,10 @@ echo 'Running device type backfill...'
 uv run python scripts/data_migrations/backfill_device_types.py \
     || echo "Warning: device type backfill failed — will retry on next startup."
 
+# Fork: upstream runs scripts/data_migrations/merge_duplicate_data_sources.py here. It moves
+# and deletes study data, so on this fork it is run by hand after a --dry-run has been
+# reviewed - see docs/fork/DECISIONS.md, "Stable data source identity is per account".
+
 # Initialize archival settings
 echo 'Initializing archival settings...'
 uv run python scripts/init/seed_archival_settings.py

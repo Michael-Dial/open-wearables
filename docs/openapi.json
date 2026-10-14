@@ -15915,6 +15915,43 @@
             ],
             "title": "Original Source Name"
           },
+          "provider_device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Device Id",
+            "description": "The provider's own identifier for the physical unit (Polar device id, Samsung deviceId), where it reports one. Tells same-model units on one account apart. Not to be confused with `device_id`, the device this source is attributed to.",
+            "example": "R9ZW30ABC12"
+          },
+          "source_app_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source App Id",
+            "description": "The writing app's id on SDK routes (HealthKit bundle id, Health Connect package).",
+            "example": "com.ouraring.oura"
+          },
+          "device_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Manufacturer"
+          },
           "display_name": {
             "anyOf": [
               {
@@ -22761,6 +22798,18 @@
               }
             ],
             "example": "phone"
+          },
+          "provider_device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Device Id",
+            "example": "R9ZW30ABC12"
           },
           "data_source_id": {
             "anyOf": [
