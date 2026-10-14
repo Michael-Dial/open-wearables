@@ -24,7 +24,7 @@ from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import ProviderName
 from app.services.devices.detection import DeviceDetectionService
 from app.services.devices.identity import claims_from_sdk_source
-from app.services.sdk.device_resolution import extract_device_info, extract_reported_device_type
+from app.services.sdk.device_resolution import extract_device_ids, extract_device_info, extract_reported_device_type
 from app.utils.connection_context import get_active_connection_id
 
 log = getLogger(__name__)
@@ -44,7 +44,7 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
 
     repo = DeviceRepository()
     detector = DeviceDetectionService(repo)
-    seen: set[tuple[str | None, str | None]] = set()
+    seen: set[tuple[str | None, ...]] = set()
     touched = 0
 
     try:
@@ -55,7 +55,8 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
             # The identity a data source is keyed by. ensure_data_source stores
             # `source = original_source_name` on the Apple path, so this matches how
             # the row was written rather than re-deriving a different key.
-            key = (device_model, original_source_name)
+            provider_device_id, source_app_id, _manufacturer = extract_device_ids(source)
+            key = (device_model, original_source_name, provider_device_id, source_app_id)
             if key in seen:
                 continue
             seen.add(key)
@@ -69,7 +70,9 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
             if not claims and reported_device_type is None:
                 continue
 
-            data_source = _find_data_source(db_session, user_id, provider, device_model, original_source_name)
+            data_source = _find_data_source(
+                db_session, user_id, provider, device_model, original_source_name, provider_device_id, source_app_id
+            )
             if data_source is None:
                 continue
 
@@ -97,12 +100,14 @@ def _find_data_source(
     provider: str,
     device_model: str | None,
     source: str | None,
+    provider_device_id: str | None = None,
+    source_app_id: str | None = None,
 ) -> DataSource | None:
     try:
         provider_enum = ProviderName(provider)
     except ValueError:
         return None
-    from app.repositories.data_source_repository import DataSourceRepository
+    from app.repositories.data_source_repository import DataSourceIdentity, DataSourceRepository
 
     repo = DataSourceRepository()
     # Inside a sync scoped to one account (the normal SDK path) the identity is
@@ -111,5 +116,8 @@ def _find_data_source(
     # the same device would merge the units.
     connection_id = get_active_connection_id()
     if connection_id is not None:
-        return repo.get_by_connection_identity(db_session, user_id, provider_enum, device_model, source, connection_id)
+        # Through the same tiered match ingest uses (upstream #1781): an SDK source is
+        # keyed by its writer's app id, so a model + source lookup would miss it.
+        identity = DataSourceIdentity(user_id, device_model, source, provider_device_id, source_app_id)
+        return repo.find_for_identity(db_session, provider_enum, identity, connection_id)
     return repo.get_by_identity(db_session, user_id, provider_enum, device_model, source)

@@ -153,6 +153,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             id=workout_id,
             external_id=raw_workout.id,
             source="polar",
+            provider_device_id=raw_workout.device_id,
             user_id=user_id,
         )
 

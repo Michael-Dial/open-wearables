@@ -34,14 +34,36 @@ class DataSource(BaseDbModel):
     """
 
     __tablename__ = "data_source"
+    # Identity tiers, most stable first (upstream #1781): the provider's device id, then the
+    # writing app's id with the model, then model + source. Each tier is unique per account.
+    #
+    # user_connection_id is part of the identity, not an attribute of it: a participant
+    # wearing two Garmins reports the same device_model and the same source from both
+    # accounts, and without the connection in the key the two units would share one
+    # data_source and their samples would be indistinguishable afterwards. The all-zero
+    # UUID stands in for NULL (one-time imports) because NULLs do not compare equal in a
+    # unique index. Upstream's tiers leave the connection out; every tier here keeps it.
     __table_args__ = (
         Index("ix_data_source_user_provider", "user_id", "provider"),
-        # user_connection_id is part of the identity, not an attribute of it: a
-        # participant wearing two Garmins reports the same device_model and the
-        # same source from both accounts, and without the connection in the key
-        # the two units would share one data_source and their samples would be
-        # indistinguishable afterwards. The all-zero UUID stands in for NULL
-        # (one-time imports) because NULLs do not compare equal in a unique index.
+        Index(
+            "uq_data_source_device",
+            "user_id",
+            "provider",
+            "provider_device_id",
+            text("COALESCE(user_connection_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
+            unique=True,
+            postgresql_where=text("provider_device_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_data_source_app",
+            "user_id",
+            "provider",
+            "source_app_id",
+            text("COALESCE(device_model, '')"),
+            text("COALESCE(user_connection_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
+            unique=True,
+            postgresql_where=text("provider_device_id IS NULL AND source_app_id IS NOT NULL"),
+        ),
         Index(
             "uq_data_source_identity",
             "user_id",
@@ -50,6 +72,7 @@ class DataSource(BaseDbModel):
             text("COALESCE(source, '')"),
             text("COALESCE(user_connection_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
             unique=True,
+            postgresql_where=text("provider_device_id IS NULL AND source_app_id IS NULL"),
         ),
         Index("ix_data_source_user_connection", "user_connection_id"),
         CheckConstraint(
@@ -80,6 +103,14 @@ class DataSource(BaseDbModel):
     source: Mapped[str_100 | None]
     device_type: Mapped[str_32 | None]
     original_source_name: Mapped[str_100 | None]
+    # Stable identifiers from the provider (upstream #1781): a per-device id (Polar
+    # device_id, Samsung deviceId) and the writer app id (HealthKit/Health Connect appId).
+    # Upstream names the first one device_id; here device_id is the device-registry link
+    # below, so the provider's identifier is provider_device_id. The two answer different
+    # questions - what the provider calls the unit, and which unit we attribute it to.
+    provider_device_id: Mapped[str_100 | None]
+    source_app_id: Mapped[str_100 | None]
+    device_manufacturer: Mapped[str_100 | None]
 
     # The physical unit this source is attributed to, once one is known. NULL means
     # unattributed, which is a normal resting state rather than an error: detection

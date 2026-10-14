@@ -2,6 +2,7 @@ from .api_key import ApiKey
 from .application import Application
 from .archival_setting import ArchivalSetting
 from .beat_capture import BeatCaptureSetting, BeatCaptureWindow
+from .data_migration import DataMigration
 from .data_point_series import DataPointSeries
 from .data_point_series_archive import DataPointSeriesArchive
 from .data_source import DataSource
@@ -43,6 +44,7 @@ __all__ = [
     "ApiKey",
     "Application",
     "ArchivalSetting",
+    "DataMigration",
     "Developer",
     "DataSource",
     "BeatCaptureSetting",

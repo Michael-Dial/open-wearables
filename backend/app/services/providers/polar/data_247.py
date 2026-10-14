@@ -284,6 +284,8 @@ class Polar247Data(Base247DataTemplate):
                 # recognised as a re-ingestion, so it takes the merge path and sums
                 # sleep_time_in_bed_minutes into the existing row on every sync.
                 external_id=parsed.date or start_dt.date().isoformat(),
+                source=ProviderName.POLAR,
+                provider_device_id=parsed.device_id,
                 duration_seconds=duration_seconds,
                 start_datetime=start_dt,
                 end_datetime=end_dt,
@@ -330,6 +332,7 @@ class Polar247Data(Base247DataTemplate):
                 if parsed.heart_rate_samples
                 else []
             )
+            hr_samples = [s.model_copy(update={"provider_device_id": parsed.device_id}) for s in hr_samples]
             results.append((record, detail, score, hr_samples))
         return results
 

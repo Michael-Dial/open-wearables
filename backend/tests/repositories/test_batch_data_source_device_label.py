@@ -70,6 +70,10 @@ def _row(user_id: UUID, device_model: str | None, source: str | None, ds_id: UUI
         id=ds_id,
         device_type=None,
         original_source_name=None,
+        # Upstream #1781's stable ids; a row from before them carries none.
+        provider_device_id=None,
+        source_app_id=None,
+        device_manufacturer=None,
     )
 
 

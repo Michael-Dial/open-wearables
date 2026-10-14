@@ -40,7 +40,7 @@ from sqlalchemy.schema import CreateTable
 from app.database import DbSession
 from app.models import DataPointSeries, DataPointSeriesArchive, DataSource, DeviceTypePriority, ProviderPriority
 from app.models.series_type_definition import SeriesTypeDefinition
-from app.repositories.data_source_repository import DataSourceRepository
+from app.repositories.data_source_repository import SOURCE_ID_FIELDS, DataSourceRepository
 from app.repositories.repositories import (
     CrudRepository,
     source_filter_conditions,
@@ -229,6 +229,8 @@ class DataPointSeriesRepository(
             "data_source_id",
             "route",
         ):
+            creation_data.pop(redundant_key, None)
+        for redundant_key in SOURCE_ID_FIELDS:
             creation_data.pop(redundant_key, None)
 
         # Set the proper values
@@ -475,6 +477,9 @@ class DataPointSeriesRepository(
             source=creator.source,
             recorded_at=creator.recorded_at,
             reported_type=creator.device_type,
+            provider_device_id=creator.provider_device_id,
+            source_app_id=creator.source_app_id,
+            device_manufacturer=creator.device_manufacturer,
         )
 
     def get_samples(

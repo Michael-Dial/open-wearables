@@ -35,11 +35,14 @@ from app.schemas.providers.mobile_sdk import (
 )
 from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
-from app.services.sdk.device_resolution import extract_device_info, extract_reported_device_type
+from app.services.sdk.device_resolution import extract_device_ids, extract_device_info, extract_reported_device_type
 from app.utils.connection_context import get_active_connection_id
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
+
+# (provider_device_id, source_app_id, device_manufacturer) as extract_device_ids returns them
+SourceIds = tuple[str | None, str | None, str | None]
 
 _FINALIZE_STALE_SLEEPS_TASK = "app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps"
 
@@ -168,12 +171,18 @@ def _create_new_sleep_state(
     device_model: str | None = None,
     zone_offset: str | None = None,
     device_type: DeviceType | None = None,
+    provider_device_id: str | None = None,
+    source_app_id: str | None = None,
+    device_manufacturer: str | None = None,
 ) -> SleepState:
     return SleepState(
         uuid=id or str(uuid4()),
         source_name=source_name or "unknown",
         device_model=device_model,
         device_type=device_type,
+        provider_device_id=provider_device_id,
+        source_app_id=source_app_id,
+        device_manufacturer=device_manufacturer,
         provider=provider,
         zone_offset=zone_offset,
         start_time=start_time,
@@ -203,6 +212,9 @@ def _apply_transition(
     device_model: str | None = None,
     zone_offset: str | None = None,
     device_type: DeviceType | None = None,
+    provider_device_id: str | None = None,
+    source_app_id: str | None = None,
+    device_manufacturer: str | None = None,
 ) -> SleepState:
     """Apply a transition to the sleep state."""
 
@@ -224,7 +236,17 @@ def _apply_transition(
     if delta_seconds > settings.sleep_end_gap_minutes * 60:
         finish_sleep(db_session, user_id, state)
         state = _create_new_sleep_state(
-            start_time, end_time, uuid, provider, source_name, device_model, zone_offset, device_type
+            start_time,
+            end_time,
+            uuid,
+            provider,
+            source_name,
+            device_model,
+            zone_offset,
+            device_type,
+            provider_device_id,
+            source_app_id,
+            device_manufacturer,
         )
 
     if zone_offset and not state.zone_offset:
@@ -345,7 +367,7 @@ def handle_sleep_data(
         # Deduplicate, then split by reporting stream. Sorting before the split keeps
         # each stream chronological, which the gap logic in _apply_transition needs.
         seen = set()
-        by_scope: dict[str, list[tuple[Any, str | None, str | None, DeviceType | None]]] = defaultdict(list)
+        by_scope: dict[str, list[tuple[Any, str | None, str | None, DeviceType | None, SourceIds]]] = defaultdict(list)
 
         for item in sorted(request.data.sleep, key=lambda x: x.startDate):
             # Create a unique key for deduplication
@@ -361,9 +383,10 @@ def handle_sleep_data(
             # Only routes whose deviceType is the platform's own classification report
             # one; on the Apple route it is the SDK's guess and comes back None.
             device_type = extract_reported_device_type(provider, item.source)
+            source_ids = extract_device_ids(item.source)
             incoming_by_source[original_source_name or "unknown"] += 1
             by_scope[session_scope(original_source_name, device_model)].append(
-                (item, device_model, original_source_name, device_type)
+                (item, device_model, original_source_name, device_type, source_ids)
             )
 
         # One session per reporting stream. A shared session would let whichever
@@ -373,7 +396,8 @@ def handle_sleep_data(
         for scope, scoped_records in by_scope.items():
             current_state = load_sleep_state(user_id, scope)
 
-            for sjson, device_model, original_source_name, device_type in scoped_records:
+            for sjson, device_model, original_source_name, device_type, source_ids in scoped_records:
+                provider_device_id, source_app_id, device_manufacturer = source_ids
                 sleep_phase = get_apple_sleep_phase(sjson.stage)
 
                 if sleep_phase is None:
@@ -396,6 +420,9 @@ def handle_sleep_data(
                         device_model,
                         sjson.zoneOffset,
                         device_type,
+                        provider_device_id,
+                        source_app_id,
+                        device_manufacturer,
                     )
 
                 current_state = _apply_transition(
@@ -411,6 +438,9 @@ def handle_sleep_data(
                     device_model,
                     sjson.zoneOffset,
                     device_type,
+                    provider_device_id,
+                    source_app_id,
+                    device_manufacturer,
                 )
                 applied += 1
                 applied_by_source[original_source_name or "unknown"] += 1
@@ -642,6 +672,9 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
         provider=state.provider,
         device_model=state.device_model,
         device_type=state.device_type,
+        provider_device_id=state.provider_device_id,
+        source_app_id=state.source_app_id,
+        device_manufacturer=state.device_manufacturer,
     )
 
     detail = EventRecordDetailCreate(

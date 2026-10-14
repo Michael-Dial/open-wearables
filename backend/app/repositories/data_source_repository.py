@@ -1,11 +1,11 @@
 import contextlib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from logging import getLogger
-from typing import TYPE_CHECKING, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, and_, asc, delete, func, or_
+from sqlalchemy import CursorResult, and_, asc, delete, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -42,7 +42,58 @@ if TYPE_CHECKING:
 
 log = getLogger(__name__)
 
-DataSourceIdentity = tuple[UUID, str | None, str | None]
+# Creator fields that describe the record's data source rather than the record itself.
+# The writers strip them before building the row (upstream #1781's DATA_SOURCE_FIELDS,
+# with the fork's provider_device_id in place of upstream's device_id).
+SOURCE_ID_FIELDS = ("provider_device_id", "source_app_id", "device_manufacturer")
+
+# Columns the bulk path inserts, in one statement for every row it creates.
+_INSERT_FIELDS = (
+    "id",
+    "user_id",
+    "provider",
+    "user_connection_id",
+    "device_model",
+    "source",
+    "device_type",
+    "original_source_name",
+    "device_model_origin",
+    "provider_device_id",
+    "source_app_id",
+    "device_manufacturer",
+)
+
+
+class DataSourceIdentity(NamedTuple):
+    """What a data source is matched on within one account.
+
+    The first three fields are the fork's original key. The two ids are upstream #1781's
+    stable identifiers - the provider's id for the physical unit and the writing app's id
+    - and take precedence when present, so two same-model units on one account stay
+    apart and a writer's rows stay together whatever it calls its source. A plain
+    (user_id, device_model, source) tuple still works anywhere one of these is accepted.
+    """
+
+    user_id: UUID
+    device_model: str | None
+    source: str | None
+    provider_device_id: str | None = None
+    source_app_id: str | None = None
+
+    def with_clean_ids(self) -> "DataSourceIdentity":
+        """Blank or whitespace-only ids count as absent."""
+        return self._replace(
+            provider_device_id=(self.provider_device_id or "").strip() or None,
+            source_app_id=(self.source_app_id or "").strip() or None,
+        )
+
+    @property
+    def keyed(self) -> bool:
+        return bool(self.provider_device_id or self.source_app_id)
+
+    def legacy(self) -> "DataSourceIdentity":
+        """The same identity without its ids: how a row written before the ids arrived is keyed."""
+        return self._replace(provider_device_id=None, source_app_id=None)
 
 
 class BulkSourceCreator(Protocol):
@@ -53,6 +104,17 @@ class BulkSourceCreator(Protocol):
     user_connection_id: UUID | None
     device_model: str | None
     source: str | None
+
+
+def creator_identity(creator: BulkSourceCreator, device_model: str | None = None) -> DataSourceIdentity:
+    """A creator's identity, with ``device_model`` standing in for its own when given."""
+    return DataSourceIdentity(
+        creator.user_id,
+        device_model if device_model is not None else creator.device_model,
+        creator.source,
+        getattr(creator, "provider_device_id", None),
+        getattr(creator, "source_app_id", None),
+    ).with_clean_ids()
 
 
 _Creator = TypeVar("_Creator", bound=BulkSourceCreator)
@@ -77,6 +139,11 @@ class DataSourceRepository(
             self.model.provider == provider,
             func.coalesce(self.model.device_model, "") == (device_model or ""),
             func.coalesce(self.model.source, "") == (source or ""),
+            # The model + source tier only: a row keyed by a stable id can share its
+            # model and source with a legacy row (the partial unique indexes allow it),
+            # and is found through _match instead.
+            self.model.provider_device_id.is_(None),
+            self.model.source_app_id.is_(None),
         ]
         # The connection is part of the identity: two accounts with one provider
         # report identical device models, and pooling them would be irreversible.
@@ -106,6 +173,20 @@ class DataSourceRepository(
             .one_or_none()
         )
 
+    def find_for_identity(
+        self,
+        db_session: DbSession,
+        provider: ProviderName,
+        identity: DataSourceIdentity,
+        user_connection_id: UUID | None,
+    ) -> DataSource | None:
+        """The row ingest would file ``identity`` under on this account, without creating or stamping it."""
+        identity = DataSourceIdentity(*identity).with_clean_ids()
+        return self._match(
+            self._account_rows(db_session, provider, {identity.user_id}, user_connection_id),
+            identity,
+        )
+
     def get_by_identity(
         self,
         db_session: DbSession,
@@ -133,6 +214,134 @@ class DataSourceRepository(
             .order_by(self.model.created_at.asc(), self.model.id.asc())
             .first()
         )
+
+    def _account_rows(
+        self,
+        db_session: DbSession,
+        provider: ProviderName,
+        user_ids: set[UUID],
+        user_connection_id: UUID | None,
+    ) -> list[DataSource]:
+        """Every row of these users for one provider on one account (None: the connection-less rows).
+
+        A user has a handful of sources per provider, so matching runs over them in memory.
+        """
+        connection = (
+            self.model.user_connection_id.is_(None)
+            if user_connection_id is None
+            else self.model.user_connection_id == user_connection_id
+        )
+        return (
+            db_session.query(self.model)
+            .filter(self.model.provider == provider, self.model.user_id.in_(user_ids), connection)
+            .all()
+        )
+
+    @staticmethod
+    def _find(rows: Sequence[DataSource], identity: DataSourceIdentity) -> DataSource | None:
+        """The row on the identity's own tier: device id, else app id + model, else model + source."""
+        for row in rows:
+            if row.user_id != identity.user_id:
+                continue
+            if identity.provider_device_id:
+                matched = row.provider_device_id == identity.provider_device_id
+            elif identity.source_app_id:
+                matched = (
+                    row.provider_device_id is None
+                    and row.source_app_id == identity.source_app_id
+                    and (row.device_model or "") == (identity.device_model or "")
+                )
+            else:
+                matched = (
+                    row.provider_device_id is None
+                    and row.source_app_id is None
+                    and (row.device_model or "") == (identity.device_model or "")
+                    and (row.source or "") == (identity.source or "")
+                )
+            if matched:
+                return row
+        return None
+
+    @classmethod
+    def _match(cls, rows: Sequence[DataSource], identity: DataSourceIdentity) -> DataSource | None:
+        """The existing row for an identity, from rows already scoped to its account.
+
+        Upstream #1781's order, minus its host-model rewrite (which replaces a stored
+        device_model, and here a stored model is a capture with a recorded origin):
+
+        1. A record sent without ids joins the one keyed row with its model, so a route
+           that sends ids on some records only (Samsung step counts) keeps one source.
+        2. The identity's own tier.
+        3. A writer's only row when the model is missing on one side, so a writer's
+           records with and without a model converge. Missing means None here, not an
+           Apple host code as upstream also counts it - see above.
+        4. A row written before the ids were known: the app-id row for an identity that
+           now also carries a device id, else the model + source row. The caller stamps
+           the ids onto it, so a device's history stays on the source it started on.
+        """
+        if not identity.keyed and identity.device_model:
+            keyed = [
+                r
+                for r in rows
+                if r.user_id == identity.user_id
+                and (r.provider_device_id or r.source_app_id)
+                and r.device_model == identity.device_model
+            ]
+            if len(keyed) == 1:
+                return keyed[0]
+        if found := cls._find(rows, identity):
+            return found
+        if identity.source_app_id and not identity.provider_device_id:
+            writer_rows = [
+                r
+                for r in rows
+                if r.user_id == identity.user_id
+                and r.provider_device_id is None
+                and r.source_app_id == identity.source_app_id
+            ]
+            if len(writer_rows) == 1 and (identity.device_model is None or writer_rows[0].device_model is None):
+                return writer_rows[0]
+        app_row = identity._replace(provider_device_id=None)
+        if identity.provider_device_id and identity.source_app_id and (found := cls._find(rows, app_row)):
+            return found
+        if identity.keyed:
+            return cls._find(rows, identity.legacy())
+        return None
+
+    @staticmethod
+    def _learn_model(row: DataSource, device_model: str | None) -> bool:
+        """Give a keyed row first seen without a model the provider's model. True if it did.
+
+        Polar sleep arrives before the exercise that names the watch; a writer's first
+        records may carry no model. Only for keyed rows, and only from a model the
+        provider sent: a label describes the account, not this unit.
+        """
+        if row.device_model is not None or device_model is None:
+            return False
+        if not (row.provider_device_id or row.source_app_id):
+            return False
+        object.__setattr__(row, "device_model", device_model)
+        object.__setattr__(row, "device_model_origin", DeviceModelOrigin.PROVIDER.value)
+        return True
+
+    @staticmethod
+    def _stamp_ids(row: DataSource, identity: DataSourceIdentity, device_manufacturer: str | None) -> bool:
+        """Fill the stable ids (and manufacturer) a matched row lacks. True if anything changed.
+
+        Ids are only ever added, never replaced: a row keyed by one unit's id must not be
+        re-keyed to another's.
+        """
+        changed = False
+        if identity.provider_device_id and row.provider_device_id is None:
+            object.__setattr__(row, "provider_device_id", identity.provider_device_id)
+            changed = True
+        if identity.source_app_id and row.source_app_id is None:
+            object.__setattr__(row, "source_app_id", identity.source_app_id)
+            changed = True
+        if device_manufacturer and row.device_manufacturer is None:
+            object.__setattr__(row, "device_manufacturer", device_manufacturer)
+            changed = True
+        return changed
 
     def _connection_device_label(
         self,
@@ -284,6 +493,9 @@ class DataSourceRepository(
         identity_claims: "list[IdentityClaim] | None" = None,
         recorded_at: datetime | None = None,
         reported_type: DeviceType | None = None,
+        provider_device_id: str | None = None,
+        source_app_id: str | None = None,
+        device_manufacturer: str | None = None,
     ) -> DataSource:
         """The data source for one record, created if missing.
 
@@ -323,8 +535,10 @@ class DataSourceRepository(
 
         original_source_name = self._resolve_original_source_name(provider, device_model, source, original_source_name)
 
-        existing = self.get_by_connection_identity(
-            db_session, user_id, provider, device_model, source, user_connection_id
+        identity = DataSourceIdentity(user_id, device_model, source, provider_device_id, source_app_id).with_clean_ids()
+        existing = self._match(
+            self._account_rows(db_session, provider, {user_id}, user_connection_id),
+            identity,
         )
         if existing is None and user_connection_id is not None:
             # Adopt a source ingested before connections were recorded against
@@ -336,7 +550,10 @@ class DataSourceRepository(
             existing = self._adoptable_orphan(db_session, user_id, provider, device_model, source, user_connection_id)
 
         if existing:
-            updated = False
+            updated = self._stamp_ids(existing, identity, device_manufacturer)
+            # Stamped first, so a legacy row that just gained its ids can learn a model too.
+            if device_model_origin is DeviceModelOrigin.PROVIDER:
+                updated |= self._learn_model(existing, device_model)
             if user_connection_id and existing.user_connection_id is None:
                 object.__setattr__(existing, "user_connection_id", user_connection_id)
                 updated = True
@@ -384,6 +601,9 @@ class DataSourceRepository(
             device_type=device_type.value,
             original_source_name=original_source_name,
             device_model_origin=device_model_origin.value if device_model_origin else None,
+            provider_device_id=identity.provider_device_id,
+            source_app_id=identity.source_app_id,
+            device_manufacturer=device_manufacturer,
         )
         result = self.create(db_session, create_payload)
         assert result is not None
@@ -716,13 +936,18 @@ class DataSourceRepository(
         db_session: DbSession,
         provider: ProviderName,
         user_connection_id: UUID | None,
-        identities: set[tuple[UUID, str | None, str | None]],
-        reported_types: dict[tuple[UUID, str | None, str | None], DeviceType] | None = None,
+        identities: Iterable[tuple],
+        reported_types: Mapping[Any, DeviceType] | None = None,
         *,
-        label_identities: frozenset[tuple[UUID, str | None, str | None]] = frozenset(),
+        label_identities: frozenset[tuple] = frozenset(),
         labels_resolved: bool = False,
-    ) -> dict[tuple[UUID, str | None, str | None], UUID]:
+        manufacturers: Mapping[Any, str] | None = None,
+    ) -> dict[tuple, UUID]:
         """Data source ids for a batch of identities on one account, creating the missing.
+
+        An identity is a DataSourceIdentity, or a plain (user_id, device_model, source)
+        tuple for a route without stable ids; the result is keyed by what was passed.
+        Matching follows _match: upstream #1781's tiers, within this account only.
 
         ``labels_resolved`` says the caller already applied the account's dated device
         history per record (resolve_bulk_data_sources), so a device_model still None
@@ -731,15 +956,14 @@ class DataSourceRepository(
         identities whose device_model came from that history rather than the payload,
         so what is created from them is recorded as label-derived.
         """
-        if not identities:
+        requested_list = list(dict.fromkeys(identities))
+        if not requested_list:
             return {}
 
         # Same fallback as ensure_data_source: the bulk path is fed by provider
         # code that mostly does not carry a connection id of its own.
         if user_connection_id is None:
             user_connection_id = get_active_connection_id()
-
-        identities_list = list(identities)
 
         # Fill device_model from the connection's device_label when the provider didn't
         # report one, mirroring ensure_data_source. Without it, time series (which arrive
@@ -765,82 +989,62 @@ class DataSourceRepository(
 
         # Callers look rows up by the identity they passed in, which may carry a null
         # device_model, so keep both: what was asked for, and what is actually stored.
-        stored_by_requested: dict[tuple[UUID, str | None, str | None], tuple[UUID, str | None, str | None]] = {
-            (user_id, device_model, source): (user_id, _stored_device_model(user_id, device_model), source)
-            for user_id, device_model, source in identities_list
-        }
+        stored_by_requested: dict[tuple, DataSourceIdentity] = {}
+        for requested in requested_list:
+            identity = DataSourceIdentity(*requested).with_clean_ids()
+            stored_by_requested[requested] = identity._replace(
+                device_model=_stored_device_model(identity.user_id, identity.device_model)
+            )
+        user_ids = {stored.user_id for stored in stored_by_requested.values()}
+        label_requested = {DataSourceIdentity(*r).with_clean_ids() for r in label_identities}
 
-        # Every identity in one call shares the same connection, so the filter
-        # below is per-account and two accounts with one provider can no longer
-        # collide on an identical (device_model, source).
-        conditions = [
-            self._build_identity_filter(user_id, provider, device_model, source, user_connection_id)
-            for user_id, device_model, source in stored_by_requested.values()
-        ]
+        def _provider_model(requested: tuple) -> str | None:
+            """The model the payload itself named for this identity, if any."""
+            if requested[1] is None or DataSourceIdentity(*requested).with_clean_ids() in label_requested:
+                return None
+            return requested[1]
 
-        existing = db_session.query(self.model).filter(or_(*conditions)).all()
-        ids_by_stored: dict[tuple[UUID, str | None, str | None], UUID] = {
-            (ds.user_id, ds.device_model, ds.source): ds.id for ds in existing
-        }
-
-        result: dict[tuple[UUID, str | None, str | None], UUID] = {
-            requested: ids_by_stored[stored]
-            for requested, stored in stored_by_requested.items()
-            if stored in ids_by_stored
-        }
-
-        # Re-resolve the type of what already exists, as the single path does. Keyed on
-        # the stored identity: the caller's reported types are keyed on what it asked
-        # for, which may carry a null device_model the label history filled in.
         reported_types = reported_types or {}
-        reported_by_stored = {
-            stored: reported_types[requested]
-            for requested, stored in stored_by_requested.items()
-            if requested in reported_types
-        }
-        upgraded = False
-        for ds in existing:
-            stored = (ds.user_id, ds.device_model, ds.source)
+        manufacturers = manufacturers or {}
+
+        # Every identity in one call shares the same connection, so matching runs over
+        # this account's rows only and two accounts with one provider can no longer
+        # collide on an identical (device_model, source) - or an identical device id.
+        rows = self._account_rows(db_session, provider, user_ids, user_connection_id)
+        matched: dict[tuple, DataSource] = {}
+        changed = False
+        for requested, stored in stored_by_requested.items():
+            row = self._match(rows, stored)
+            if row is not None:
+                matched[requested] = row
+                changed |= self._stamp_ids(row, stored, manufacturers.get(requested))
+                changed |= self._learn_model(row, _provider_model(requested))
+
+        # Re-resolve the type of what already exists, as the single path does. The
+        # caller's reported types are keyed on what it asked for; the first one per
+        # row wins, as in upstream's resolver.
+        reported_by_row: dict[UUID, DeviceType] = {}
+        for requested, row in matched.items():
+            if requested in reported_types:
+                reported_by_row.setdefault(row.id, reported_types[requested])
+        for row in {r.id: r for r in matched.values()}.values():
             device_type = self.next_device_type(
                 provider,
-                ds.device_type,
+                row.device_type,
                 self._infer_device_type(
-                    ds.device_model,
-                    ds.original_source_name,
-                    ds.source,
-                    _declared_sensor(ds.user_id),
+                    row.device_model,
+                    row.original_source_name,
+                    row.source,
+                    _declared_sensor(row.user_id),
                     provider=provider,
-                    reported_type=reported_by_stored.get(stored),
+                    reported_type=reported_by_row.get(row.id),
                 ),
             )
-            if device_type != ds.device_type:
-                object.__setattr__(ds, "device_type", device_type)
-                upgraded = True
-        if upgraded:
+            if device_type != row.device_type:
+                object.__setattr__(row, "device_type", device_type)
+                changed = True
+        if changed:
             db_session.flush()
-
-        missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
-
-        # Who named each stored model, for what gets created below. A model the payload
-        # carried is the provider's even if a label names the same string elsewhere in
-        # the batch - the two share a row, and a capture must never become movable.
-        provider_stored = {
-            stored
-            for requested, stored in stored_by_requested.items()
-            if requested[1] is not None and requested not in label_identities
-        }
-        label_stored = {
-            stored
-            for requested, stored in stored_by_requested.items()
-            if stored[1] is not None and (requested[1] is None or requested in label_identities)
-        }
-
-        def _origin(stored: tuple[UUID, str | None, str | None]) -> str | None:
-            if stored in provider_stored:
-                return DeviceModelOrigin.PROVIDER.value
-            if stored in label_stored:
-                return DeviceModelOrigin.LABEL.value
-            return None
 
         # Adopt connection-less rows the same way ensure_data_source does, and
         # under the same condition: only when a single account was alive when the
@@ -849,7 +1053,8 @@ class DataSourceRepository(
         # this time-series path (which would not) would file the same device under
         # two data sources - the exact split this method's docstring exists to
         # prevent.
-        if missing and user_connection_id is not None:
+        if user_connection_id is not None and len(matched) < len(stored_by_requested):
+            orphan_rows = self._account_rows(db_session, provider, user_ids, None)
             # Read once: a payload can carry dozens of identities and the accounts
             # are the same for every one of them.
             connections_by_user: dict[UUID, list[tuple[UUID, datetime]]] = {}
@@ -859,91 +1064,134 @@ class DataSourceRepository(
                     connections_by_user[user_id] = self._provider_connections(db_session, user_id, provider)
                 return connections_by_user[user_id]
 
-            orphan_conditions = [
-                self._build_identity_filter(user_id, provider, device_model, source, None)
-                for user_id, device_model, source in missing
-            ]
-            candidates = db_session.query(self.model).filter(or_(*orphan_conditions)).all()
-            # Filtered per row, not per user: which accounts were alive depends on
-            # when each row was written, so two orphans of one user can differ.
-            orphans = [
-                orphan
-                for orphan in candidates
-                if self._can_adopt_orphan(_connections(orphan.user_id), user_connection_id, orphan.created_at)
-            ]
-            if orphans:
-                for orphan in orphans:
-                    object.__setattr__(orphan, "user_connection_id", user_connection_id)
-                    ids_by_stored[(orphan.user_id, orphan.device_model, orphan.source)] = orphan.id
+            adopted = False
+            for requested, stored in stored_by_requested.items():
+                if requested in matched:
+                    continue
+                # Rows this batch already adopted count first, so two identities of one
+                # orphan converge on it.
+                row = self._match(rows, stored) or self._match(orphan_rows, stored)
+                if row is None:
+                    continue
+                # Filtered per row, not per user: which accounts were alive depends on
+                # when each row was written, so two orphans of one user can differ.
+                if row.user_connection_id is None:
+                    if not self._can_adopt_orphan(_connections(row.user_id), user_connection_id, row.created_at):
+                        continue
+                    object.__setattr__(row, "user_connection_id", user_connection_id)
+                    orphan_rows.remove(row)
+                    rows.append(row)
+                self._stamp_ids(row, stored, manufacturers.get(requested))
+                matched[requested] = row
+                adopted = True
+            if adopted:
                 db_session.flush()
-                result.update(
-                    {
-                        requested: ids_by_stored[stored]
-                        for requested, stored in stored_by_requested.items()
-                        if requested not in result and stored in ids_by_stored
-                    }
-                )
-                missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
 
+        missing = {requested: stored for requested, stored in stored_by_requested.items() if requested not in matched}
         if missing:
-            values = []
-            for user_id, device_model, source in missing:
-                # Mirror ensure_data_source: derive the canonical brand here too, so rows
-                # first created by the bulk path aren't left with a NULL brand, and always
-                # store a device_type rather than NULL. Same rule as the single path,
-                # including keeping a readable writer name the brand tables do not know -
-                # otherwise one Muse source would read "Muse" and the other "Apple"
-                # depending only on which path happened to create the row first.
-                original_source_name = self._resolve_original_source_name(provider, device_model, source, None)
-                device_type = self._infer_device_type(
-                    device_model,
-                    original_source_name,
-                    source,
-                    _declared_sensor(user_id),
-                    provider=provider,
-                    reported_type=reported_by_stored.get((user_id, device_model, source)),
-                )
-                values.append(
-                    {
-                        "id": uuid4(),
-                        "user_id": user_id,
-                        "provider": provider,
-                        "user_connection_id": user_connection_id,
-                        "device_model": device_model,
-                        "source": source,
-                        "device_type": device_type.value,
-                        "original_source_name": original_source_name,
-                        "device_model_origin": _origin((user_id, device_model, source)),
-                    }
-                )
-            stmt = insert(self.model).values(values).on_conflict_do_nothing()
-            db_session.execute(stmt)
+            # Who named each stored model, for what gets created below. A model the payload
+            # carried is the provider's even if a label names the same string elsewhere in
+            # the batch - the two share a row, and a capture must never become movable.
+            provider_stored = {
+                stored
+                for requested, stored in stored_by_requested.items()
+                if requested[1] is not None and DataSourceIdentity(*requested).with_clean_ids() not in label_requested
+            }
+            label_stored = {
+                stored
+                for requested, stored in stored_by_requested.items()
+                if stored.device_model is not None
+                and (requested[1] is None or DataSourceIdentity(*requested).with_clean_ids() in label_requested)
+            }
+
+            def _origin(stored: DataSourceIdentity) -> str | None:
+                if stored in provider_stored:
+                    return DeviceModelOrigin.PROVIDER.value
+                if stored in label_stored:
+                    return DeviceModelOrigin.LABEL.value
+                return None
+
+            # Keyed identities first, so an identity without ids can join a keyed row
+            # created earlier in the same batch (upstream #1781's ordering).
+            pending: list[DataSource] = []
+            pending_for: dict[tuple, DataSource] = {}
+            for requested, stored in sorted(missing.items(), key=lambda item: not item[1].keyed):
+                row = self._match(pending, stored)
+                if row is not None and self._learn_model(row, _provider_model(requested)):
+                    object.__setattr__(
+                        row,
+                        "device_type",
+                        self._infer_device_type(
+                            row.device_model,
+                            row.original_source_name,
+                            row.source,
+                            _declared_sensor(row.user_id),
+                            provider=provider,
+                            reported_type=reported_types.get(requested),
+                        ).value,
+                    )
+                if row is None:
+                    # Mirror ensure_data_source: derive the canonical brand here too, so rows
+                    # first created by the bulk path aren't left with a NULL brand, and always
+                    # store a device_type rather than NULL. Same rule as the single path,
+                    # including keeping a readable writer name the brand tables do not know -
+                    # otherwise one Muse source would read "Muse" and the other "Apple"
+                    # depending only on which path happened to create the row first.
+                    original_source_name = self._resolve_original_source_name(
+                        provider, stored.device_model, stored.source, None
+                    )
+                    device_type = self._infer_device_type(
+                        stored.device_model,
+                        original_source_name,
+                        stored.source,
+                        _declared_sensor(stored.user_id),
+                        provider=provider,
+                        reported_type=reported_types.get(requested),
+                    )
+                    # Transient: only matched against within this batch, then inserted below.
+                    row = self.model(
+                        id=uuid4(),
+                        user_id=stored.user_id,
+                        provider=provider,
+                        user_connection_id=user_connection_id,
+                        device_model=stored.device_model,
+                        source=stored.source,
+                        device_type=device_type.value,
+                        original_source_name=original_source_name,
+                        device_model_origin=_origin(stored),
+                        provider_device_id=stored.provider_device_id,
+                        source_app_id=stored.source_app_id,
+                        device_manufacturer=manufacturers.get(requested),
+                    )
+                    pending.append(row)
+                pending_for[requested] = row
+
+            values = [{field: getattr(row, field) for field in _INSERT_FIELDS} for row in pending]
+            db_session.execute(insert(self.model).values(values).on_conflict_do_nothing())
             db_session.flush()
 
-            conditions = [
-                self._build_identity_filter(user_id, provider, device_model, source, user_connection_id)
-                for user_id, device_model, source in missing
-            ]
-
-            newly_inserted = db_session.query(self.model).filter(or_(*conditions)).all()
-            ids_by_stored.update({(ds.user_id, ds.device_model, ds.source): ds.id for ds in newly_inserted})
+            # Re-read, so a row a concurrent sync inserted first is returned instead of
+            # the transient one.
+            stored_rows = self._account_rows(db_session, provider, user_ids, user_connection_id)
+            created: dict[UUID, DataSource] = {}
+            for requested, transient in pending_for.items():
+                row = self._find(stored_rows, self._identity_of(transient))
+                if row is not None:
+                    matched[requested] = row
+                    created.setdefault(row.id, row)
 
             # Attribute what this path created, mirroring ensure_data_source. Time
             # series arrive through here while events arrive through the single path,
             # so skipping it would leave one device's streams half attributed. The
             # loop is over distinct identities, not samples, so it stays small.
-            for data_source in newly_inserted:
+            for data_source in created.values():
                 self._attribute_device(db_session, data_source)
 
-            result.update(
-                {
-                    requested: ids_by_stored[stored]
-                    for requested, stored in stored_by_requested.items()
-                    if requested not in result and stored in ids_by_stored
-                }
-            )
+        return {requested: row.id for requested, row in matched.items()}
 
-        return result
+    @staticmethod
+    def _identity_of(row: DataSource) -> DataSourceIdentity:
+        return DataSourceIdentity(row.user_id, row.device_model, row.source, row.provider_device_id, row.source_app_id)
 
     def resolve_bulk_data_sources(
         self,
@@ -985,19 +1233,23 @@ class DataSourceRepository(
             # The platform's own classification, where the route sent one (upstream
             # #1721). First one wins per identity, as in upstream's resolver.
             reported_types: dict[DataSourceIdentity, DeviceType] = {}
+            manufacturers: dict[DataSourceIdentity, str] = {}
             for i in indexes:
                 creator = creators[i]
                 model = creator.device_model
                 if model is None and timeline is not None:
                     model = timeline.label_at(recorded_at(creator))
                     if model is not None:
-                        label_identities.add((creator.user_id, model, creator.source))
+                        label_identities.add(creator_identity(creator, model))
                 elif model is not None:
-                    provider_identities.add((creator.user_id, model, creator.source))
-                keys[i] = (creator.user_id, model, creator.source)
+                    provider_identities.add(creator_identity(creator, model))
+                keys[i] = creator_identity(creator, model)
                 reported = getattr(creator, "device_type", None)
                 if reported is not None:
                     reported_types.setdefault(keys[i], reported)
+                manufacturer = getattr(creator, "device_manufacturer", None)
+                if manufacturer:
+                    manufacturers.setdefault(keys[i], manufacturer)
 
             ids = self.batch_ensure_data_sources(
                 db_session,
@@ -1007,6 +1259,7 @@ class DataSourceRepository(
                 label_identities=frozenset(label_identities - provider_identities),
                 labels_resolved=timeline is not None,
                 reported_types=reported_types,
+                manufacturers=manufacturers,
             )
             for i, key in keys.items():
                 result[i] = ids.get(key)
