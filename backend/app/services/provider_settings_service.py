@@ -64,6 +64,11 @@ class ProviderSettingsService:
             data_granularity=setting.data_granularity if setting else None,
         )
 
+    def is_enabled(self, db: DbSession, provider: str) -> bool:
+        """Whether the admin has this provider switched on; a provider with no row is on."""
+        setting = self.repo.get_all(db).get(provider)
+        return setting.is_enabled if setting else True
+
     def get_all_providers(self, db: DbSession) -> list[ProviderSettingRead]:
         """Get all providers merged with their DB settings and strategy metadata."""
         db_settings_map = self.repo.get_all(db)

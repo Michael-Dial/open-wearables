@@ -16,6 +16,7 @@ import { useMemo, useState } from 'react';
 import { API_CONFIG } from '@/lib/api/config';
 import { isAuthenticated } from '@/lib/auth/session';
 import { ACCOUNT_TYPES, type AccountType } from '@/lib/api/types';
+import { ADD_ON_PROVIDERS, isAddOnProvider } from '@/lib/constants/providers';
 
 export const Route = createFileRoute('/users/$userId/pair/')({
   component: PairWearablePage,
@@ -54,22 +55,35 @@ function PairWearablePage() {
 
   const displayProviders = useMemo(() => {
     if (!apiProviders) return [];
-    return apiProviders.map((apiProvider) => {
-      const linkedCount = accountCounts.get(apiProvider.provider) ?? 0;
-      return {
-        id: apiProvider.provider,
-        name: apiProvider.name,
-        description: linkedCount
-          ? `${linkedCount} account${linkedCount > 1 ? 's' : ''} linked`
-          : 'Connect your device',
-        logoPath: apiProvider.icon_url
-          ? `${API_CONFIG.baseUrl}${apiProvider.icon_url}`
-          : '',
-        isAvailable: apiProvider.is_enabled,
-        linkedCount,
-      };
-    });
+    return apiProviders
+      .filter((apiProvider) => !isAddOnProvider(apiProvider.provider))
+      .map((apiProvider) => {
+        const linkedCount = accountCounts.get(apiProvider.provider) ?? 0;
+        return {
+          id: apiProvider.provider,
+          name: apiProvider.name,
+          description: linkedCount
+            ? `${linkedCount} account${linkedCount > 1 ? 's' : ''} linked`
+            : 'Connect your device',
+          logoPath: apiProvider.icon_url
+            ? `${API_CONFIG.baseUrl}${apiProvider.icon_url}`
+            : '',
+          isAvailable: apiProvider.is_enabled,
+          linkedCount,
+        };
+      });
   }, [apiProviders, accountCounts]);
+
+  // Whether connecting this provider will also ask for an add-on grant first
+  // (Polar's beat-to-beat v4 access), so the person expects a second consent
+  // screen rather than wondering why Polar asked twice.
+  const asksForAddOn = (providerId: string) =>
+    (apiProviders ?? []).some(
+      (p) =>
+        ADD_ON_PROVIDERS[p.provider] === providerId &&
+        p.is_enabled &&
+        !accountCounts.get(p.provider)
+    );
 
   const connectingProviderData = connectingProvider
     ? displayProviders.find((p) => p.id === connectingProvider)
@@ -177,6 +191,13 @@ function PairWearablePage() {
                   } already linked. On the next screen, sign in to the account you want to add — signing in to one already linked just reconnects it.`
                 : `You'll sign in to ${pendingProvider.name} on the next screen.`}
             </p>
+            {asksForAddOn(pendingProvider.id) && (
+              <p className="mt-2 text-sm text-zinc-400">
+                {pendingProvider.name} asks for access in two steps:
+                beat-to-beat heart data first, then your training, sleep and
+                activity. Approve both.
+              </p>
+            )}
 
             <div className="mt-6 space-y-5">
               <div className="space-y-1.5">

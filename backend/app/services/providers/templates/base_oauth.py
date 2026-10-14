@@ -78,6 +78,7 @@ class BaseOAuthTemplate(ABC):
         account_type: str | None = None,
         account_label: str | None = None,
         account_email: str | None = None,
+        then_provider: str | None = None,
     ) -> tuple[str, str]:
         """Generates the provider's authorization URL.
 
@@ -87,6 +88,9 @@ class BaseOAuthTemplate(ABC):
         moment it lands, which for a study with three Garmins on one participant
         is the difference between a usable connection list and three identical
         rows.
+
+        ``then_provider`` makes the callback continue into that provider's
+        authorization rather than finish.
 
         Returns:
             tuple[str, str]: The authorization URL and the state.
@@ -102,6 +106,7 @@ class BaseOAuthTemplate(ABC):
             account_type=account_type,
             account_label=account_label,
             account_email=account_email,
+            then_provider=then_provider,
         )
 
         auth_url, pkce_data = self._build_auth_url(state)
@@ -308,6 +313,18 @@ class BaseOAuthTemplate(ABC):
 
         # code_verifier will be None for non-PKCE providers
         return oauth_state, code_verifier
+
+    def consume_declined_state(self, state: str) -> OAuthState | None:
+        """The flow a provider returned an error for, consumed so it cannot be replayed.
+
+        None when the state is unknown, expired or belongs to another provider. Only
+        needed by a flow that carries on past a declined grant (see ``then_provider``).
+        """
+        try:
+            oauth_state, _ = self._validate_state(state)
+        except HTTPException:
+            return None
+        return oauth_state if oauth_state.provider == self.provider_name else None
 
     def _exchange_token(self, code: str, code_verifier: str | None) -> OAuthTokenResponse:
         """Exchanges authorization code for tokens."""

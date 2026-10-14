@@ -30,6 +30,11 @@ class OAuthState(BaseModel):
     account_type: str | None = None
     account_label: str | None = None
     account_email: str | None = None
+    # A second authorization this one hands on to, in the same click. Set when
+    # one connection is really two OAuth grants (Polar's v4 token, then the
+    # ordinary Polar one): the callback starts this provider's flow with the
+    # same account fields and redirect_uri instead of finishing.
+    then_provider: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

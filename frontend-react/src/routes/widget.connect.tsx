@@ -4,6 +4,7 @@ import { Check, ChevronRight, Loader2, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useOAuthProviders } from '@/hooks/api/use-oauth-providers';
 import { API_CONFIG } from '@/lib/api/config';
+import { isAddOnProvider } from '@/lib/constants/providers';
 
 export const Route = createFileRoute('/widget/connect')({
   component: ConnectWidgetPage,
@@ -21,17 +22,19 @@ function ConnectWidgetPage() {
 
   const displayProviders = useMemo(() => {
     if (!apiProviders) return [];
-    return apiProviders.map((apiProvider) => {
-      return {
-        id: apiProvider.provider,
-        name: apiProvider.name,
-        description: 'Connect your device',
-        logoPath: apiProvider.icon_url
-          ? `${API_CONFIG.baseUrl}${apiProvider.icon_url}`
-          : '',
-        isAvailable: apiProvider.is_enabled,
-      };
-    });
+    return apiProviders
+      .filter((apiProvider) => !isAddOnProvider(apiProvider.provider))
+      .map((apiProvider) => {
+        return {
+          id: apiProvider.provider,
+          name: apiProvider.name,
+          description: 'Connect your device',
+          logoPath: apiProvider.icon_url
+            ? `${API_CONFIG.baseUrl}${apiProvider.icon_url}`
+            : '',
+          isAvailable: apiProvider.is_enabled,
+        };
+      });
   }, [apiProviders]);
 
   const handleConnect = async (providerId: string, providerName: string) => {
