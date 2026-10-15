@@ -188,3 +188,7 @@ extensions/*
 # inside the frontend Docker build context (which has no .git to read). It lives with the React
 # dashboard that renders it.
 !frontend-react/fork-version.json
+
+# OSU Container Services manifests: they live in the flux_pit GitLab repo, not here.
+# See docs/fork/CONTAINER_SERVICES.md.
+deploy/container-services/
