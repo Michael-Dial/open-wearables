@@ -13,9 +13,11 @@ from decimal import Decimal
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy.orm import Session
 
-from app.models import DataSource, EventRecord, HealthScore
+from app.models import DataSource, Device, EventRecord, HealthScore
+from app.repositories import data_point_series_repository
 from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
@@ -29,6 +31,7 @@ from app.schemas.responses.activity import Meal, NutrientValue
 from app.services.event_record_service import event_record_service
 from app.utils.connection_context import active_connection
 from tests.factories import (
+    DataPointSeriesFactory,
     DataSourceFactory,
     EventRecordFactory,
     SleepDetailsFactory,
@@ -1577,3 +1580,189 @@ class TestGetSleepSessions:
         ids = {s.id for s in response.data}
         assert garmin_record.id in ids
         assert oura_record.id not in ids
+
+
+class TestResolveAvgHr:
+    """Workout avg HR falls back to HR samples of the same writer when the workout's own source has none."""
+
+    START = datetime(2026, 9, 1, 7, tzinfo=timezone.utc)
+
+    def _workout(self, data_source: DataSource) -> EventRecord:
+        return EventRecordFactory(
+            data_source=data_source,
+            category="workout",
+            start_datetime=self.START,
+            end_datetime=self.START + timedelta(hours=1),
+        )
+
+    def _hr(self, data_source: DataSource, value: int) -> None:
+        for minute in (10, 20):
+            DataPointSeriesFactory(
+                data_source=data_source, recorded_at=self.START + timedelta(minutes=minute), value=value
+            )
+
+    def _avg_hr(self, db: Session, workout: EventRecord) -> int | None:
+        db.flush()
+        return event_record_service._resolve_avg_hr(db, [workout])[workout.id]
+
+    def test_own_source_wins_over_writer_siblings(self, db: Session) -> None:
+        user = UserFactory()
+        app = {"user": user, "provider": ProviderName.HEALTH_CONNECT, "source_app_id": "com.fitbit.FitbitMobile"}
+        tracker = DataSourceFactory(**app, device_model="Fitbit Air", source="com.fitbit.FitbitMobile")
+        unknown = DataSourceFactory(**app, device_model=None, source="com.fitbit.FitbitMobile")
+        self._hr(tracker, 100)
+        self._hr(unknown, 150)
+
+        assert self._avg_hr(db, self._workout(tracker)) == 100
+
+    def test_falls_back_to_the_same_app_split_by_model(self, db: Session) -> None:
+        user = UserFactory()
+        app = {"user": user, "provider": ProviderName.HEALTH_CONNECT, "source_app_id": "com.fitbit.FitbitMobile"}
+        tracker = DataSourceFactory(**app, device_model="Fitbit Air", source="com.fitbit.FitbitMobile")
+        unknown = DataSourceFactory(**app, device_model=None, source="com.fitbit.FitbitMobile")
+        self._hr(unknown, 150)
+
+        assert self._avg_hr(db, self._workout(tracker)) == 150
+
+    def test_falls_back_to_cloud_dailies_of_the_same_provider(self, db: Session) -> None:
+        user = UserFactory()
+        watch = DataSourceFactory(
+            user=user, provider=ProviderName.GARMIN, device_model="Garmin fenix 8", source="garmin"
+        )
+        dailies = DataSourceFactory(user=user, provider=ProviderName.GARMIN, device_model=None, source="garmin")
+        self._hr(dailies, 140)
+
+        assert self._avg_hr(db, self._workout(watch)) == 140
+
+    def test_other_writer_is_not_used(self, db: Session) -> None:
+        user = UserFactory()
+        tracker = DataSourceFactory(
+            user=user,
+            provider=ProviderName.HEALTH_CONNECT,
+            source_app_id="com.fitbit.FitbitMobile",
+            device_model="Fitbit Air",
+            source="com.fitbit.FitbitMobile",
+        )
+        other_app = DataSourceFactory(
+            user=user,
+            provider=ProviderName.HEALTH_CONNECT,
+            source_app_id="com.google.android.apps.fitness",
+            device_model=None,
+            source="com.google.android.apps.fitness",
+        )
+        self._hr(other_app, 150)
+
+        assert self._avg_hr(db, self._workout(tracker)) is None
+
+    def test_workouts_are_split_into_chunks_without_splitting_a_writer(
+        self, db: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(data_point_series_repository, "_MAX_WINDOW_ROWS", 3)
+        user = UserFactory()
+        watch = DataSourceFactory(
+            user=user, provider=ProviderName.GARMIN, device_model="Garmin fenix 8", source="garmin"
+        )
+        dailies = DataSourceFactory(user=user, provider=ProviderName.GARMIN, device_model=None, source="garmin")
+        workouts = []
+        for day in range(3):
+            start = self.START + timedelta(days=day)
+            workouts.append(
+                EventRecordFactory(
+                    data_source=watch, category="workout", start_datetime=start, end_datetime=start + timedelta(hours=1)
+                )
+            )
+            DataPointSeriesFactory(data_source=dailies, recorded_at=start + timedelta(minutes=10), value=130 + day)
+        db.flush()
+
+        result = event_record_service._resolve_avg_hr(db, workouts)
+
+        assert [result[w.id] for w in workouts] == [130, 131, 132]
+
+
+class TestResolveAvgHrStaysOnOneUnit:
+    """Fork: the writer fallback never borrows another unit's heart rate.
+
+    Upstream groups a writer by (user, provider, app id or source). A participant's second
+    Garmin on another account, or a bike computer beside the watch, writes as "garmin" too,
+    and its heart rate is not this workout's.
+    """
+
+    START = datetime(2026, 9, 1, 7, tzinfo=timezone.utc)
+
+    def _workout(self, data_source: DataSource) -> EventRecord:
+        return EventRecordFactory(
+            data_source=data_source,
+            category="workout",
+            start_datetime=self.START,
+            end_datetime=self.START + timedelta(hours=1),
+        )
+
+    def _hr(self, data_source: DataSource, value: int) -> None:
+        for minute in (10, 20):
+            DataPointSeriesFactory(
+                data_source=data_source, recorded_at=self.START + timedelta(minutes=minute), value=value
+            )
+
+    def _avg_hr(self, db: Session, workout: EventRecord) -> int | None:
+        db.flush()
+        return event_record_service._resolve_avg_hr(db, [workout])[workout.id]
+
+    def test_another_accounts_source_is_not_used(self, db: Session) -> None:
+        user = UserFactory()
+        left = UserConnectionFactory(user=user, provider="garmin", provider_user_id="g-left")
+        right = UserConnectionFactory(user=user, provider="garmin", provider_user_id="g-right")
+        watch = DataSourceFactory(
+            user=user,
+            provider=ProviderName.GARMIN,
+            device_model="Garmin fenix 8",
+            source="garmin",
+            user_connection_id=left.id,
+        )
+        other_wrist = DataSourceFactory(
+            user=user, provider=ProviderName.GARMIN, device_model=None, source="garmin", user_connection_id=right.id
+        )
+        self._hr(other_wrist, 140)
+
+        assert self._avg_hr(db, self._workout(watch)) is None
+
+    def test_another_model_on_the_same_account_is_not_used(self, db: Session) -> None:
+        user = UserFactory()
+        bike = DataSourceFactory(user=user, provider=ProviderName.GARMIN, device_model="Edge 840", source="garmin")
+        watch = DataSourceFactory(
+            user=user, provider=ProviderName.GARMIN, device_model="Forerunner 965", source="garmin"
+        )
+        self._hr(watch, 140)
+
+        assert self._avg_hr(db, self._workout(bike)) is None
+
+    def test_a_source_attributed_to_another_device_is_not_used(self, db: Session) -> None:
+        user = UserFactory()
+        watch = DataSourceFactory(
+            user=user, provider=ProviderName.GARMIN, device_model="Garmin fenix 8", source="garmin"
+        )
+        dailies = DataSourceFactory(user=user, provider=ProviderName.GARMIN, device_model=None, source="garmin")
+        for source in (watch, dailies):
+            device = Device(
+                id=uuid4(),
+                user_id=user.id,
+                device_type="watch",
+                label_source="auto",
+                is_active=True,
+                updated_at=self.START,
+            )
+            db.add(device)
+            db.flush()
+            source.device_id = device.id
+        self._hr(dailies, 140)
+
+        assert self._avg_hr(db, self._workout(watch)) is None
+
+    def test_the_same_units_dailies_are_still_used(self, db: Session) -> None:
+        user = UserFactory()
+        account = UserConnectionFactory(user=user, provider="garmin", provider_user_id="g-only")
+        ids = {"user": user, "provider": ProviderName.GARMIN, "source": "garmin", "user_connection_id": account.id}
+        watch = DataSourceFactory(**ids, device_model="Garmin fenix 8")
+        dailies = DataSourceFactory(**ids, device_model=None)
+        self._hr(dailies, 140)
+
+        assert self._avg_hr(db, self._workout(watch)) == 140

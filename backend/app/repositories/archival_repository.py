@@ -3,7 +3,7 @@
 import time
 import uuid
 from datetime import date, datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, Date, Subquery, case, cast, func, text
@@ -70,6 +70,13 @@ ARCHIVE_BATCH_SIZE = 5_000
 # Safety limits to prevent overloading the DB on initial runs
 MAX_ROWS_PER_RUN = 500_000  # Stop after archiving this many rows per invocation
 MAX_SECONDS_PER_RUN = 120  # Stop after this many seconds per invocation
+
+
+class BatchedRun(NamedTuple):
+    """Rows a capped batch loop handled, and whether it got through all of them."""
+
+    rows: int
+    complete: bool
 
 
 class DataPointSeriesArchiveRepository:
@@ -154,7 +161,7 @@ class DataPointSeriesArchiveRepository:
             "total_pretty": _pretty_bytes(total),
         }
 
-    def archive_data_before(self, db: DbSession, cutoff_date: date) -> int:
+    def archive_data_before(self, db: DbSession, cutoff_date: date) -> BatchedRun:
         """Aggregate live rows older than *cutoff_date* into the archive table.
 
         For each (data_source_id, series_type_definition_id, date):
@@ -166,7 +173,7 @@ class DataPointSeriesArchiveRepository:
         to avoid overwhelming the server on the first run. The next Celery
         invocation will continue where this one left off.
 
-        Returns the number of live rows removed.
+        Returns the number of live rows removed, and whether none older are left.
         """
         total_deleted = 0
         start_time = time.monotonic()
@@ -190,7 +197,7 @@ class DataPointSeriesArchiveRepository:
             )
 
             if not source_ids:
-                break
+                return BatchedRun(total_deleted, complete=True)
 
             source_id_list = [s[0] for s in source_ids]
 
@@ -229,7 +236,7 @@ class DataPointSeriesArchiveRepository:
             )
 
             if not raw_aggregates:
-                break
+                return BatchedRun(total_deleted, complete=True)
 
             # Step 3: For each group, pick the correct aggregate column based on series type
             values_list = []
@@ -295,7 +302,7 @@ class DataPointSeriesArchiveRepository:
 
             db.commit()
 
-        return total_deleted
+        return BatchedRun(total_deleted, complete=False)
 
     def delete_archive_before(self, db: DbSession, cutoff_date: date) -> int:
         """Permanently delete archive rows older than *cutoff_date*.
@@ -313,7 +320,7 @@ class DataPointSeriesArchiveRepository:
         db.commit()
         return deleted
 
-    def delete_live_before(self, db: DbSession, cutoff_date: date) -> int:
+    def delete_live_before(self, db: DbSession, cutoff_date: date) -> BatchedRun:
         """Permanently delete live rows older than *cutoff_date*.
 
         Used when retention policy is active without archival — data is
@@ -325,7 +332,7 @@ class DataPointSeriesArchiveRepository:
 
         Respects the same safety limits as archive_data_before.
 
-        Returns the number of live rows deleted.
+        Returns the number of live rows deleted, and whether none older are left.
         """
         total_deleted = 0
         start_time = time.monotonic()
@@ -348,12 +355,12 @@ class DataPointSeriesArchiveRepository:
             )
 
             if deleted == 0:
-                break
+                return BatchedRun(total_deleted, complete=True)
 
             total_deleted += deleted
             db.commit()
 
-        return total_deleted
+        return BatchedRun(total_deleted, complete=False)
 
     def get_user_counts_by_provider_and_type_from_archive(
         self,
@@ -459,6 +466,7 @@ class DataPointSeriesArchiveRepository:
         steps_id = get_series_type_id(SeriesType.steps)
         energy_id = get_series_type_id(SeriesType.active_energy)
         basal_energy_id = get_series_type_id(SeriesType.basal_energy)
+        total_energy_id = get_series_type_id(SeriesType.total_energy)
         hr_id = get_series_type_id(SeriesType.heart_rate)
         distance_id = get_series_type_id(SeriesType.distance_walking_running)
         flights_id = get_series_type_id(SeriesType.flights_climbed)
@@ -488,13 +496,11 @@ class DataPointSeriesArchiveRepository:
                 func.sum(
                     case(
                         (DataPointSeriesArchive.series_type_definition_id == steps_id, DataPointSeriesArchive.value),
-                        else_=0,
                     )
                 ).label("steps_sum"),
                 func.sum(
                     case(
                         (DataPointSeriesArchive.series_type_definition_id == energy_id, DataPointSeriesArchive.value),
-                        else_=0,
                     )
                 ).label("active_energy_sum"),
                 func.sum(
@@ -503,9 +509,16 @@ class DataPointSeriesArchiveRepository:
                             DataPointSeriesArchive.series_type_definition_id == basal_energy_id,
                             DataPointSeriesArchive.value,
                         ),
-                        else_=0,
                     )
                 ).label("basal_energy_sum"),
+                func.sum(
+                    case(
+                        (
+                            DataPointSeriesArchive.series_type_definition_id == total_energy_id,
+                            DataPointSeriesArchive.value,
+                        ),
+                    )
+                ).label("total_energy_sum"),
                 func.avg(
                     case(
                         (DataPointSeriesArchive.series_type_definition_id == hr_id, DataPointSeriesArchive.value),
@@ -577,9 +590,10 @@ class DataPointSeriesArchiveRepository:
                     "device_model": row.device_model,
                     "user_connection_id": row.user_connection_id,
                     "device_type": row.device_type,
-                    "steps_sum": int(row.steps_sum) if row.steps_sum else 0,
-                    "active_energy_sum": float(row.active_energy_sum) if row.active_energy_sum else 0.0,
-                    "basal_energy_sum": float(row.basal_energy_sum) if row.basal_energy_sum else 0.0,
+                    "steps_sum": int(row.steps_sum) if row.steps_sum is not None else None,
+                    "active_energy_sum": float(row.active_energy_sum) if row.active_energy_sum is not None else None,
+                    "basal_energy_sum": float(row.basal_energy_sum) if row.basal_energy_sum is not None else None,
+                    "total_energy_sum": float(row.total_energy_sum) if row.total_energy_sum is not None else None,
                     "hr_avg": int(round(float(row.hr_avg))) if row.hr_avg is not None else None,
                     "hr_max": None,  # Not available in simplified archive
                     "hr_min": None,  # Not available in simplified archive

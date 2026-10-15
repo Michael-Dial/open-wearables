@@ -16,6 +16,7 @@ from sqlalchemy import (
     asc,
     case,
     cast,
+    delete,
     desc,
     func,
     lateral,
@@ -33,13 +34,16 @@ from sqlalchemy.orm import Query, aliased, selectinload
 from app.database import DbSession
 from app.models import DataPointSeries, DataSource, EventRecord, SleepDetails, WorkoutDetails
 from app.repositories.data_source_repository import SOURCE_ID_FIELDS, DataSourceRepository
+from app.repositories.data_type_coverage_repository import data_type_coverage_repository
 from app.repositories.repositories import CrudRepository, source_filter_conditions, utc_bucket_start
+from app.schemas.data_type_coverage import CoverageSpan
 from app.schemas.enums import ProviderName, SeriesType, TimelineBucket, get_series_type_id
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordQueryParams,
     EventRecordUpdate,
 )
+from app.schemas.sync_status import DataTypeKind
 from app.utils.connection_context import get_active_connection_id
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import decode_cursor
@@ -209,22 +213,36 @@ class EventRecordRepository(
         if provider is not None:
             source_ids_query = source_ids_query.filter(DataSource.provider == provider)
 
-        deleted = (
-            db_session.query(self.model)
-            .filter(
+        deleted = db_session.execute(
+            delete(self.model)
+            .where(
                 self.model.external_id == external_id,
                 self.model.data_source_id.in_(source_ids_query.scalar_subquery()),
             )
-            .delete(synchronize_session=False)
-        )
+            .returning(self.model.data_source_id, self.model.category)
+        ).all()
+        if deleted:
+            # Coverage (upstream #1597) can only narrow from what is still held.
+            providers = {
+                source_id: str(getattr(source_provider, "value", source_provider))
+                for source_id, source_provider in db_session.execute(
+                    select(DataSource.id, DataSource.provider).where(
+                        DataSource.id.in_({row.data_source_id for row in deleted})
+                    )
+                )
+            }
+            data_type_coverage_repository.refresh_events(
+                db_session, [(user_id, providers[row.data_source_id], row.category) for row in deleted]
+            )
         db_session.commit()
-        return deleted
+        return len(deleted)
 
     @handle_exceptions
     def create(self, db_session: DbSession, creator: EventRecordCreate) -> EventRecord:
         data_source_id, creation = self._build_creation(db_session, creator)
         try:
             db_session.add(creation)
+            self._record_coverage(db_session, [(data_source_id, creator)])
             db_session.commit()
             db_session.refresh(creation)
             return creation
@@ -246,12 +264,13 @@ class EventRecordRepository(
             db_session.add(creation)
             db_session.flush()
             nested.commit()
-            return creation
         except IntegrityError:
             nested.rollback()
             if existing := self._fetch_existing(db_session, data_source_id, creation):
                 return existing
             raise
+        self._record_coverage(db_session, [(data_source_id, creator)])
+        return creation
 
     def _resolve_values(self, db_session: DbSession, creators: list[EventRecordCreate]) -> list[dict]:
         """Resolve data sources in batch and build event_record row values.
@@ -314,9 +333,51 @@ class EventRecordRepository(
             )
             result = db_session.execute(stmt.returning(self.model.id))
             inserted_ids.update(row[0] for row in result.fetchall())
+
+        creators_by_id = {c.id: c for c in creators}
+        self._record_coverage(
+            db_session,
+            [
+                (values["data_source_id"], creators_by_id[values["id"]])
+                for values in values_list
+                if values["id"] in inserted_ids and values["id"] in creators_by_id
+            ],
+        )
         # NOTE: Caller should commit - allows batching multiple operations
 
         return list(inserted_ids)
+
+    @staticmethod
+    def _record_coverage(db_session: DbSession, records: list[tuple[UUID, EventRecordCreate]]) -> None:
+        """Widen what we hold per event category (upstream #1597), in the caller's transaction.
+
+        Keyed by the provider each record's data source resolved to, read from the
+        source itself. Coverage is per (user, provider), not per account.
+        """
+        records = [(source_id, creator) for source_id, creator in records if creator.category]
+        if not records:
+            return
+        owners = {
+            row.id: (row.user_id, str(getattr(row.provider, "value", row.provider)))
+            for row in db_session.query(DataSource.id, DataSource.user_id, DataSource.provider)
+            .filter(DataSource.id.in_({source_id for source_id, _ in records}))
+            .all()
+        }
+        data_type_coverage_repository.record(
+            db_session,
+            (
+                CoverageSpan(
+                    user_id=owners[source_id][0],
+                    provider=owners[source_id][1],
+                    data_type=creator.category,
+                    kind=DataTypeKind.EVENT,
+                    start=creator.start_datetime,
+                    end=creator.end_datetime,
+                )
+                for source_id, creator in records
+                if source_id in owners
+            ),
+        )
 
     @handle_exceptions
     def bulk_upsert_meals(
@@ -366,6 +427,7 @@ class EventRecordRepository(
             for creator, values in chunk:
                 result[creator.id] = stored[(values["data_source_id"], values["external_id"])]
         db_session.flush()
+        self._record_coverage(db_session, [(values["data_source_id"], creator) for creator, values in entries])
         return result
 
     def get_record_with_details(
@@ -826,6 +888,24 @@ class EventRecordRepository(
             .all()
         )
 
+    @staticmethod
+    def _page_nights(
+        query: Query, day: ColumnElement, record_id: ColumnElement, cursor: str | None, limit: int
+    ) -> list:
+        """Every row of the next ``limit + 1`` days after the cursor, in the cursor's direction."""
+        days = query.with_entities(day).distinct()
+        descending = False
+        if cursor:
+            cursor_ts, _cursor_id, direction = decode_cursor(cursor)
+            descending = direction == "prev"
+            days = days.filter(day < cursor_ts.date()) if descending else days.filter(day > cursor_ts.date())
+        days = days.order_by(desc(day) if descending else asc(day))
+        page = [row[0] for row in days.limit(limit + 1).all()]
+        if not page:
+            return []
+        ordering = (desc(day), desc(record_id)) if descending else (asc(day), asc(record_id))
+        return query.filter(day.in_(page)).order_by(*ordering).all()
+
     def get_sleep_summaries(
         self,
         db_session: DbSession,
@@ -835,8 +915,15 @@ class EventRecordRepository(
         cursor: str | None,
         limit: int,
         relay_plan: "RelayDedupPlan | None" = None,
+        page_by_date: bool = False,
     ) -> list[dict]:
         """Get daily sleep summaries, one row per date and data source.
+
+        ``page_by_date`` pages by night rather than by row (upstream #1845's fix, without
+        moving the source choice into SQL): every source's row for ``limit + 1`` nights,
+        so a caller that keeps one source per night still gets a full page and never
+        sees a night split across two pages. The fork's per-night choice stays in
+        SummariesService._filter_by_priority, which has tie-breaks a SQL rank lacks.
 
         Returns list of dicts with keys:
         - sleep_date, min_start_time, max_end_time, total_duration_minutes
@@ -1056,25 +1143,28 @@ class EventRecordRepository(
             .outerjoin(daily_spo2_lateral, true())
         )
 
-        # Handle cursor pagination
-        if cursor:
-            cursor_ts, cursor_id, direction = decode_cursor(cursor)
-            cursor_date = cursor_ts.date()
-
-            if direction == "prev":
-                # Backward pagination: get items BEFORE cursor
-                query = query.filter(tuple_(subquery.c.sleep_date, record_id_col) < (cursor_date, cursor_id))
-                query = query.order_by(desc(subquery.c.sleep_date), desc(record_id_col))
-            else:
-                # Forward pagination: get items AFTER cursor
-                query = query.filter(tuple_(subquery.c.sleep_date, record_id_col) > (cursor_date, cursor_id))
-                query = query.order_by(asc(subquery.c.sleep_date), asc(record_id_col))
+        if page_by_date:
+            results = self._page_nights(query, subquery.c.sleep_date, record_id_col, cursor, limit)
         else:
-            # No cursor: default ordering
-            query = query.order_by(asc(subquery.c.sleep_date), asc(record_id_col))
+            # Handle cursor pagination
+            if cursor:
+                cursor_ts, cursor_id, direction = decode_cursor(cursor)
+                cursor_date = cursor_ts.date()
 
-        # Limit + 1 to check for has_more
-        results = query.limit(limit + 1).all()
+                if direction == "prev":
+                    # Backward pagination: get items BEFORE cursor
+                    query = query.filter(tuple_(subquery.c.sleep_date, record_id_col) < (cursor_date, cursor_id))
+                    query = query.order_by(desc(subquery.c.sleep_date), desc(record_id_col))
+                else:
+                    # Forward pagination: get items AFTER cursor
+                    query = query.filter(tuple_(subquery.c.sleep_date, record_id_col) > (cursor_date, cursor_id))
+                    query = query.order_by(asc(subquery.c.sleep_date), asc(record_id_col))
+            else:
+                # No cursor: default ordering
+                query = query.order_by(asc(subquery.c.sleep_date), asc(record_id_col))
+
+            # Limit + 1 to check for has_more
+            results = query.limit(limit + 1).all()
 
         # Transform results to dict format
         summaries = []
@@ -1210,7 +1300,7 @@ class EventRecordRepository(
         Aggregates WorkoutDetails data by date for activity summaries.
 
         Returns list of dicts with keys:
-        - workout_date, source, device_model, user_connection_id
+        - workout_date, provider, source, device_model, user_connection_id, device_type
         - elevation_meters, distance_meters, energy_burned_kcal
         """
         local_workout_date = cast(
@@ -1221,9 +1311,11 @@ class EventRecordRepository(
         results = (
             db_session.query(
                 local_workout_date.label("workout_date"),
+                DataSource.provider,
                 DataSource.source,
                 DataSource.device_model,
                 DataSource.user_connection_id,
+                DataSource.device_type,
                 # Sum elevation gain for all workouts on that day
                 func.sum(WorkoutDetails.total_elevation_gain).label("elevation_sum"),
                 # Sum distance for all workouts
@@ -1244,9 +1336,11 @@ class EventRecordRepository(
             )
             .group_by(
                 local_workout_date,
+                DataSource.provider,
                 DataSource.source,
                 DataSource.device_model,
                 DataSource.user_connection_id,
+                DataSource.device_type,
             )
             .order_by(asc(local_workout_date))
             .all()
@@ -1257,9 +1351,11 @@ class EventRecordRepository(
             aggregates.append(
                 {
                     "workout_date": row.workout_date,
+                    "provider": row.provider,
                     "source": row.source,
                     "device_model": row.device_model,
                     "user_connection_id": row.user_connection_id,
+                    "device_type": row.device_type,
                     "elevation_meters": float(row.elevation_sum) if row.elevation_sum is not None else None,
                     "distance_meters": float(row.distance_sum) if row.distance_sum is not None else None,
                     "energy_burned_kcal": float(row.energy_sum) if row.energy_sum is not None else None,

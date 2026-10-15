@@ -37,7 +37,7 @@ def test_beat_intervals_stay_live_while_other_series_archive(db: Session) -> Non
 
     deleted = DataPointSeriesArchiveRepository().archive_data_before(db, date(2026, 2, 1))
 
-    assert deleted == 3
+    assert deleted.rows == 3
     live_codes = {
         code
         for (code,) in db.query(SeriesTypeDefinition.code)
@@ -61,5 +61,5 @@ def test_a_source_holding_only_beats_does_not_stall_archival(db: Session) -> Non
 
     deleted = DataPointSeriesArchiveRepository().archive_data_before(db, date(2026, 2, 1))
 
-    assert deleted == 1
+    assert deleted.rows == 1
     assert db.query(DataPointSeries).filter(DataPointSeries.data_source_id == tail_source.id).count() == 0

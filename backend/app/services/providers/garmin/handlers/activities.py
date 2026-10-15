@@ -14,11 +14,12 @@ from sqlalchemy.exc import IntegrityError
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
 from app.schemas.providers.garmin import ActivityJSON as GarminActivityJSON
-from app.schemas.sync_status import SyncSource, SyncStatus
+from app.schemas.sync_status import SyncRunContext, SyncScope, SyncSource, SyncStatus
 from app.services.providers.garmin.backfill_state import get_trace_id
 from app.services.providers.garmin.workouts import GarminWorkouts
 from app.services.sync_status_service import emit_sync_completed, new_run_id
 from app.utils.connection_context import active_connection
+from app.utils.context import sync_run_context
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
@@ -106,11 +107,15 @@ def process_activity_notification(
             user_id=str(internal_user_id),
             is_primary=is_primary,
         )
+        run_id = new_run_id(prefix=f"garmin_webhook_activity_{activity_id}")
         try:
             # Bind the Garmin account this notification came from: the save path
             # resolves the connection from (user, provider) to stamp the data
             # source, and a participant wearing two Garmins has two of them.
-            with active_connection(connection.id):
+            with (
+                active_connection(connection.id),
+                sync_run_context(SyncRunContext(run_id=run_id, source=sync_source, scope=SyncScope.LIVE)),
+            ):
                 created_ids = garmin_workouts.process_push_activities(
                     db=db,
                     activities=[activity],
@@ -144,7 +149,7 @@ def process_activity_notification(
             internal_user_id,
             "garmin",
             sync_source,
-            run_id=new_run_id(prefix=f"garmin_webhook_activity_{activity_id}"),
+            run_id=run_id,
             status=SyncStatus.SUCCESS,
             message=f"Garmin activity received: {activity_name}",
             items_processed=len(created_ids),

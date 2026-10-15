@@ -62,6 +62,8 @@ class DataSourceResponse(BaseModel):
         example="com.ouraring.oura",
     )
     device_manufacturer: str | None = None
+    # Marketing name for a raw model code (Watch6,2 -> Apple Watch Series 6), else the model itself
+    device_name: str | None = None
     display_name: str | None = None
     device_id: UUID | None = Field(
         None,
