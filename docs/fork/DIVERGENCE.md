@@ -6,11 +6,11 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-10-15 17:23 UTC |
-| Our ref | `HEAD` — 7bb326b1 (2026-10-15) Merge upstream the-momentum/open-wearables main (13 commits, 8dc855fe) |
+| Generated | 2026-10-15 17:30 UTC |
+| Our ref | `HEAD` — d1748d47 (2026-10-15) Merge main into the upstream sync branch |
 | Upstream `main` | 4e7108d1 (2026-10-15) fix(frontend): wait for the tab strip to mount before scrolling it in e2e tests (#1881) |
 | Last common commit | 8dc855fe (2026-10-15) feat: Outgoing webhooks per-data type sync status + run tracking (#1597) |
-| Commits we are ahead | 252 |
+| Commits we are ahead | 256 |
 | Upstream commits not merged | 1 |
 | Latest sync tag | _none yet_ |
 
@@ -38,13 +38,14 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 
 ## Diverged files
 
-586 files: 412 fork-only, 174 modified.
+587 files: 1 deleted, 412 fork-only, 174 modified.
 
 ### `backend`
 
 | File | Status | +/- |
 |---|---|---|
 | `backend/AGENTS.md` | modified | +41/-0 |
+| `backend/Dockerfile` | modified | +11/-0 |
 | `backend/app/algorithms/sleep_onset.py` | fork-only | — |
 | `backend/app/api/routes/v1/__init__.py` | modified | +6/-0 |
 | `backend/app/api/routes/v1/beat_capture.py` | fork-only | — |
@@ -652,5 +653,5 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `.github/workflows/build.yml` | fork-only | — |
 | `.github/workflows/ci.yml` | modified | +105/-0 |
 | `.github/workflows/pr-review.yml` | fork-only | — |
-| `.github/workflows/publish-images.yml` | modified | +22/-0 |
-| `.gitignore` | modified | +8/-0 |
+| `.github/workflows/publish-images.yml` | deleted | +0/-221 |
+| `.gitignore` | modified | +12/-0 |
