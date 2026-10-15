@@ -6,6 +6,7 @@ from .data_migration import DataMigration
 from .data_point_series import DataPointSeries
 from .data_point_series_archive import DataPointSeriesArchive
 from .data_source import DataSource
+from .data_type_coverage import DataTypeCoverage
 from .developer import Developer
 from .device import Device
 from .device_history import DeviceHistory
@@ -71,6 +72,7 @@ __all__ = [
     "WorkoutDetails",
     "PersonalRecord",
     "DataPointSeries",
+    "DataTypeCoverage",
     "SeriesTypeDefinition",
     "SyncRun",
     "SyncRunDataType",

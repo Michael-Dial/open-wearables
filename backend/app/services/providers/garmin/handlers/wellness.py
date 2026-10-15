@@ -10,11 +10,12 @@ from uuid import UUID
 
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
-from app.schemas.sync_status import SyncSource, SyncStatus
+from app.schemas.sync_status import SyncRunContext, SyncScope, SyncSource, SyncStatus
 from app.services.providers.garmin.backfill_state import get_trace_id
 from app.services.providers.garmin.data_247 import Garmin247Data
 from app.services.sync_status_service import emit_sync_completed, new_run_id
 from app.utils.connection_context import active_connection
+from app.utils.context import sync_run_context
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
@@ -99,10 +100,14 @@ def process_wellness_items(
         trace_id = get_trace_id(uid) or request_trace_id
         is_secondary = (uid, connection_id) in secondary_primary
         sync_source = SyncSource.LINKED_ACCOUNT if is_secondary else SyncSource.WEBHOOK
+        run_id = new_run_id(prefix=f"garmin_webhook_{summary_type}")
         try:
             # Bind the account: process_items_batch re-resolves the connection
             # from (user, provider) to stamp data sources and download FIT files.
-            with active_connection(connection_id):
+            with (
+                active_connection(connection_id),
+                sync_run_context(SyncRunContext(run_id=run_id, source=sync_source, scope=SyncScope.LIVE)),
+            ):
                 count = garmin_247.process_items_batch(db, uid, summary_type, items)
             total_saved += count
             synced_user_ids.add(uid)
@@ -122,7 +127,7 @@ def process_wellness_items(
                 uid,
                 "garmin",
                 sync_source,
-                run_id=new_run_id(prefix=f"garmin_webhook_{summary_type}"),
+                run_id=run_id,
                 status=SyncStatus.SUCCESS,
                 message=f"Garmin live data received: {summary_type}",
                 items_processed=count,

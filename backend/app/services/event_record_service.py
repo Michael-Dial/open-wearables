@@ -33,6 +33,8 @@ from app.repositories import (
     HealthScoreRepository,
     ProviderPriorityRepository,
 )
+from app.repositories.data_point_series_repository import WorkoutWindow
+from app.repositories.data_type_coverage_repository import data_type_coverage_repository
 from app.repositories.device_type_priority_repository import DeviceTypePriorityRepository
 from app.schemas.enums import HealthScoreCategory, SeriesType, get_series_type_unit
 from app.schemas.model_crud.activities import (
@@ -77,6 +79,7 @@ from app.services.outgoing_webhooks.events import (
 from app.services.scores.sleep_service import sleep_score_service
 from app.services.services import AppService
 from app.services.sources.relay_dedup import RelayDedupPlan, build_event_plan, relay_dedup_metadata
+from app.utils.context import current_sync_payload
 from app.utils.conversion import as_dict_list, as_float, as_model, minutes_to_seconds
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import encode_cursor
@@ -149,7 +152,8 @@ class EventRecordService(
         """Return avg HR for each workout record.
 
         Uses stored heart_rate_avg where available, falls back to a single batch query
-        against data_point_series for records that don't have it.
+        against data_point_series for records that don't have it: the workout's own source
+        first, then the other sources of the same writer.
         """
         result: dict[UUID, int | None] = {}
         missing = []
@@ -160,11 +164,17 @@ class EventRecordService(
                 result[r.id] = round(details.heart_rate_avg)
             else:
                 result[r.id] = None
-                missing.append((r.id, r.data_source_id, r.start_datetime, r.end_datetime))
+                missing.append(r)
 
         if missing:
-            computed = self.data_point_series_repo.get_avg_hr_for_workout_batch(db_session, missing)
-            result.update(computed)
+            siblings = self.data_source_repo.get_writer_siblings(db_session, {r.data_source_id for r in missing})
+            windows = [
+                WorkoutWindow(
+                    r.id, r.data_source_id, r.start_datetime, r.end_datetime, siblings.get(r.data_source_id, ())
+                )
+                for r in missing
+            ]
+            result.update(self.data_point_series_repo.get_avg_hr_for_workout_batch(db_session, windows))
 
         return result
 
@@ -203,7 +213,7 @@ class EventRecordService(
         if record is not None and record.data_source_id is not None:
             data_source = self.data_source_repo.get(db_session, record.data_source_id)
             if data_source is not None:
-                self._emit_event_record_webhook(record, data_source, detail)
+                self._emit_event_record_webhook(record, data_source, detail, current_sync_payload())
 
         return result
 
@@ -398,6 +408,7 @@ class EventRecordService(
                     if final_detail.sleep_stages
                     else None
                 ),
+                sync=current_sync_payload(),
             )
         return result
 
@@ -645,6 +656,7 @@ class EventRecordService(
         record: EventRecord,
         data_source: DataSource,
         detail: EventRecordDetailCreate,
+        sync: dict[str, str] | None = None,
     ) -> None:
         """Fire the appropriate outgoing webhook for a newly created event record."""
         if not svix_service.is_enabled():
@@ -695,6 +707,7 @@ class EventRecordService(
                         if detail.sleep_stages
                         else None
                     ),
+                    sync=sync,
                 )
             case "menstrual_cycle":
                 mcd = detail if isinstance(detail, MenstrualCycleDetailCreate) else None
@@ -711,6 +724,7 @@ class EventRecordService(
                     cycle_length=mcd.cycle_length if mcd else None,
                     is_predicted_cycle=mcd.is_predicted_cycle if mcd else None,
                     pregnancy_snapshot=mcd.pregnancy_snapshot if mcd else None,
+                    sync=sync,
                 )
             case "workout":
                 avg_pace = pace_sec_per_km(
@@ -735,6 +749,7 @@ class EventRecordService(
                     if detail.total_elevation_gain is not None
                     else None,
                     avg_pace_sec_per_km=round(avg_pace) if avg_pace is not None else None,
+                    sync=sync,
                 )
             case "meal" if isinstance(detail, MealDetailCreate):
                 calories_kcal, macros, water_ml = _meal_summary(detail.nutrients)
@@ -752,6 +767,7 @@ class EventRecordService(
                     macros=macros.model_dump() if macros else None,
                     water_ml=water_ml,
                     nutrients={code: value.model_dump() for code, value in _nutrient_values(detail.nutrients).items()},
+                    sync=sync,
                 )
 
     def bulk_create(
@@ -808,10 +824,12 @@ class EventRecordService(
         for data_source in data_sources:
             db_session.expunge(data_source)
 
+        sync = current_sync_payload()
+
         @sa_event.listens_for(db_session, "after_commit", once=True)
         def _dispatch_bulk_webhooks(session: DbSession) -> None:  # noqa: ARG001
             for record, data_source, detail in dispatches:
-                self._emit_event_record_webhook(record, data_source, detail)
+                self._emit_event_record_webhook(record, data_source, detail, sync)
 
     def _relay_plan(
         self,
@@ -1361,7 +1379,11 @@ class EventRecordService(
         data_source = self.data_source_repo.get(db_session, record.data_source_id)
         if not data_source or data_source.user_id != user_id:
             return False
-        self.crud.delete(db_session, record)
+        self.crud.delete_flush(db_session, record)
+        data_type_coverage_repository.refresh_events(
+            db_session, [(data_source.user_id, data_source.provider, record.category)]
+        )
+        db_session.commit()
         return True
 
 

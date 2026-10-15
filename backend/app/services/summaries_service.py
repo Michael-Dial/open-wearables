@@ -160,6 +160,7 @@ ACTIVITY_SERIES: list[SeriesType] = [
     SeriesType.steps,
     SeriesType.active_energy,
     SeriesType.basal_energy,
+    SeriesType.total_energy,
     SeriesType.heart_rate,
     SeriesType.distance_walking_running,
     SeriesType.flights_climbed,
@@ -277,6 +278,13 @@ class SummariesService:
         inferred = infer_device_type_from_model(entry.get("device_model"))
         return inferred if inferred != DeviceType.UNKNOWN else None
 
+    @staticmethod
+    def _priority_orders(db_session: DbSession) -> tuple[dict[ProviderName, int], dict[DeviceType, int]]:
+        return (
+            ProviderPriorityRepository(ProviderPriority).get_priority_order(db_session),
+            DeviceTypePriorityRepository().get_priority_order(db_session),
+        )
+
     def _filter_by_priority(
         self,
         db_session: DbSession,
@@ -296,8 +304,7 @@ class SummariesService:
         if not results:
             return results
 
-        provider_order = ProviderPriorityRepository(ProviderPriority).get_priority_order(db_session)
-        device_type_order = DeviceTypePriorityRepository().get_priority_order(db_session)
+        provider_order, device_type_order = self._priority_orders(db_session)
 
         # Group results by date
         by_date: dict[date, list[dict]] = defaultdict(list)
@@ -440,7 +447,7 @@ class SummariesService:
             db_session, user_id, include_redundant_relays, categories=["sleep"], start=start_date, end=end_date
         )
         results = self.event_record_repo.get_sleep_summaries(
-            db_session, user_id, start_date, end_date, cursor, limit, relay_plan
+            db_session, user_id, start_date, end_date, cursor, limit, relay_plan, page_by_date=filter_by_priority
         )
 
         # Collapse to the highest-priority source per date, unless the caller
@@ -597,7 +604,14 @@ class SummariesService:
             end=end_date,
         )
         results = self.health_score_repo.get_recovery_summaries(
-            db_session, user_id, start_date, end_date, cursor, limit, relay_plan
+            db_session,
+            user_id,
+            start_date,
+            end_date,
+            cursor,
+            limit,
+            relay_plan,
+            page_by_date=filter_by_priority,
         )
 
         if filter_by_priority:
@@ -763,7 +777,11 @@ class SummariesService:
         )
 
         # Build lookup dict for workout data by (date, source, device, account)
-        workout_lookup: dict[tuple, dict] = {_activity_key(wa["workout_date"], wa): wa for wa in workout_aggregates}
+        # Keyed by provider as well (upstream #1863): two providers can report one device
+        # under the same source name, and only the row's own provider's workouts are its own.
+        workout_lookup: dict[tuple, dict] = {
+            (*_activity_key(wa["workout_date"], wa), wa.get("provider")): wa for wa in workout_aggregates
+        }
 
         # Get active/sedentary minutes from step data
         activity_minutes = self.data_point_repo.get_daily_active_minutes(
@@ -806,7 +824,7 @@ class SummariesService:
         for result in results:
             # Look up workout data for this day/provider/device
             result_key = _activity_key(result["activity_date"], result)
-            workout_data = workout_lookup.get(result_key, {})
+            workout_data = workout_lookup.get((*result_key, result.get("provider")), {})
             activity_data = activity_lookup.get(result_key, {})
             intensity_data = intensity_lookup.get(result_key, {})
 
@@ -842,9 +860,9 @@ class SummariesService:
             # not additive - providers report daily totals that include workout calories
             active_cal = result.get("active_energy_sum")
             basal_cal = result.get("basal_energy_sum")
-            total_cal = None
-            if active_cal is not None or basal_cal is not None:
-                total_cal = (active_cal or 0.0) + (basal_cal or 0.0)
+            total_cal = result.get("total_energy_sum")
+            if total_cal is None and active_cal is not None and basal_cal is not None:
+                total_cal = active_cal + basal_cal
 
             # Active minutes: prefer the provider-reported daily active time (Garmin
             # activeTimeInSeconds, Oura high+medium+low activity time, Polar active_duration).
@@ -867,7 +885,6 @@ class SummariesService:
                     vigorous=vigorous,
                 )
 
-            steps = result.get("steps_sum")
             summary = ActivitySummary(
                 date=result["activity_date"],
                 source=SourceMetadata(
@@ -877,7 +894,7 @@ class SummariesService:
                     device_type=result.get("device_type"),
                     user_connection_id=result.get("user_connection_id"),
                 ),
-                steps=steps if steps is not None else None,
+                steps=result.get("steps_sum"),
                 distance_meters=total_distance,
                 floors_climbed=floors_climbed,
                 elevation_meters=elevation_meters,
@@ -957,9 +974,55 @@ class SummariesService:
         """
         results = self.data_point_repo.get_daily_activity_aggregates(db_session, user_id, start, end, relay_plan)
         results = self._merge_archive_activity(db_session, user_id, start, end, results, relay_plan)
+        # Upstream #1863: a day with a workout but no time series still gets a row. The
+        # workout read hides redundant relays whenever the series read does.
+        workout_plan = (
+            self._relay_plan(db_session, user_id, False, categories=["workout"], start=start, end=end)
+            if relay_plan is not None
+            else None
+        )
+        results = self._add_workout_only_days(db_session, user_id, start, end, results, workout_plan)
         if filter_by_priority:
             results = self._filter_by_priority(db_session, user_id, results, date_key="activity_date")
         return sorted(results, key=_page_key)
+
+    def _add_workout_only_days(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        start: datetime,
+        end: datetime,
+        results: list,
+        relay_plan: "RelayDedupPlan | None" = None,
+    ) -> list:
+        """Add an empty row per source for dates that have workouts but no time-series data."""
+        covered = {r["activity_date"] for r in results}
+        extra = [
+            {
+                "activity_date": wa["workout_date"],
+                "provider": wa["provider"],
+                "source": wa["source"],
+                "device_model": wa["device_model"],
+                "device_type": wa["device_type"],
+                # The account keys the day's row like every other activity row (_activity_key).
+                "user_connection_id": wa.get("user_connection_id"),
+                "steps_sum": None,
+                "active_energy_sum": None,
+                "basal_energy_sum": None,
+                "total_energy_sum": None,
+                "hr_avg": None,
+                "hr_max": None,
+                "hr_min": None,
+                "distance_sum": None,
+                "flights_climbed_sum": None,
+                "active_time_minutes": None,
+            }
+            for wa in self.event_record_repo.get_daily_workout_aggregates(db_session, user_id, start, end, relay_plan)
+            if wa["workout_date"] not in covered
+        ]
+        if not extra:
+            return results
+        return sorted([*results, *extra], key=lambda r: r["activity_date"])
 
     def _activity_page_days(
         self,

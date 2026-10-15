@@ -2,6 +2,7 @@ import contextlib
 from logging import Logger, getLogger
 from uuid import UUID
 
+from app.constants.devices_map import resolve_device_name
 from app.database import DbSession
 from app.models import DataSource, ProviderPriority, UserConnection
 from app.repositories import DataSourceRepository, ProviderPriorityRepository
@@ -106,6 +107,7 @@ class PriorityService:
                 source=ds.source,
                 device_type=ds.device_type,
                 original_source_name=ds.original_source_name,
+                device_name=resolve_device_name(ds.device_model),
                 provider_device_id=ds.provider_device_id,
                 source_app_id=ds.source_app_id,
                 device_manufacturer=ds.device_manufacturer,
@@ -182,6 +184,7 @@ class PriorityService:
             source=data_source.source,
             device_type=data_source.device_type,
             original_source_name=data_source.original_source_name,
+            device_name=resolve_device_name(data_source.device_model),
             provider_device_id=data_source.provider_device_id,
             source_app_id=data_source.source_app_id,
             device_manufacturer=data_source.device_manufacturer,
@@ -238,41 +241,6 @@ class PriorityService:
         results = self.device_type_priority_repo.bulk_update(db_session, priorities_tuples)
         db_session.commit()
         return DeviceTypePriorityListResponse(items=[DeviceTypePriorityResponse.model_validate(p) for p in results])
-
-    def get_priority_data_source_ids(
-        self,
-        db_session: DbSession,
-        user_id: UUID,
-    ) -> list[UUID]:
-        """Get data source IDs for a user, ordered by global priority."""
-        provider_order = self.priority_repo.get_priority_order(db_session)
-        device_type_order = self.device_type_priority_repo.get_priority_order(db_session)
-        sources = self.data_source_repo.get_user_data_sources(db_session, user_id)
-
-        if not sources:
-            return []
-
-        def sort_key(ds: DataSource) -> tuple[int, int, str]:
-            provider_priority = provider_order.get(ds.provider, 99)
-            device_type_priority = 99
-            if ds.device_type:
-                try:
-                    dt = DeviceType(ds.device_type)
-                    device_type_priority = device_type_order.get(dt, 99)
-                except ValueError:
-                    pass
-            return (provider_priority, device_type_priority, ds.device_model or "")
-
-        sorted_sources = sorted(sources, key=sort_key)
-        return [ds.id for ds in sorted_sources]
-
-    def get_best_data_source_id(
-        self,
-        db_session: DbSession,
-        user_id: UUID,
-    ) -> UUID | None:
-        ids = self.get_priority_data_source_ids(db_session, user_id)
-        return ids[0] if ids else None
 
     def _build_display_name(self, ds: DataSource, account_suffix: str | None = None) -> str:
         parts = []

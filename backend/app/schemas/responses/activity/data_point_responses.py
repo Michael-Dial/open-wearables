@@ -51,9 +51,10 @@ class ActivityAggregateResult(TypedDict):
     # accounts with one provider are two rows rather than one row summing both.
     user_connection_id: UUID | None
     device_type: str | None
-    steps_sum: int
-    active_energy_sum: float
-    basal_energy_sum: float
+    steps_sum: int | None
+    active_energy_sum: float | None
+    basal_energy_sum: float | None
+    total_energy_sum: float | None
     hr_avg: int | None
     hr_max: int | None
     hr_min: int | None

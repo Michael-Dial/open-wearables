@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
-from sqlalchemy import and_, asc, desc, tuple_
+from sqlalchemy import and_, asc, desc, func, tuple_
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database import DbSession
@@ -128,8 +128,14 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         cursor: str | None,
         limit: int,
         relay_plan: "RelayDedupPlan | None" = None,
+        page_by_date: bool = False,
     ) -> list[dict[str, Any]]:
         """Get recovery health scores for a date range with cursor-based pagination.
+
+        ``page_by_date`` pages by day rather than by score row (upstream #1844's fix,
+        without moving the source choice into SQL): every score of ``limit + 1`` UTC days,
+        so a caller keeping one source per day gets a full page and never sees a day split
+        across two pages. The fork's per-day choice stays in the summaries service.
 
         Returns list of dicts with keys: recovery_date, provider, source, device_model,
         device_type, device_id, data_source_id, user_connection_id, original_source_name,
@@ -162,7 +168,27 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
             )
         )
 
-        if cursor:
+        if page_by_date:
+            # The day recovery_date reports: the UTC date of recorded_at.
+            day = func.date(func.timezone("UTC", HealthScore.recorded_at))
+            days = query.with_entities(day).distinct()
+            descending = False
+            if cursor:
+                cursor_ts, _cursor_id, direction = decode_cursor(cursor)
+                descending = direction == "prev"
+                cursor_day = cursor_ts.astimezone(timezone.utc).date() if cursor_ts.tzinfo else cursor_ts.date()
+                days = days.filter(day < cursor_day) if descending else days.filter(day > cursor_day)
+            page = [r[0] for r in days.order_by(desc(day) if descending else asc(day)).limit(limit + 1).all()]
+            if not page:
+                return []
+            ordering = (
+                (desc(HealthScore.recorded_at), desc(HealthScore.id))
+                if descending
+                else (asc(HealthScore.recorded_at), asc(HealthScore.id))
+            )
+            query = query.filter(day.in_(page)).order_by(*ordering)
+            rows = query.all()
+        elif cursor:
             cursor_ts, cursor_id, direction = decode_cursor(cursor)
             if direction == "prev":
                 query = query.filter(tuple_(HealthScore.recorded_at, HealthScore.id) < (cursor_ts, cursor_id)).order_by(
@@ -175,7 +201,8 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         else:
             query = query.order_by(asc(HealthScore.recorded_at), asc(HealthScore.id))
 
-        rows = query.limit(limit + 1).all()
+        if not page_by_date:
+            rows = query.limit(limit + 1).all()
 
         summaries = []
         for row, data_source in rows:

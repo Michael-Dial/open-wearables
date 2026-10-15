@@ -1,4 +1,5 @@
 import contextlib
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, LiteralString, NamedTuple
@@ -41,12 +42,14 @@ from app.database import DbSession
 from app.models import DataPointSeries, DataPointSeriesArchive, DataSource, DeviceTypePriority, ProviderPriority
 from app.models.series_type_definition import SeriesTypeDefinition
 from app.repositories.data_source_repository import SOURCE_ID_FIELDS, DataSourceRepository
+from app.repositories.data_type_coverage_repository import data_type_coverage_repository
 from app.repositories.repositories import (
     CrudRepository,
     source_filter_conditions,
     timeline_key_column,
     utc_bucket_start,
 )
+from app.schemas.data_type_coverage import CoverageSpan
 from app.schemas.enums import (
     BUCKET_SIZES,
     AggregationMethod,
@@ -72,6 +75,7 @@ from app.schemas.responses.activity import (
     ActivityAggregateResult,
     IntensityMinutesResult,
 )
+from app.schemas.sync_status import DataTypeKind
 from app.utils.dates import as_utc
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import decode_bucket_cursor, decode_cursor
@@ -100,6 +104,51 @@ def _relay_conditions(relay_plan: "RelayDedupPlan | None", model: type[DataPoint
 # Identity tuple: (user_id, device_model, source)
 
 
+class TypeCounts(NamedTuple):
+    """One series type's share of a bulk upsert."""
+
+    inserted: int
+    updated: int
+    covered_start: datetime
+    covered_end: datetime
+
+    def merged_with(self, other: "TypeCounts") -> "TypeCounts":
+        return TypeCounts(
+            self.inserted + other.inserted,
+            self.updated + other.updated,
+            min(self.covered_start, other.covered_start),
+            max(self.covered_end, other.covered_end),
+        )
+
+
+class _StagedSpan(NamedTuple):
+    """The rows staged for one data source and series type: how many, and the span they cover."""
+
+    staged: int
+    start: datetime
+    end: datetime
+
+
+def _spans_by_source_and_type(
+    rows: Iterable["DataPointSeriesRepository._StagingRow"],
+) -> dict[tuple[UUID, int], _StagedSpan]:
+    """One pass over the rows already in memory, so neither the counts nor coverage cost a query."""
+    # Updated in place: a sample batch runs to millions of rows, and few keys.
+    spans: dict[tuple[UUID, int], list] = {}
+    for row in rows:
+        at = row.recorded_at
+        span = spans.get((row.data_source_id, row.series_type_definition_id))
+        if span is None:
+            spans[(row.data_source_id, row.series_type_definition_id)] = [1, at, at]
+            continue
+        span[0] += 1
+        if at < span[1]:
+            span[1] = at
+        elif at > span[2]:
+            span[2] = at
+    return {key: _StagedSpan(*span) for key, span in spans.items()}
+
+
 class WriteCounts(int):
     """Result of a bulk upsert: total rows written, split into new vs updated.
 
@@ -113,26 +162,31 @@ class WriteCounts(int):
     covered_start/covered_end are the oldest and newest ``recorded_at`` actually
     written. This is the span of the data itself, which is not the window that was
     requested: asking for 90 days and getting two weight readings covers two days.
+
+    The totals are kept apart from by_type: adding a plain int count, which has no
+    per-type split, still has to add up.
     """
 
     inserted: int
     updated: int
-    covered_start: datetime | None
-    covered_end: datetime | None
+    # Keyed by canonical SeriesType slug, so run tracking can report per type rather
+    # than per provider fetch task.
+    by_type: dict[str, TypeCounts]
 
-    def __new__(
-        cls,
-        inserted: int,
-        updated: int,
-        covered_start: datetime | None = None,
-        covered_end: datetime | None = None,
-    ) -> "WriteCounts":
+    def __new__(cls, inserted: int, updated: int, by_type: dict[str, TypeCounts] | None = None) -> "WriteCounts":
         obj = super().__new__(cls, inserted + updated)
         obj.inserted = inserted
         obj.updated = updated
-        obj.covered_start = covered_start
-        obj.covered_end = covered_end
+        obj.by_type = by_type or {}
         return obj
+
+    @property
+    def covered_start(self) -> datetime | None:
+        return min((counts.covered_start for counts in self.by_type.values()), default=None)
+
+    @property
+    def covered_end(self) -> datetime | None:
+        return max((counts.covered_end for counts in self.by_type.values()), default=None)
 
     def __add__(self, other: int) -> "WriteCounts":
         """Merge two results, widening the covered span rather than dropping it.
@@ -141,15 +195,12 @@ class WriteCounts(int):
         total, so any caller accumulating counts across batches keeps the detail.
         """
         if not isinstance(other, WriteCounts):
-            return WriteCounts(self.inserted + int(other), self.updated, self.covered_start, self.covered_end)
-        starts = [d for d in (self.covered_start, other.covered_start) if d is not None]
-        ends = [d for d in (self.covered_end, other.covered_end) if d is not None]
-        return WriteCounts(
-            self.inserted + other.inserted,
-            self.updated + other.updated,
-            min(starts) if starts else None,
-            max(ends) if ends else None,
-        )
+            return WriteCounts(self.inserted + int(other), self.updated, self.by_type)
+        by_type = dict(self.by_type)
+        for series_type, counts in other.by_type.items():
+            existing = by_type.get(series_type)
+            by_type[series_type] = counts if existing is None else existing.merged_with(counts)
+        return WriteCounts(self.inserted + other.inserted, self.updated + other.updated, by_type)
 
     __radd__ = __add__
 
@@ -183,6 +234,20 @@ _TYPE_IDS_BY_METHOD: dict[AggregationMethod, frozenset[int]] = {
     for method in _AGGREGATE_FUNCS
     if method is not AggregationMethod.AVG
 }
+
+
+# Rows per avg HR query; 5 bind parameters each keeps a query far below PostgreSQL's 65535
+_MAX_WINDOW_ROWS = 2000
+
+
+class WorkoutWindow(NamedTuple):
+    """A workout's time window, its own data source and the sources to fall back on for samples."""
+
+    record_id: UUID
+    data_source_id: UUID
+    start_time: datetime
+    end_time: datetime
+    fallback_source_ids: tuple[UUID, ...] = ()
 
 
 class AggregatedSample(NamedTuple):
@@ -418,22 +483,64 @@ class DataPointSeriesRepository(
                              OR COALESCE(data_point_series.is_daily_total, FALSE)
                              OR {_EXCLUDED_RANK_SQL} >= {_HELD_RANK_SQL}
                           )
-                        RETURNING (xmax = 0) AS was_insert
+                        RETURNING (xmax = 0) AS was_insert, series_type_definition_id
                     )
-                    SELECT count(*) FILTER (WHERE was_insert) FROM merged
+                    SELECT series_type_definition_id, count(*) FILTER (WHERE was_insert) AS inserted
+                    FROM merged
+                    GROUP BY series_type_definition_id
                 """
             )
-            merge_result = cursor.fetchone()
-            assert merge_result is not None, "count(*) always returns exactly one row"
-            inserted = merge_result[0]
-        # One pass over rows already in memory, so the span costs no extra query. This is
-        # the span of the data staged for the merge, which is what the sync covered.
-        recorded = [row.recorded_at for row in rows if row.recorded_at is not None]
-        return WriteCounts(
-            inserted,
-            len(rows) - inserted,
-            min(recorded, default=None),
-            max(recorded, default=None),
+            inserted_by_type_id = dict(cursor.fetchall())
+
+        # Staged per type across its sources (upstream #1597); updated is staged minus
+        # inserted, matching the run-level split: a conflict whose values were unchanged
+        # never reaches RETURNING, and still counts as written.
+        spans = _spans_by_source_and_type(rows)
+        staged_by_type: dict[int, TypeCounts] = {}
+        for (_, type_id), span in spans.items():
+            staged = TypeCounts(0, span.staged, span.start, span.end)
+            known = staged_by_type.get(type_id)
+            staged_by_type[type_id] = staged if known is None else known.merged_with(staged)
+        by_type: dict[str, TypeCounts] = {}
+        for type_id, staged in staged_by_type.items():
+            inserted_for_type = inserted_by_type_id.get(type_id, 0)
+            by_type[get_series_type_from_id(type_id).value] = staged._replace(
+                inserted=inserted_for_type, updated=staged.updated - inserted_for_type
+            )
+        self._record_coverage(db_session, spans)
+
+        inserted = sum(inserted_by_type_id.values())
+        return WriteCounts(inserted, len(rows) - inserted, by_type)
+
+    @staticmethod
+    def _record_coverage(db_session: DbSession, spans: dict[tuple[UUID, int], "_StagedSpan"]) -> None:
+        """Widen what we hold per type (upstream #1597), under each source's own user and provider.
+
+        Read from the data sources rather than the creators, so it is the provider the
+        source actually resolved to. Coverage is per (user, provider), not per account.
+        """
+        if not spans:
+            return
+        owners = {
+            row.id: (row.user_id, str(getattr(row.provider, "value", row.provider)))
+            for row in db_session.query(DataSource.id, DataSource.user_id, DataSource.provider)
+            .filter(DataSource.id.in_({source_id for source_id, _ in spans}))
+            .all()
+        }
+        data_type_coverage_repository.record(
+            db_session,
+            (
+                CoverageSpan(
+                    user_id=owners[source_id][0],
+                    provider=owners[source_id][1],
+                    data_type=get_series_type_from_id(type_id).value,
+                    kind=DataTypeKind.SERIES,
+                    start=span.start,
+                    end=span.end,
+                )
+                for (source_id, type_id), span in spans.items()
+                if source_id in owners
+            ),
         )
 
     def try_commit(self, db_session: DbSession, creation: DataPointSeries) -> DataPointSeries:
@@ -977,54 +1084,72 @@ class DataPointSeriesRepository(
     def get_avg_hr_for_workout_batch(
         self,
         db_session: DbSession,
-        workouts: list[tuple[UUID, UUID, datetime, datetime]],
+        workouts: list[WorkoutWindow],
     ) -> dict[UUID, int]:
         """Batch-compute average HR from series data for multiple workout windows.
 
-        Issues a single query using a VALUES CTE joined against data_point_series.
-        Filters by data_source_id so HR data comes from the same device as the workout.
-
-        Args:
-            workouts: List of (record_id, data_source_id, start_time, end_time) tuples.
+        One query per chunk of workouts, a VALUES CTE joined against data_point_series with one
+        index range scan per (workout, source). HR from the workout's own source wins; the fallback
+        sources are used only when it has none in the window.
 
         Returns:
             Dict mapping record_id to rounded avg HR. Workouts with no HR data are omitted.
         """
-        if not workouts:
-            return {}
+        result: dict[UUID, int] = {}
+        chunk: list[WorkoutWindow] = []
+        rows = 0
+        for workout in workouts:
+            # A workout's sources stay in one chunk, so its fallback average covers all of them
+            workout_rows = 1 + len(workout.fallback_source_ids)
+            if chunk and rows + workout_rows > _MAX_WINDOW_ROWS:
+                result |= self._avg_hr_for_windows(db_session, chunk)
+                chunk, rows = [], 0
+            chunk.append(workout)
+            rows += workout_rows
+        if chunk:
+            result |= self._avg_hr_for_windows(db_session, chunk)
+        return result
 
-        hr_type_id = get_series_type_id(SeriesType.heart_rate)
-
-        values_parts = []
-        params: dict[str, object] = {"hr_type_id": hr_type_id}
-        for i, (record_id, data_source_id, start_time, end_time) in enumerate(workouts):
-            values_parts.append(f"""(
-                CAST(:record_id_{i} AS uuid),
-                CAST(:ds_id_{i} AS uuid),
-                CAST(:start_{i} AS timestamptz),
-                CAST(:end_{i} AS timestamptz)
-            )""")
-            params[f"record_id_{i}"] = str(record_id)
-            params[f"ds_id_{i}"] = str(data_source_id)
-            params[f"start_{i}"] = start_time
-            params[f"end_{i}"] = end_time
+    def _avg_hr_for_windows(self, db_session: DbSession, workouts: list[WorkoutWindow]) -> dict[UUID, int]:
+        # Windows are passed as literals: computed in SQL, the planner loses the time bounds on the index
+        values_parts: list[str] = []
+        params: dict[str, object] = {"hr_type_id": get_series_type_id(SeriesType.heart_rate)}
+        for workout in workouts:
+            sources = [(workout.data_source_id, True), *((source, False) for source in workout.fallback_source_ids)]
+            for data_source_id, is_own in sources:
+                i = len(values_parts)
+                values_parts.append(f"""(
+                    CAST(:record_id_{i} AS uuid),
+                    CAST(:ds_id_{i} AS uuid),
+                    CAST(:is_own_{i} AS boolean),
+                    CAST(:start_{i} AS timestamptz),
+                    CAST(:end_{i} AS timestamptz)
+                )""")
+                params[f"record_id_{i}"] = str(workout.record_id)
+                params[f"ds_id_{i}"] = str(data_source_id)
+                params[f"is_own_{i}"] = is_own
+                params[f"start_{i}"] = workout.start_time
+                params[f"end_{i}"] = workout.end_time
 
         sql = text(f"""
-            WITH workout_windows(record_id, data_source_id, start_time, end_time) AS (
+            WITH workout_windows(record_id, data_source_id, is_own, start_time, end_time) AS (
                 VALUES {", ".join(values_parts)}
             )
-            SELECT ww.record_id, ROUND(AVG(dps.value))::int
+            SELECT ww.record_id, ww.is_own, ROUND(AVG(dps.value))::int
             FROM workout_windows ww
             JOIN data_point_series dps
                 ON dps.data_source_id = ww.data_source_id
                 AND dps.series_type_definition_id = :hr_type_id
                 AND dps.recorded_at >= ww.start_time
                 AND dps.recorded_at < ww.end_time
-            GROUP BY ww.record_id
+            GROUP BY ww.record_id, ww.is_own
         """)
 
-        rows = db_session.execute(sql, params).fetchall()
-        return {UUID(str(record_id)): int(avg) for record_id, avg in rows}
+        own_avg: dict[UUID, int] = {}
+        fallback_avg: dict[UUID, int] = {}
+        for record_id, is_own, avg in db_session.execute(sql, params).fetchall():
+            (own_avg if is_own else fallback_avg)[UUID(str(record_id))] = int(avg)
+        return fallback_avg | own_avg
 
     def _local_day_window(
         self, local_date: ColumnElement, start_date: datetime, end_date: datetime
@@ -1056,7 +1181,7 @@ class DataPointSeriesRepository(
 
         Returns list of dicts with keys:
         - activity_date, provider, source, device_model, device_type
-        - steps_sum, active_energy_sum, basal_energy_sum
+        - steps_sum, active_energy_sum, basal_energy_sum, total_energy_sum
         - hr_avg, hr_max, hr_min
         - distance_sum, flights_climbed_sum
         """
@@ -1064,6 +1189,7 @@ class DataPointSeriesRepository(
         steps_id = get_series_type_id(SeriesType.steps)
         energy_id = get_series_type_id(SeriesType.active_energy)
         basal_energy_id = get_series_type_id(SeriesType.basal_energy)
+        total_energy_id = get_series_type_id(SeriesType.total_energy)
         hr_id = get_series_type_id(SeriesType.heart_rate)
         distance_id = get_series_type_id(SeriesType.distance_walking_running)
         flights_id = get_series_type_id(SeriesType.flights_climbed)
@@ -1120,6 +1246,8 @@ class DataPointSeriesRepository(
                 prefer_daily_sum(energy_id).label("active_energy_sum"),
                 # Basal energy - prefer daily total, else sum samples
                 prefer_daily_sum(basal_energy_id).label("basal_energy_sum"),
+                # Total energy - providers that report active + basal without a split
+                prefer_daily_sum(total_energy_id).label("total_energy_sum"),
                 # Heart rate stats
                 func.avg(case((self.model.series_type_definition_id == hr_id, self.model.value), else_=None)).label(
                     "hr_avg"
@@ -1142,7 +1270,16 @@ class DataPointSeriesRepository(
                 DataSource.user_id == user_id,
                 *self._local_day_window(local_date, start_date, end_date),
                 self.model.series_type_definition_id.in_(
-                    [steps_id, energy_id, basal_energy_id, hr_id, distance_id, flights_id, active_time_id]
+                    [
+                        steps_id,
+                        energy_id,
+                        basal_energy_id,
+                        total_energy_id,
+                        hr_id,
+                        distance_id,
+                        flights_id,
+                        active_time_id,
+                    ]
                 ),
                 # Leave out an aggregator's copy of a brand that is also connected
                 # directly, so a day is not summed twice. Applied inside the aggregate
@@ -1172,9 +1309,10 @@ class DataPointSeriesRepository(
                     "device_model": row.device_model,
                     "user_connection_id": row.user_connection_id,
                     "device_type": row.device_type,
-                    "steps_sum": int(row.steps_sum) if row.steps_sum else 0,
-                    "active_energy_sum": float(row.active_energy_sum) if row.active_energy_sum else 0.0,
-                    "basal_energy_sum": float(row.basal_energy_sum) if row.basal_energy_sum else 0.0,
+                    "steps_sum": int(row.steps_sum) if row.steps_sum is not None else None,
+                    "active_energy_sum": float(row.active_energy_sum) if row.active_energy_sum is not None else None,
+                    "basal_energy_sum": float(row.basal_energy_sum) if row.basal_energy_sum is not None else None,
+                    "total_energy_sum": float(row.total_energy_sum) if row.total_energy_sum is not None else None,
                     "hr_avg": int(round(float(row.hr_avg))) if row.hr_avg is not None else None,
                     "hr_max": int(row.hr_max) if row.hr_max is not None else None,
                     "hr_min": int(row.hr_min) if row.hr_min is not None else None,

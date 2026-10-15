@@ -1,11 +1,12 @@
 import contextlib
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from logging import getLogger
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, and_, asc, delete, func
+from sqlalchemy import CursorResult, and_, asc, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -19,6 +20,7 @@ from app.constants.devices_map.device_types import SINGLE_DEVICE_PROVIDER_TYPE
 from app.constants.sdk_providers import SDK_PROVIDERS
 from app.database import DbSession
 from app.models import DataSource, HealthScore, ProviderPriority, UserConnection
+from app.repositories.data_type_coverage_repository import data_type_coverage_repository
 from app.repositories.provider_priority_repository import ProviderPriorityRepository
 from app.repositories.repositories import CrudRepository
 from app.schemas.enums import (
@@ -62,6 +64,26 @@ _INSERT_FIELDS = (
     "source_app_id",
     "device_manufacturer",
 )
+
+
+def _version_key(version: str) -> tuple[int, ...] | None:
+    """Dotted ASCII numbers, else None; never raises, so an odd version only skips the update."""
+    parts = version.split(".")
+    if not all(part.isascii() and part.isdigit() for part in parts):
+        return None
+    try:
+        return tuple(int(part) for part in parts)
+    except ValueError:  # past Python's digit limit for int()
+        return None
+
+
+def _is_newer_version(candidate: str, current: str | None) -> bool:
+    """A history sync replays old versions in any order, so only a higher one replaces the stored one (#1873)."""
+    new = _version_key(candidate)
+    if new is None:
+        return current is None
+    old = _version_key(current) if current is not None else None
+    return old is None or new > old
 
 
 class DataSourceIdentity(NamedTuple):
@@ -325,6 +347,22 @@ class DataSourceRepository(
         return True
 
     @staticmethod
+    def _follow_writer_name(row: DataSource, identity: DataSourceIdentity) -> bool:
+        """An app-keyed row takes its writer's latest name (a renamed Apple Watch). True if it did.
+
+        Upstream #1873. The name is not part of an app-keyed row's identity. Not on device-id
+        rows - Samsung names one device differently per data type - and the app id itself
+        is only a fallback name, so it never replaces a real one.
+        """
+        if not row.source_app_id or row.provider_device_id:
+            return False
+        source = identity.source
+        if not source or source == row.source_app_id or source == row.source:
+            return False
+        object.__setattr__(row, "source", source)
+        return True
+
+    @staticmethod
     def _stamp_ids(row: DataSource, identity: DataSourceIdentity, device_manufacturer: str | None) -> bool:
         """Fill the stable ids (and manufacturer) a matched row lacks. True if anything changed.
 
@@ -557,9 +595,10 @@ class DataSourceRepository(
             if user_connection_id and existing.user_connection_id is None:
                 object.__setattr__(existing, "user_connection_id", user_connection_id)
                 updated = True
-            if software_version and existing.software_version is None:
+            if software_version and _is_newer_version(software_version, existing.software_version):
                 object.__setattr__(existing, "software_version", software_version)
                 updated = True
+            updated |= self._follow_writer_name(existing, identity)
             if original_source_name and existing.original_source_name is None:
                 object.__setattr__(existing, "original_source_name", original_source_name)
                 updated = True
@@ -1019,6 +1058,7 @@ class DataSourceRepository(
                 matched[requested] = row
                 changed |= self._stamp_ids(row, stored, manufacturers.get(requested))
                 changed |= self._learn_model(row, _provider_model(requested))
+                changed |= self._follow_writer_name(row, stored)
 
         # Re-resolve the type of what already exists, as the single path does. The
         # caller's reported types are keyed on what it asked for; the first one per
@@ -1308,6 +1348,42 @@ class DataSourceRepository(
                 seen.append(name)
         return observed
 
+    def get_writer_siblings(self, db_session: DbSession, data_source_ids: set[UUID]) -> dict[UUID, tuple[UUID, ...]]:
+        """Other sources of the same writer on the same account and device, for each given source.
+
+        Upstream #1866: one writer can be split across sources by its device model (Health
+        Connect apps reporting the model on some records only, Garmin dailies vs
+        workouts), so a workout's heart rate may sit on a sibling source. Upstream groups
+        by (user, provider, app id else source) alone. Here a sibling must also be on the
+        same account, must not be attributed to a different registry device, and must not
+        report a different model: a participant's second Garmin, or a bike computer beside
+        the watch, writes as "garmin" too, and its heart rate is another unit's reading.
+        """
+        if not data_source_ids:
+            return {}
+        owners = select(self.model.user_id).where(self.model.id.in_(data_source_ids))
+        rows = db_session.query(self.model).filter(self.model.user_id.in_(owners)).all()
+        by_writer: dict[tuple[UUID, str, UUID | None, str], list[DataSource]] = defaultdict(list)
+        for row in rows:
+            name = row.source_app_id or row.source
+            if name:
+                by_writer[(row.user_id, str(row.provider), row.user_connection_id, name)].append(row)
+
+        def _same_unit(a: DataSource, b: DataSource) -> bool:
+            if a.device_id is not None and b.device_id is not None and a.device_id != b.device_id:
+                return False
+            return a.device_model is None or b.device_model is None or a.device_model == b.device_model
+
+        result: dict[UUID, tuple[UUID, ...]] = {}
+        for row in rows:
+            if row.id not in data_source_ids:
+                continue
+            name = row.source_app_id or row.source
+            # A source with neither an app id nor a source name has no writer to share
+            group = by_writer.get((row.user_id, str(row.provider), row.user_connection_id, name), []) if name else []
+            result[row.id] = tuple(other.id for other in group if other.id != row.id and _same_unit(row, other))
+        return result
+
     def get_user_data_sources(
         self,
         db_session: DbSession,
@@ -1347,6 +1423,7 @@ class DataSourceRepository(
                 ),
             ),
         )
+        data_type_coverage_repository.delete_for_provider(db_session, user_id, provider)
         db_session.commit()
         return result.rowcount
 
@@ -1382,6 +1459,16 @@ class DataSourceRepository(
                 ),
             ),
         )
+        # Coverage (upstream #1597) is kept per (user, provider), not per account. Cleared
+        # when this was the provider's last account with data; with another account still
+        # holding data the stored range may overstate until that account's next sync.
+        provider = db_session.query(UserConnection.provider).filter(UserConnection.id == user_connection_id).scalar()
+        if provider is not None and not (
+            db_session.query(self.model.id)
+            .filter(self.model.user_id == user_id, self.model.provider == provider)
+            .first()
+        ):
+            data_type_coverage_repository.delete_for_provider(db_session, user_id, provider)
         db_session.commit()
         return result.rowcount
 

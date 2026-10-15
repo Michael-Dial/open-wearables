@@ -1221,3 +1221,33 @@ then tell the watch's own data from an app's.
      event because an identical one exists on another account - the tests in
      `TestMergeStaysWithinOneAccount` fail against it. It moves and deletes study data, so it is
      not run at startup: run `--dry-run`, read the counts, then run it by hand.
+
+## Workout HR fallback, source names and summary paging stay per unit
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile (keep the account, registry-device and model checks in
+  `DataSourceRepository.get_writer_siblings`; keep `_follow_writer_name` and `_is_newer_version`
+  in the fork's resolution; keep `page_by_date` on the sleep and recovery summary reads with the
+  per-day choice in `SummariesService._filter_by_priority`)
+- **Why**: three upstream changes in the 2026-10-15 sync, adopted with fork changes.
+  - **#1866** falls back to the same writer's heart rate for a workout's average when the workout's
+    own source has none. It groups a writer by (user, provider, app id or source), which puts a
+    participant's second Garmin on another account - or a bike computer beside the watch, both
+    writing as "garmin" - into the fallback, so a workout could take another unit's heart rate.
+    Here a sibling must be on the same account, must not be attributed to a different registry
+    device, and must not report a different model. The cloud dailies of the same watch still
+    count. The tests in `TestResolveAvgHrStaysOnOneUnit` fail against upstream's grouping.
+  - **#1873** keeps an app-keyed source's name current and only moves the firmware version up.
+    Ported into the fork's resolution, single and bulk paths.
+  - **#1844 / #1845** page sleep and recovery summaries by day rather than by row, so a page holds
+    `limit` days and a day is never split across pages. Upstream does it by moving the per-day
+    source choice into SQL and always applying it. The fork's choice has tie-breaks a SQL rank
+    lacks (the row that measured something, the registry's device type), honours
+    `filter_by_priority=false` and hides redundant relays, so it stays in the service; the
+    repositories page by day instead (`page_by_date`) whenever the service will keep one source
+    per day. Upstream's paging tests pass unchanged against it.
+- **Also noted**: #1597's `data_type_coverage` is per (user, provider), not per account, so a
+  second account of one provider that stops syncing is masked by the first. Left as upstream has
+  it; a per-account key is a follow-up. Deleting one account's data clears coverage only when it
+  was the provider's last account with data.
