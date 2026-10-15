@@ -8,7 +8,9 @@ from app.database import BaseDbModel
 from app.extensions.migrations import is_core_object
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.db_uri)
+# Alembic's config is a ConfigParser, which reads '%' as interpolation; the URL-encoded
+# credentials in db_uri contain '%', so escape it.
+config.set_main_option("sqlalchemy.url", settings.db_uri.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

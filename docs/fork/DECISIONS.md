@@ -1277,3 +1277,18 @@ then tell the watch's own data from an app's.
   Docker Hub nightly and on release. This fork has no credentials for those repositories,
   so every scheduled run failed. The fork publishes through `build.yml` to
   `ghcr.io/dial203/*` instead, which is what both Portainer and Container Services pull.
+
+## Database credentials are URL-encoded
+
+- **Area**: backend
+- **Status**: upstreamable
+- **On conflict**: keep ours; take theirs if upstream escapes credentials the same way
+- **Why**: `Settings.db_uri` pasted `DB_USER` and `DB_PASSWORD` into the SQLAlchemy URL
+  unescaped. With a managed-Postgres password, `@` moved part of the password into the
+  host, a `%XX` sequence was silently decoded to a different password, and some mixes
+  failed to parse at all. `db_uri` now URL-encodes both, as `redis_url` already did.
+  `migrations/env.py` doubles `%` before handing the URL to Alembic's ConfigParser, which
+  otherwise rejects the encoded URL. `scripts/init/create_svix_db.py` and
+  `scripts/data_migrations/backfill_garmin_sleep_end_datetime.py` built libpq `key=value`
+  strings by hand, which break on spaces or quotes; they now pass keyword arguments
+  (`make_conninfo` in the backfill, matching `backfill_is_daily_total.py`).

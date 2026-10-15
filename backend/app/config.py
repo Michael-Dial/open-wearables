@@ -575,9 +575,11 @@ class Settings(BaseSettings):
 
     @property
     def db_uri(self) -> str:
+        # Credentials are URL-encoded, as in redis_url: managed Postgres passwords can hold
+        # '@' (moves the host), '%XX' (silently decoded) and other reserved characters.
         return (
             f"postgresql+psycopg://"
-            f"{self.db_user}:{self.db_password.get_secret_value()}"
+            f"{quote(self.db_user, safe='')}:{quote(self.db_password.get_secret_value(), safe='')}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
         )
 

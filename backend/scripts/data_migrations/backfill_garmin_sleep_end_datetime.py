@@ -19,6 +19,7 @@ import os
 import sys
 
 import psycopg
+from psycopg.conninfo import make_conninfo
 
 PREVIEW_QUERY = """
     SELECT
@@ -83,10 +84,12 @@ def get_conninfo() -> str:
     if missing:
         print(f"ERROR: missing environment variables: {', '.join(missing)}", file=sys.stderr)
         sys.exit(1)
-    return (
-        f"host={os.environ['DB_HOST']} port={os.environ['DB_PORT']} "
-        f"dbname={os.environ['DB_NAME']} user={os.environ['DB_USER']} "
-        f"password={os.environ['DB_PASSWORD']}"
+    return make_conninfo(
+        host=os.environ["DB_HOST"],
+        port=int(os.environ["DB_PORT"]),
+        dbname=os.environ["DB_NAME"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"],
     )
 
 
