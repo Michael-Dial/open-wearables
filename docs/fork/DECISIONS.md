@@ -1251,3 +1251,29 @@ then tell the watch's own data from an app's.
   second account of one provider that stops syncing is masked by the first. Left as upstream has
   it; a per-account key is a follow-up. Deleting one account's data clears coverage only when it
   was the provider's last account with data.
+
+## Images run as non-root, for OSU Container Services
+
+- **Area**: tooling
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: Production moves to Ohio State's Container Services Kubernetes platform, which
+  rejects containers running as UID 0. `backend/Dockerfile` adds `appuser` (UID 1001,
+  group 0), gives it `/root_project` (beat writes `celerybeat.pid` and its schedule
+  there), points `HOME` and `UV_CACHE_DIR` at `/tmp` because `uv run` writes a cache under
+  `$HOME`, and ends with a numeric `USER 1001`. `frontend-react/Dockerfile` ends with `USER
+  1000`, the base image's `node` user. Numeric so Kubernetes can check `runAsNonRoot`
+  without reading `/etc/passwd`. This also changes the `:latest` images the Portainer
+  deployment pulls: a named volume created root-owned (e.g. `fit_files` with
+  `STORE_FIT_FILES=true`) needs `chown -R 1001:0` once. Deployment runbook:
+  [CONTAINER_SERVICES.md](./CONTAINER_SERVICES.md).
+
+## Upstream's Docker Hub publishing workflow removed
+
+- **Area**: tooling
+- **Status**: active
+- **On conflict**: keep ours (re-delete `.github/workflows/publish-images.yml` if a sync brings it back)
+- **Why**: Upstream's `publish-images.yml` pushes multi-arch images to `themomentum/*` on
+  Docker Hub nightly and on release. This fork has no credentials for those repositories,
+  so every scheduled run failed. The fork publishes through `build.yml` to
+  `ghcr.io/dial203/*` instead, which is what both Portainer and Container Services pull.

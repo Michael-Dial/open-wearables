@@ -40,6 +40,15 @@ FROM python:3.14-slim
     ENV UV_PROJECT_ENVIRONMENT=/opt/venv
     ENV UV_NO_SYNC=true
 
+    # Run as non-root: OSU Container Services rejects UID 0. UID 1001 in group 0
+    # owns the working dir, where beat writes celerybeat.pid and its schedule.
+    # uv writes a cache under $HOME, which this user doesn't have, so point both
+    # at /tmp. See docs/fork/DECISIONS.md.
+    RUN useradd -r -u 1001 -g 0 appuser && \
+        chown -R 1001:0 /root_project && \
+        chmod -R g=u /root_project
+    ENV UV_CACHE_DIR=/tmp/uv-cache HOME=/tmp
+
     # Commit SHA for Sentry release tracking. Optional: defaults to empty when
     # not passed (e.g. local builds), in which case the app falls back to the
     # plain package version.
@@ -47,3 +56,5 @@ FROM python:3.14-slim
     ENV GIT_SHA=$GIT_SHA
 
     EXPOSE 8000
+
+    USER 1001
