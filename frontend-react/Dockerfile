@@ -56,5 +56,8 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
 
+# Run as the base image's `node` user: OSU Container Services rejects UID 0.
+USER 1000
+
 # Run the Nitro server
 CMD ["node", ".output/server/index.mjs"]
