@@ -10,6 +10,7 @@ from uuid import UUID
 
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
+from app.repositories.data_point_series_repository import WriteCounts
 from app.schemas.sync_status import SyncRunContext, SyncScope, SyncSource, SyncStatus
 from app.services.providers.garmin.backfill_state import get_trace_id
 from app.services.providers.garmin.data_247 import Garmin247Data
@@ -93,7 +94,7 @@ def process_wellness_items(
                 secondary_primary.setdefault(key, primary_user_id)
 
     total_processed = sum(len(items) for items in connection_items.values())
-    total_saved = 0
+    total_saved = WriteCounts(0, 0)
     succeeded_users: list[str] = []
 
     for (uid, connection_id), items in connection_items.items():

@@ -246,6 +246,7 @@ class UserCreateInternal(UserCreate):
     created_by_api_key_id: UUID | None = None
     created_by_developer_id: UUID | None = None
     created_by_label: str | None = Field(None, max_length=100)
+    is_seed: bool = False
 
 
 class UserUpdate(BaseModel):

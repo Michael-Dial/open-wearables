@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from app.database import DbSession
 from app.models import ProviderSetting, UserConnection
 from app.repositories.data_source_repository import DataSourceRepository
-from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.auth import ConnectionStatus, LiveSyncMode, SDKAuthContext
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.user_management import (
@@ -23,13 +22,13 @@ from app.schemas.model_crud.user_management import (
 )
 from app.services import ApiKeyDep, user_connection_service
 from app.services.device_timeline_service import DeviceTimelineError, device_timeline_service
+from app.services.provider_settings_service import provider_settings_service
 from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.factory import ProviderFactory
 from app.utils.auth import CombinedAuthDep
 
 router = APIRouter()
 factory = ProviderFactory()
-provider_settings_repo = ProviderSettingsRepository()
 data_source_repo = DataSourceRepository()
 
 
@@ -80,7 +79,7 @@ def get_connections_endpoint(
     position each one within its provider (oldest first) and ``display_label``
     names it, so a client can render three Garmins without guessing which is which.
     """
-    settings_map = provider_settings_repo.get_all(db)
+    settings_map = provider_settings_service.get_settings_map(db)
     connections = user_connection_service.get_connections_by_user(db, user_id)
     provider_pairs = [
         (c.provider, c.provider_user_id)
@@ -143,7 +142,7 @@ def _account_or_404(db: DbSession, user_id: UUID, connection_id: UUID) -> UserCo
 
 
 def _enriched_account(db: DbSession, connection: UserConnection) -> UserConnectionWithCapabilities:
-    settings_map = provider_settings_repo.get_all(db)
+    settings_map = provider_settings_service.get_settings_map(db)
     siblings = user_connection_service.get_accounts_for_provider(db, connection.user_id, connection.provider)
     index = next((i for i, c in enumerate(siblings, start=1) if c.id == connection.id), 1)
     observed = data_source_repo.observed_devices_by_connection(db, connection.user_id)
