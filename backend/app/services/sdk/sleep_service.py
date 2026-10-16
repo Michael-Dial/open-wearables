@@ -37,7 +37,7 @@ from app.schemas.providers.mobile_sdk import (
 from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.sdk.device_resolution import extract_device_ids, extract_device_info, extract_reported_device_type
-from app.utils.connection_context import get_active_connection_id
+from app.utils.connection_context import active_connection, get_active_connection_id
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
@@ -183,6 +183,7 @@ def _create_new_sleep_state(
         source_app_id=source_app_id,
         device_manufacturer=device_manufacturer,
         provider=provider,
+        user_connection_id=get_active_connection_id(),
         zone_offset=zone_offset,
         start_time=start_time,
         end_time=end_time,
@@ -394,6 +395,9 @@ def handle_sleep_data(
         # owning no sessions at all.
         for scope, scoped_records in by_scope.items():
             current_state = load_sleep_state(user_id, scope)
+            if current_state and current_state.user_connection_id is None:
+                # A session saved before states carried their account.
+                current_state.user_connection_id = get_active_connection_id()
 
             for sjson, device_model, original_source_name, device_type, source_ids in scoped_records:
                 provider_device_id, source_app_id, device_manufacturer = source_ids
@@ -586,6 +590,18 @@ def _calculate_final_metrics(stages: list[SleepStateStage]) -> tuple[dict, list[
 
 def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None:
     """Finish a sleep session and save the record to the database.
+
+    Runs in the account the session arrived through. The most recent night is not
+    stale when it is uploaded, so it is finalised by ``finalize_stale_sleeps``, which
+    has no account scope of its own; without the session's account the night would be
+    filed under a new connection-less data source instead of the device's own.
+    """
+    with active_connection(state.user_connection_id or get_active_connection_id()):
+        _finish_sleep(db_session, user_id, state)
+
+
+def _finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None:
+    """Save a finished sleep session, merging it with an adjacent stored one.
 
     Before creating a new record the function checks whether an existing adjacent
     sleep session is already in the database (gap ≤ ``sleep_end_gap_minutes``).
