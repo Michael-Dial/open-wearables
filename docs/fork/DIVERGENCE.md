@@ -6,8 +6,8 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-10-16 15:18 UTC |
-| Our ref | `HEAD` — 51bc0fa (2026-10-16) Merge upstream the-momentum/open-wearables main (0.10.0, 8 commits, d18304f) |
+| Generated | 2026-10-16 18:45 UTC |
+| Our ref | `HEAD` — 44558e9 (2026-10-16) fix(backend): keep the newest live night on its account's data source |
 | Upstream `main` | d18304f (2026-10-16) feat(backend): exclude seed users from telemetry counts (#1886) |
 | Last common commit | d18304f (2026-10-16) feat(backend): exclude seed users from telemetry counts (#1886) |
 | Commits we are ahead | 201 |
@@ -122,7 +122,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/schemas/model_crud/user_management/device_timeline.py` | fork-only | — |
 | `backend/app/schemas/model_crud/user_management/user.py` | modified | +98/-1 |
 | `backend/app/schemas/model_crud/user_management/user_connection.py` | modified | +110/-1 |
-| `backend/app/schemas/providers/mobile_sdk/sleep_state.py` | modified | +1/-1 |
+| `backend/app/schemas/providers/mobile_sdk/sleep_state.py` | modified | +5/-1 |
 | `backend/app/schemas/providers/oura/imports.py` | modified | +12/-0 |
 | `backend/app/schemas/providers/polar/__init__.py` | modified | +15/-0 |
 | `backend/app/schemas/providers/polar/exercise_import.py` | modified | +8/-4 |
@@ -190,7 +190,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/sdk/import_service.py` | modified | +98/-14 |
 | `backend/app/services/sdk/measurement_window.py` | fork-only | — |
 | `backend/app/services/sdk/record_metadata.py` | fork-only | — |
-| `backend/app/services/sdk/sleep_service.py` | modified | +188/-81 |
+| `backend/app/services/sdk/sleep_service.py` | modified | +204/-81 |
 | `backend/app/services/seed_data/service.py` | modified | +2/-1 |
 | `backend/app/services/source_activity_service.py` | fork-only | — |
 | `backend/app/services/sources/__init__.py` | fork-only | — |
@@ -329,7 +329,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/services/test_priority_service.py` | modified | +32/-1 |
 | `backend/tests/services/test_record_metadata.py` | fork-only | — |
 | `backend/tests/services/test_relay_dedup.py` | fork-only | — |
-| `backend/tests/services/test_sleep_service.py` | modified | +301/-26 |
+| `backend/tests/services/test_sleep_service.py` | modified | +363/-29 |
 | `backend/tests/services/test_summaries_service.py` | modified | +184/-4 |
 | `backend/tests/services/test_user_connection_service.py` | modified | +39/-0 |
 | `backend/tests/services/test_user_service.py` | modified | +21/-7 |
