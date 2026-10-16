@@ -9,7 +9,7 @@ Apple Watch sleep data patterns:
 - Newer Apple Watch (watchOS 9+): "in_bed", "awake", "light", "deep", "rem" stages
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.constants.sleep import SleepStageType
-from app.models import EventRecord, HealthScore
+from app.models import DataSource, EventRecord, HealthScore
 from app.schemas.enums import HealthScoreCategory, ProviderName
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
@@ -32,8 +32,11 @@ from app.services.sdk.sleep_service import (
     _calculate_final_metrics,
     finish_sleep,
     handle_sleep_data,
+    load_sleep_state,
+    session_scope,
 )
-from tests.factories import UserFactory
+from app.utils.connection_context import active_connection
+from tests.factories import UserConnectionFactory, UserFactory
 
 
 def _dt(iso: str) -> datetime:
@@ -1295,3 +1298,59 @@ class TestProviderSleepScore:
         session = db.get(EventRecord, score.event_record_id)
         assert session is not None
         assert session.category == "sleep"
+
+
+class TestLiveNightKeepsItsAccount:
+    """The night still in progress at upload time is finalised later, outside the upload.
+
+    Historical nights are finalised inside the upload task, which binds the account the
+    batch arrived through. The most recent night is not stale yet, so it waits in Redis
+    and is finalised by the stale-sleep sweep, which runs in no account scope. It must
+    still land on the data source of the account it arrived through.
+    """
+
+    def _payload(self, start: datetime, end: datetime) -> dict:
+        return {
+            "provider": "apple",
+            "sdkVersion": "0.5.0",
+            "syncTimestamp": end.isoformat(),
+            "data": {
+                "records": [],
+                "workouts": [],
+                "sleep": [
+                    {
+                        "id": "live-0001",
+                        "stage": "asleepCore",
+                        "startDate": start.isoformat(),
+                        "endDate": end.isoformat(),
+                        "source": {"name": "Apple Watch", "device_model": "Watch7,12"},
+                    }
+                ],
+            },
+        }
+
+    @patch("app.services.sdk.sleep_service.celery_app")
+    def test_sweep_files_the_night_under_the_upload_account(self, mock_finalize: MagicMock, db: Session) -> None:
+        user = UserFactory()
+        connection = UserConnectionFactory(user=user, provider="apple")
+        end = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=30)
+        start = end - timedelta(hours=7)
+
+        with active_connection(connection.id):
+            handle_sleep_data(db, SyncRequest.model_validate(self._payload(start, end)), str(user.id))
+
+        # Still live: nothing written yet.
+        assert db.query(EventRecord).filter(EventRecord.category == "sleep").count() == 0
+
+        # What finalize_stale_sleeps does once the gap has passed, in no account scope.
+        state = load_sleep_state(str(user.id), session_scope("Apple Watch", "Watch7,12"))
+        assert state is not None
+        finish_sleep(db, str(user.id), state)
+
+        night = (
+            db.query(EventRecord, DataSource)
+            .join(DataSource, EventRecord.data_source_id == DataSource.id)
+            .filter(DataSource.user_id == user.id, EventRecord.category == "sleep")
+            .one()
+        )
+        assert night[1].user_connection_id == connection.id

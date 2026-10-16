@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,9 @@ class SleepState(BaseModel):
     source_app_id: str | None = None
     device_manufacturer: str | None = None
     provider: str | None = None
+    # The account the session arrived through. The newest night is finalised by the
+    # stale-sleep sweep, which runs in no account scope, so the session carries it.
+    user_connection_id: UUID | None = None
     zone_offset: str | None = None
 
     start_time: datetime
