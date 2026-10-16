@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, select
+from sqlalchemy import CheckConstraint, ForeignKey, Index, select, text
 from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from app.database import BaseDbModel
@@ -14,6 +14,7 @@ class User(BaseDbModel):
 
     __table_args__ = (
         CheckConstraint("created_via IN ('api_key', 'portal', 'seed')", name="ck_user_created_via"),
+        Index("ix_user_is_seed", "id", postgresql_where=text("is_seed")),
     )
 
     id: Mapped[PrimaryKey[UUID]]
@@ -41,6 +42,10 @@ class User(BaseDbModel):
     created_by_api_key_name: Mapped[str | None] = column_property(
         select(ApiKey.name).where(ApiKey.id == created_by_api_key_id).correlate_except(ApiKey).scalar_subquery()
     )
+
+    # Synthetic user created by the seed data generator. Set from created_via == 'seed'
+    # (see UserService.create); upstream's flag, kept so its telemetry filter works as written.
+    is_seed: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
 
     personal_record: Mapped["PersonalRecord | None"] = relationship(
         back_populates="user",

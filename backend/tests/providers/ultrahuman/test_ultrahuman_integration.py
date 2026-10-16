@@ -12,7 +12,6 @@ from unittest.mock import patch
 from sqlalchemy.orm import Session
 
 from app.models import DataPointSeries, DataSource, EventRecord, SeriesTypeDefinition, SleepDetails
-from app.repositories.data_point_series_repository import WriteCounts
 from app.schemas.enums.series_types import SeriesType
 from app.services.providers.factory import ProviderFactory
 from app.services.providers.ultrahuman.data_247 import Ultrahuman247Data
@@ -50,8 +49,8 @@ class TestUltrahumanSleepDataIntegration:
 
             assert mock_request.call_count == 2  # 2 days in range
             assert results is not None
-            assert "sleep_sessions_synced" in results
-            assert results["sleep_sessions_synced"] >= 0
+            assert "sleep" in results.outcomes
+            assert results.outcomes["sleep"].rows_written >= 0
 
     def test_verify_sleep_records_in_database_with_mocked_api(
         self, db: Session, sample_ultrahuman_api_response: dict
@@ -73,7 +72,7 @@ class TestUltrahumanSleepDataIntegration:
             results = provider_impl.load_and_save_all(db, user.id, start_time=start_time, end_time=end_time)
             db.commit()
 
-            assert results["sleep_sessions_synced"] > 0, "Fixture has sleep data, expected synced sessions"
+            assert results.outcomes["sleep"].rows_written > 0, "Fixture has sleep data, expected synced sessions"
             records = (
                 db.query(EventRecord)
                 .join(DataSource)
@@ -136,7 +135,7 @@ class TestUltrahumanSleepDataIntegration:
             results = provider_impl.load_and_save_all(db, user.id, start_time=start_time, end_time=end_time)
             db.commit()
 
-            assert results["sleep_sessions_synced"] > 0, "Fixture has sleep data, expected synced sessions"
+            assert results.outcomes["sleep"].rows_written > 0, "Fixture has sleep data, expected synced sessions"
             records = (
                 db.query(EventRecord)
                 .join(DataSource)
@@ -175,7 +174,7 @@ class TestUltrahumanSleepDataIntegration:
             results = provider_impl.load_and_save_all(db, user.id, start_time=start_time, end_time=end_time)
             db.commit()
 
-            assert results["sleep_sessions_synced"] > 0, "Fixture has sleep data, expected synced sessions"
+            assert results.outcomes["sleep"].rows_written > 0, "Fixture has sleep data, expected synced sessions"
             records = (
                 db.query(EventRecord)
                 .join(DataSource)
@@ -269,8 +268,8 @@ class TestUltrahumanActivitySamplesIntegration:
             db.commit()
 
             assert results is not None
-            assert "activity_samples" in results
-            assert results["activity_samples"] >= 0
+            assert "activity_samples" in results.outcomes
+            assert results.outcomes["activity_samples"].rows_written >= 0
 
     def test_verify_activity_samples_in_database_with_mocked_api(
         self, db: Session, sample_ultrahuman_api_response: dict
@@ -292,7 +291,9 @@ class TestUltrahumanActivitySamplesIntegration:
             results = provider_impl.load_and_save_all(db, user.id, start_time=start_time, end_time=end_time)
             db.commit()
 
-            assert results["activity_samples"] > 0, "Fixture has activity data, expected synced samples"
+            assert results.outcomes["activity_samples"].rows_written > 0, (
+                "Fixture has activity data, expected synced samples"
+            )
 
             samples = (
                 db.query(DataPointSeries)
@@ -571,7 +572,7 @@ class TestUltrahumanAPIEndpoints:
             results = provider_impl.load_and_save_all(db, user.id, start_time=start_time, end_time=end_time)
             db.commit()
 
-            assert results["sleep_sessions_synced"] > 0, "Fixture has sleep data, expected synced sessions"
+            assert results.outcomes["sleep"].rows_written > 0, "Fixture has sleep data, expected synced sessions"
             records = (
                 db.query(EventRecord)
                 .join(DataSource)
@@ -604,7 +605,9 @@ class TestUltrahumanAPIEndpoints:
             results = provider_impl.load_and_save_all(db, user.id, start_time=start_time, end_time=end_time)
             db.commit()
 
-            assert results["activity_samples"] > 0, "Fixture has activity data, expected synced samples"
+            assert results.outcomes["activity_samples"].rows_written > 0, (
+                "Fixture has activity data, expected synced samples"
+            )
             samples = db.query(DataPointSeries).join(DataSource).filter(DataSource.user_id == user.id).all()
 
             assert len(samples) > 0, "Should have activity samples after sync"
@@ -634,10 +637,10 @@ class TestUltrahumanErrorHandling:
             db.commit()
 
             assert results is not None
-            assert "sleep_sessions_synced" in results
-            assert "activity_samples" in results
-            assert isinstance(results["sleep_sessions_synced"], int)
-            assert isinstance(results["activity_samples"], int)
+            assert "sleep" in results.outcomes
+            assert "activity_samples" in results.outcomes
+            assert isinstance(results.outcomes["sleep"].rows_written, int)
+            assert isinstance(results.outcomes["activity_samples"].rows_written, int)
 
     def test_sync_handles_partial_data_with_mocked_api(self, db: Session) -> None:
         """Verify sync handles days with partial data (sleep but no activity)."""
@@ -683,10 +686,10 @@ class TestUltrahumanErrorHandling:
             db.commit()
 
             assert results is not None
-            assert "sleep_sessions_synced" in results
-            assert "activity_samples" in results
-            assert isinstance(results["sleep_sessions_synced"], int)
-            assert isinstance(results["activity_samples"], int)
+            assert "sleep" in results.outcomes
+            assert "activity_samples" in results.outcomes
+            assert isinstance(results.outcomes["sleep"].rows_written, int)
+            assert isinstance(results.outcomes["activity_samples"].rows_written, int)
 
     def test_sync_respects_date_range_with_mocked_api(self, db: Session, sample_ultrahuman_api_response: dict) -> None:
         """Verify sync only fetches data within specified date range."""
@@ -706,7 +709,7 @@ class TestUltrahumanErrorHandling:
             results = provider_impl.load_and_save_all(db, user.id, start_time=start_time, end_time=end_time)
             db.commit()
 
-            assert results["sleep_sessions_synced"] > 0, "Fixture has sleep data, expected synced sessions"
+            assert results.outcomes["sleep"].rows_written > 0, "Fixture has sleep data, expected synced sessions"
             records = (
                 db.query(EventRecord)
                 .join(DataSource)
@@ -729,12 +732,12 @@ class TestUltrahumanErrorHandling:
 class TestUltrahumanSyncCountContract:
     """Guards the fix for the "Success but 0 items" sync report.
 
-    The sync orchestrator sums saved rows via ``getattr(_count, "inserted", 0)``
-    over the values of ``load_and_save_all``'s result. Plain ints resolve to 0
-    there, so the saved-row counters must be returned as ``WriteCounts``.
+    The sync orchestrator takes its headline count from ``Sync247Result.rows_written``
+    and its new-vs-updated split from ``.inserted`` / ``.updated``, so every
+    write path has to report the rows it actually persisted.
     """
 
-    def test_saved_counts_are_writecounts_the_orchestrator_can_sum(
+    def test_saved_counts_are_countable_by_the_orchestrator(
         self, db: Session, sample_ultrahuman_api_response: dict
     ) -> None:
         user = UserFactory()
@@ -758,26 +761,48 @@ class TestUltrahumanSyncCountContract:
             db.commit()
 
         # Fixture carries both sleep and activity data.
-        assert results["sleep_sessions_synced"] > 0
-        assert results["activity_samples"] > 0
+        assert results.outcomes["sleep"].rows_written > 0
+        assert results.outcomes["activity_samples"].rows_written > 0
 
-        # Saved-row counters must carry .inserted so the orchestrator counts them.
-        for key in ("sleep_sessions_synced", "activity_samples"):
-            count = results[key]
-            assert isinstance(count, WriteCounts), f"{key} must be WriteCounts, got {type(count)}"
-            assert count.inserted == int(count)
-            assert count.updated == 0
+        # Activity samples go through the bulk upsert, so they carry the split;
+        # sleep sessions are merged one at a time and report a total only.
+        assert results.outcomes["activity_samples"].counts is not None
+        assert results.outcomes["activity_samples"].counts.updated == 0
+        assert results.outcomes["sleep"].counts is None
 
-        # Mirror the orchestrator's accumulation: it must no longer report 0.
-        pull_inserted = sum(getattr(v, "inserted", 0) for v in results.values())
-        pull_updated = sum(getattr(v, "updated", 0) for v in results.values())
-        assert pull_inserted == results["sleep_sessions_synced"] + results["activity_samples"]
-        assert pull_updated == 0
-        assert pull_inserted + pull_updated > 0
+        # The orchestrator's headline count covers both, split or not.
+        assert (
+            results.rows_written
+            == results.outcomes["sleep"].rows_written + results.outcomes["activity_samples"].rows_written
+        )
+        assert results.inserted == results.outcomes["activity_samples"].rows_written
+        assert results.updated == 0
+        assert not results.failures
 
-        # failed_days / errors must not be mistaken for written rows.
-        assert getattr(results["failed_days"], "inserted", 0) == 0
-        assert getattr(results["errors"], "inserted", 0) == 0
+    def test_a_null_metric_object_does_not_drop_its_siblings(
+        self, db: Session, sample_ultrahuman_api_response: dict
+    ) -> None:
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="ultrahuman", status="active", access_token="test_token")
+        DataSourceFactory(user_id=user.id, provider="ultrahuman")
+        provider_impl = ProviderFactory().get_provider("ultrahuman").data_247
+        assert isinstance(provider_impl, Ultrahuman247Data)
+
+        response = {
+            "data": {
+                "metric_data": [
+                    *sample_ultrahuman_api_response["data"]["metric_data"],
+                    {"type": "temp", "object": None},
+                ]
+            }
+        }
+        day = datetime(2024, 1, 15, tzinfo=timezone.utc)
+
+        with patch.object(provider_impl, "_make_api_request", return_value=response):
+            results = provider_impl.load_and_save_all(db, user.id, start_time=day, end_time=day)
+
+        assert not results.failures
+        assert results.outcomes["activity_samples"].rows_written > 0
 
     def test_resync_upserts_instead_of_duplicating(self, db: Session, sample_ultrahuman_api_response: dict) -> None:
         """Re-syncing the same day must upsert (dedupe), not insert duplicate rows."""
@@ -813,8 +838,8 @@ class TestUltrahumanSyncCountContract:
             rows_after_second = _sample_rows()
 
         # First sync inserts; second sync updates the same rows in place.
-        assert first["activity_samples"].inserted > 0
-        assert first["activity_samples"].updated == 0
-        assert second["activity_samples"].inserted == 0
-        assert second["activity_samples"].updated == first["activity_samples"].inserted
+        assert first.inserted > 0
+        assert first.updated == 0
+        assert second.inserted == 0
+        assert second.updated == first.inserted
         assert rows_after_second == rows_after_first, "Re-sync must not duplicate timeseries rows"

@@ -12,6 +12,7 @@ from app.repositories.user_repository import UserRepository
 from app.schemas.model_crud.user_management import (
     UserConnectionSummary,
     UserCreate,
+    UserCreatedVia,
     UserCreateInternal,
     UserDetailRead,
     UserInclude,
@@ -65,6 +66,7 @@ class UserService(AppService[UserRepository, User, UserCreateInternal, UserUpdat
             created_by_api_key_id=created_by.api_key_id,
             created_by_developer_id=created_by.developer_id,
             created_by_label=created_by.label,
+            is_seed=created_by.via == UserCreatedVia.SEED,
         )
         return super().create(db_session, internal_creator)
 

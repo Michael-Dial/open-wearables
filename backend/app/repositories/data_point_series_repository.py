@@ -2,7 +2,7 @@ import contextlib
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import TYPE_CHECKING, LiteralString, NamedTuple
+from typing import TYPE_CHECKING, LiteralString, NamedTuple, overload
 from typing import cast as typing_cast
 from uuid import UUID
 
@@ -163,8 +163,8 @@ class WriteCounts(int):
     written. This is the span of the data itself, which is not the window that was
     requested: asking for 90 days and getting two weight readings covers two days.
 
-    The totals are kept apart from by_type: adding a plain int count, which has no
-    per-type split, still has to add up.
+    The totals are stored rather than summed from by_type: some write paths report a
+    split without a per-type breakdown.
     """
 
     inserted: int
@@ -188,21 +188,34 @@ class WriteCounts(int):
     def covered_end(self) -> datetime | None:
         return max((counts.covered_end for counts in self.by_type.values()), default=None)
 
-    def __add__(self, other: int) -> "WriteCounts":
-        """Merge two results, widening the covered span rather than dropping it.
+    # Overloads are for the type checker: they tell it which addition keeps the split.
+    @overload
+    def __add__(self, other: "WriteCounts") -> "WriteCounts": ...
 
-        Plain int.__add__ would return an int and silently lose everything but the
-        total, so any caller accumulating counts across batches keeps the detail.
+    @overload
+    def __add__(self, other: int) -> int: ...
+
+    def __add__(self, other: int) -> int:
+        """Keep the split and widen the covered span when accumulating counts.
+
+        A plain int has no split to keep, so adding one yields a plain int.
         """
         if not isinstance(other, WriteCounts):
-            return WriteCounts(self.inserted + int(other), self.updated, self.by_type)
+            return int(self) + other
         by_type = dict(self.by_type)
         for series_type, counts in other.by_type.items():
             existing = by_type.get(series_type)
             by_type[series_type] = counts if existing is None else existing.merged_with(counts)
         return WriteCounts(self.inserted + other.inserted, self.updated + other.updated, by_type)
 
-    __radd__ = __add__
+    def __radd__(self, other: int) -> int:
+        # Makes sum() of WriteCounts work: the 0 start value passes the split through.
+        if other == 0:
+            return self
+        return other + int(self)
+
+    def __repr__(self) -> str:
+        return f"WriteCounts(inserted={self.inserted}, updated={self.updated})"
 
 
 # Sources whose provider or device type is not ranked sort last, in id order.

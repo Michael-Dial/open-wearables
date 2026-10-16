@@ -142,9 +142,13 @@ cd backend && uv run pytest -q && uv sync --group code-quality \
   && uv run ruff check && uv run ruff format --check && uv run ty check \
   && uv run python scripts/check_migrations.py --base origin/main
 cd ../mcp && uv run pytest -q && uv run ruff check && uv run ruff format --check && uv run ty check
-cd ../frontend && pnpm install --frozen-lockfile && pnpm run test && pnpm run lint \
-  && pnpm run format:check && pnpm run build
+cd ../frontend && bun install --frozen-lockfile && bun run test:unit --run && bun run lint \
+  && bun run format:check && bun run check && bun run build
 ```
+
+If the browser-mode unit tests cannot launch Chromium, the sandbox's Playwright build
+differs from the one vitest expects; alias `/opt/pw-browsers/chromium_headless_shell-*`
+rather than downloading. ty needs `uv sync --group code-quality --extra otel`, as CI does.
 
 Report real counts. A merge that was not verified is not a merge that is done.
 

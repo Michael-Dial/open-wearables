@@ -6,6 +6,7 @@ from uuid import UUID
 from celery import shared_task
 
 from app.config import settings
+from app.constants.celery_tasks import CeleryTask
 from app.constants.sdk_providers import SDK_PROVIDERS
 from app.database import SessionLocal
 from app.models import User
@@ -72,7 +73,7 @@ def _batch_outcomes(types: list[str], workouts_saved: int, sleep_saved: int, sco
     return outcomes
 
 
-@shared_task(queue="sdk_sync")
+@shared_task(name=CeleryTask.PROCESS_SDK_UPLOAD)
 def process_sdk_upload(
     content: str | None,
     content_type: str,

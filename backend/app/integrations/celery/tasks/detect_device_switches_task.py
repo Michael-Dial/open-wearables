@@ -4,6 +4,7 @@ from uuid import UUID
 from celery import shared_task
 from sqlalchemy import select
 
+from app.constants.celery_tasks import CeleryTask
 from app.database import SessionLocal
 from app.models import UserConnection
 from app.services.device_timeline_service import device_timeline_service
@@ -13,7 +14,7 @@ from app.utils.structured_logging import log_structured
 logger = getLogger(__name__)
 
 
-@shared_task
+@shared_task(name=CeleryTask.DETECT_DEVICE_SWITCHES)
 def detect_device_switches() -> dict:
     """Keep each account's dated device history in line with its provider's workouts.
 

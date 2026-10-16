@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from celery import current_app as celery_app
 
 from app.config import settings
+from app.constants.celery_tasks import CeleryTask
 from app.constants.series_types.sdk import (
     SleepPhase,
     get_apple_sleep_phase,
@@ -43,8 +44,6 @@ logger = getLogger(__name__)
 
 # (provider_device_id, source_app_id, device_manufacturer) as extract_device_ids returns them
 SourceIds = tuple[str | None, str | None, str | None]
-
-_FINALIZE_STALE_SLEEPS_TASK = "app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps"
 
 _STAGE_TO_METRIC: dict[str, str] = {
     "awake": "awake_seconds",
@@ -475,7 +474,7 @@ def handle_sleep_data(
 
     # Dispatch the stale-sleep task so sessions that have gone quiet (including
     # other users' sessions) are finalised promptly without waiting for the next beat.
-    celery_app.send_task(_FINALIZE_STALE_SLEEPS_TASK)
+    celery_app.send_task(CeleryTask.FINALIZE_STALE_SLEEPS)
 
     return {
         "applied": applied,
