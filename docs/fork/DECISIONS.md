@@ -1311,3 +1311,55 @@ then tell the watch's own data from an app's.
   `POLAR_V4_ENABLED`. Disconnecting the last Polar account now revokes the v4 grant as well.
   The enum value, the `/oauth/polar_v4/callback` URL registered with Polar, and the token
   row are unchanged.
+
+## A Garmin epoch slot's activity-type rows are summed, not overwritten
+
+- **Area**: backend
+- **Status**: active; upstreamable (the collision exists upstream too)
+- **On conflict**: keep ours (`Garmin247Data.normalize_epochs` grouping by slot, and
+  `process_items_batch` normalizing a push's epochs together after its loop)
+- **Why**: Garmin sends one epoch row per 15-minute slot per activity type: a slot spent
+  partly sitting and partly walking arrives as a SEDENTARY and a WALKING row with the same
+  `startTimeInSeconds`, each holding the steps and kcal of its own type. Every row was
+  written at the slot start and the series key (source, type, second) kept the last one,
+  so per-slot steps and active kcal undercounted. A slot's rows are now combined before
+  the write: steps and kcal summed, the mean heart rate weighted by `activeTimeInSeconds`.
+  The rows have to arrive in one push to meet; a slot whose activity types Garmin pushes
+  separately still ends up with the last push's rows only (not yet seen in a live payload).
+
+## A Garmin day's first epoch is stamped clear of the dailies' totals
+
+- **Area**: backend
+- **Status**: active; upstreamable (the collision exists upstream too)
+- **On conflict**: keep ours (the `summed` stamp in `Garmin247Data.normalize_epochs`)
+- **Why**: the dailies' totals sit at the day's `startTimeInSeconds`, local midnight, and the
+  day's first epoch starts on the same instant. Wellness summaries carry no device, so both
+  resolve to one data source, and the key has no is_daily_total: whichever arrived last
+  replaced the other for steps and active kcal. An epoch arriving after the dailies left a
+  15-minute count flagged as an intraday sample where the day's total belonged; dailies
+  arriving after it erased the slot's count. An epoch slot that starts at local midnight
+  (by its own `startTimeOffsetInSeconds`) now has its steps and kcal stamped one second
+  later, as Polar's intraday steps are (`_clear_of_daily_totals`). Heart rate is not
+  moved: it is not a daily total, and the all-day grid must stay on multiples of 15 s.
+  Rows already stored keep whichever value won until Garmin re-sends the day.
+
+## A Polar day with no sleep record is placed by a nearby record's offset
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (`Polar247Data._day_utc_offset` and `_fallback_utc_offsets`, the
+  `utc_offsets` argument of `normalize_daily_activity` and `normalize_continuous_hr`, and
+  the UTC stamp on the daily totals)
+- **Why**: continuous HR and intraday steps are placed at true UTC with the offset of that
+  day's sleep record (the two entries above), and a day the watch was not worn to bed was
+  skipped, so daytime-only wear lost all its intraday data. Such a day now falls back to
+  the offset v4 PPI is placed with (`PolarV4Data.ppi_utc_offsets`): the stored Polar record
+  nearest its local midnight within three days (exercises state the device's own offset),
+  else the v4 account timezone. The sleep record still comes first. A day none of these
+  places is still skipped rather than stored at a guess; the account timezone needs a v4
+  grant with `profile:read`, so a v3-only account without a nearby exercise keeps the old
+  behaviour.
+  The daily totals' stamp (local midnight read as UTC) was a naive datetime while the
+  intraday samples were tz-aware; written in one batch, the coverage span compared the two
+  and raised, so any day whose steps could be placed lost its totals and samples alike.
+  The stamp is now explicitly UTC, the same instant as before.

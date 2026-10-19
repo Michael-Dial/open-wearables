@@ -671,7 +671,16 @@ class Garmin247Data(Base247DataTemplate):
         raw_epochs: list[dict[str, Any]],
         user_id: UUID,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Normalize epoch data into categorized samples.
+        """Normalize epoch data into categorized samples, one per 15-minute slot.
+
+        Garmin sends one epoch row per slot *per activity type* (a slot spent partly
+        sitting and partly walking arrives as a SEDENTARY and a WALKING row with the same
+        ``startTimeInSeconds``), and each row's steps and kcal cover only its own type.
+        The series key is (source, type, second), so the rows of a slot are combined
+        here rather than left to overwrite one another: steps and kcal are summed, and
+        the mean heart rate is weighted by each row's ``activeTimeInSeconds``. For the
+        same reason a slot starting at local midnight, where the dailies' totals sit, has
+        its steps and kcal stamped one second later (as Polar's intraday steps are).
 
         Args:
             raw_epochs: List of raw epoch data from API
@@ -680,69 +689,79 @@ class Garmin247Data(Base247DataTemplate):
         Returns:
             Dict with keys like 'heart_rate', 'steps', etc.
         """
+        slots: dict[int, list[dict[str, Any]]] = {}
+        for epoch in raw_epochs:
+            start_ts = epoch.get("startTimeInSeconds", 0)
+            if start_ts:
+                slots.setdefault(start_ts, []).append(epoch)
+
         heart_rate_samples: list[dict[str, Any]] = []
         step_samples: list[dict[str, Any]] = []
         energy_samples: list[dict[str, Any]] = []
 
-        for epoch in raw_epochs:
-            start_ts = epoch.get("startTimeInSeconds", 0)
-            if not start_ts:
-                continue
-
+        for start_ts, rows in slots.items():
             recorded_at = self._from_epoch_seconds(start_ts)
-            zone_offset = offset_to_iso(epoch.get("startTimeOffsetInSeconds"))
+            zone_offset = offset_to_iso(rows[0].get("startTimeOffsetInSeconds"))
 
             # Garmin epoch summaryId is "{devicePrefix}-{hex(startTimeInSeconds)}-{activityTypeCode}".
             # Strip only the activityType suffix → "{devicePrefix}-{hex(start)}", a stable
             # per-slot id shared by every activity in the slot, so intraday rows carry a real,
             # deterministic external_id. Require >=2 dashes before stripping so a malformed
             # 2-part id can't collapse to the bare device prefix (which would collide across slots).
-            summary_id = epoch.get("summaryId")
+            summary_id = rows[0].get("summaryId")
             slot_external_id = (
                 summary_id.rpartition("-")[0] if summary_id and summary_id.count("-") >= 2 else summary_id
             )
 
+            slot = {"timestamp": recorded_at.isoformat(), "zone_offset": zone_offset, "external_id": slot_external_id}
+            # The day's first slot starts on the dailies' own instant (local midnight), and
+            # the key has no is_daily_total: its steps and kcal are stamped a second later
+            # so neither replaces the day's totals nor is replaced by them.
+            offset_seconds = rows[0].get("startTimeOffsetInSeconds") or 0
+            summed = (
+                {**slot, "timestamp": (recorded_at + timedelta(seconds=1)).isoformat()}
+                if (start_ts + offset_seconds) % 86_400 == 0
+                else slot
+            )
+
             # Heart rate
-            mean_hr = epoch.get("meanHeartRateInBeatsPerMinute")
+            mean_hr = self._slot_mean_heart_rate(rows)
             if mean_hr:
-                heart_rate_samples.append(
-                    {
-                        "timestamp": recorded_at.isoformat(),
-                        "value": mean_hr,
-                        "zone_offset": zone_offset,
-                        "external_id": slot_external_id,
-                    }
-                )
+                heart_rate_samples.append({**slot, "value": mean_hr})
 
             # Steps
-            steps = epoch.get("steps")
-            if steps is not None:
-                step_samples.append(
-                    {
-                        "timestamp": recorded_at.isoformat(),
-                        "value": steps,
-                        "zone_offset": zone_offset,
-                        "external_id": slot_external_id,
-                    }
-                )
+            steps = [row["steps"] for row in rows if row.get("steps") is not None]
+            if steps:
+                step_samples.append({**summed, "value": sum(steps)})
 
             # Active calories
-            calories = epoch.get("activeKilocalories")
-            if calories is not None:
-                energy_samples.append(
-                    {
-                        "timestamp": recorded_at.isoformat(),
-                        "value": calories,
-                        "zone_offset": zone_offset,
-                        "external_id": slot_external_id,
-                    }
-                )
+            calories = [row["activeKilocalories"] for row in rows if row.get("activeKilocalories") is not None]
+            if calories:
+                energy_samples.append({**summed, "value": sum(calories)})
 
         return {
             "heart_rate": heart_rate_samples,
             "steps": step_samples,
             "energy": energy_samples,
         }
+
+    @staticmethod
+    def _slot_mean_heart_rate(rows: list[dict[str, Any]]) -> float | int | None:
+        """A slot's mean heart rate across its activity-type rows.
+
+        Each row's mean covers the time spent in that type, so the rows are weighted by
+        ``activeTimeInSeconds``; a plain mean when any row lacks it.
+        """
+        rated = [row for row in rows if row.get("meanHeartRateInBeatsPerMinute")]
+        if not rated:
+            return None
+        if len(rated) == 1:
+            return rated[0]["meanHeartRateInBeatsPerMinute"]
+        weights = [row.get("activeTimeInSeconds") or 0 for row in rated]
+        if not all(weights):
+            weights = [1] * len(rated)
+        total = sum(row["meanHeartRateInBeatsPerMinute"] * w for row, w in zip(rated, weights, strict=True))
+        return round(total / sum(weights), 3)
 
     def _build_epochs_samples(
         self,
@@ -2073,6 +2092,7 @@ class Garmin247Data(Base247DataTemplate):
         # Each activity's span and its heart_rate samples: the span is cleared of other
         # heart_rate rows just before those samples are written.
         activity_hr: list[tuple[tuple[datetime, datetime], list[TimeSeriesSampleCreate]]] = []
+        epoch_items: list[dict[str, Any]] = []
 
         for item in items:
             try:
@@ -2083,8 +2103,10 @@ class Garmin247Data(Base247DataTemplate):
                         all_samples.extend(self._build_dailies_samples(user_id, normalized))
                         all_health_scores.extend(health_scores)
                     case "epochs":
-                        normalized = self.normalize_epochs([item], user_id)
-                        all_samples.extend(self._build_epochs_samples(user_id, normalized))
+                        # Normalized together after the loop: a slot's activity-type rows
+                        # are separate items that have to be combined (see normalize_epochs).
+                        if isinstance(item, dict):
+                            epoch_items.append(item)
                     case "bodyComps":
                         all_samples.extend(self._build_body_comp_samples(user_id, item))
                     case "hrv":
@@ -2275,6 +2297,19 @@ class Garmin247Data(Base247DataTemplate):
                     self.logger,
                     "warning",
                     f"Error building batch item for {summary_type}: {e}",
+                    provider="garmin",
+                    task="process_items_batch",
+                    user_id=str(user_id),
+                )
+
+        if epoch_items:
+            try:
+                all_samples.extend(self._build_epochs_samples(user_id, self.normalize_epochs(epoch_items, user_id)))
+            except Exception as e:
+                log_structured(
+                    self.logger,
+                    "warning",
+                    f"Error building batch items for {summary_type}: {e}",
                     provider="garmin",
                     task="process_items_batch",
                     user_id=str(user_id),

@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, TypeVar
@@ -371,21 +371,28 @@ class Polar247Data(Base247DataTemplate):
         raw_items: list[dict[str, Any]],
         user_id: UUID,
         sleep_starts: dict[str, datetime] | None = None,
+        utc_offsets: Mapping[date, int] | None = None,
     ) -> list[TimeSeriesSampleCreate]:  # ty:ignore[invalid-method-override]
         """The day's totals, plus its intraday step samples where they can be placed in time.
 
-        ``sleep_starts`` (night date -> sleep start with its offset) is what places the
-        intraday samples; see ``_build_step_samples``. Without it only the totals are
-        written, as before upstream #1746.
+        ``sleep_starts`` (night date -> sleep start with its offset), else ``utc_offsets``
+        (local day -> minutes east of UTC), is what places the intraday samples; see
+        ``_day_utc_offset``. A day neither places gets only its totals.
         """
         sleep_starts = sleep_starts or {}
+        utc_offsets = utc_offsets or {}
         samples: list[TimeSeriesSampleCreate] = []
         for raw in raw_items:
             if (parsed := self._parse(raw, DailyActivityJSON, user_id, "daily_activity")) is None:
                 continue
             if not parsed.start_time:
                 continue
+            # Local midnight read as UTC (upstream's stamp), made explicit: left naive, it sat
+            # in one batch with the tz-aware intraday samples and the write failed comparing
+            # them, losing the day's totals along with its samples.
             recorded_at = datetime.fromisoformat(parsed.start_time)
+            if recorded_at.tzinfo is None:
+                recorded_at = recorded_at.replace(tzinfo=timezone.utc)
             for attr, series_type in ACTIVITY_SERIES.items():
                 value = getattr(parsed, attr)
                 if value is None:
@@ -403,7 +410,7 @@ class Polar247Data(Base247DataTemplate):
                         is_daily_total=daily_total_flag(series_type, is_daily=True),
                     )
                 )
-            samples.extend(self._build_step_samples(parsed, user_id, recorded_at, sleep_starts))
+            samples.extend(self._build_step_samples(parsed, user_id, recorded_at, sleep_starts, utc_offsets))
         return samples
 
     def _build_step_samples(
@@ -412,16 +419,16 @@ class Polar247Data(Base247DataTemplate):
         user_id: UUID,
         daily_total_at: datetime,
         sleep_starts: dict[str, datetime],
+        utc_offsets: Mapping[date, int],
     ) -> list[TimeSeriesSampleCreate]:
         """The row's intraday step samples, placed at true UTC with the day's offset.
 
         Fork: Polar stamps these on a zoneless local clock ("2024-01-15T07:10"), and read
         as UTC every bout lands off by the wearer's offset - a 07:10 walk in Ohio in summer
         stored at 03:10. The daily-activity row carries no offset either, so the day is
-        placed with the offset Polar stated on that day's sleep record: the night ending
-        that morning, else the night starting that evening. A day with neither gets no
-        intraday samples (its totals are unaffected) rather than a guessed zone, the same
-        rule normalize_nightly_recharge_hrv follows.
+        placed with ``_day_utc_offset``: that day's sleep record, else a nearby stored
+        Polar record or the account timezone. A day none of these places gets no
+        intraday samples (its totals are unaffected) rather than a guessed zone.
 
         The day's totals are stored at its local midnight read as UTC (``daily_total_at``,
         upstream's convention, kept so existing rows still match), and a sample on the
@@ -433,13 +440,12 @@ class Polar247Data(Base247DataTemplate):
         if not steps:
             return []
         day = daily_total_at.date()
-        anchor = sleep_starts.get(day.isoformat()) or sleep_starts.get((day + timedelta(days=1)).isoformat())
-        utc_offset = anchor.utcoffset() if anchor is not None else None
+        utc_offset = self._day_utc_offset(day, sleep_starts, utc_offsets)
         if utc_offset is None:
             log_structured(
                 self.logger,
                 "warning",
-                "Polar intraday steps skipped: no sleep record to place the day's clock times",
+                "Polar intraday steps skipped: no UTC offset to place the day's clock times",
                 provider="polar",
                 user_id=str(user_id),
                 date=day.isoformat(),
@@ -475,6 +481,41 @@ class Polar247Data(Base247DataTemplate):
             for local, count in sorted(counts.items())
         ]
 
+    @staticmethod
+    def _day_utc_offset(
+        day: date, sleep_starts: dict[str, datetime], utc_offsets: Mapping[date, int]
+    ) -> timedelta | None:
+        """The UTC offset to place a local day's zoneless clock times on, or None.
+
+        First the offset Polar stated on that day's sleep record: the night ending that
+        morning, else the night starting that evening. A day the watch was not worn to bed
+        has neither, and falls back to ``utc_offsets`` (minutes east of UTC, from
+        ``_fallback_utc_offsets``) rather than losing the day's samples.
+        """
+        anchor = sleep_starts.get(day.isoformat()) or sleep_starts.get((day + timedelta(days=1)).isoformat())
+        if anchor is not None and (offset := anchor.utcoffset()) is not None:
+            return offset
+        minutes = utc_offsets.get(day)
+        return timedelta(minutes=minutes) if minutes is not None else None
+
+    def _fallback_utc_offsets(self, db: DbSession, user_id: UUID, first: date, last: date) -> dict[date, int]:
+        """Per local day, the offset v4 PPI is placed with: a stored Polar record near the day, else the account's.
+
+        Best effort: a failure leaves the days to their sleep records alone.
+        """
+        try:
+            return polar_v4_data.ppi_utc_offsets(db, user_id, first, last)
+        except Exception as e:  # noqa: BLE001 - placement fallback only; the sync goes on
+            log_structured(
+                self.logger,
+                "warning",
+                "Polar fallback UTC offset lookup failed",
+                provider="polar",
+                user_id=str(user_id),
+                error=str(e),
+            )
+            return {}
+
     # -------------------------------------------------------------------------
     # Continuous Heart Rate - GET /v3/users/continuous-heart-rate/{date}
     # -------------------------------------------------------------------------
@@ -501,6 +542,7 @@ class Polar247Data(Base247DataTemplate):
         raw_items: list[dict[str, Any]],
         user_id: UUID,
         sleep_starts: dict[str, datetime] | None = None,
+        utc_offsets: Mapping[date, int] | None = None,
     ) -> list[TimeSeriesSampleCreate]:
         """Continuous heart rate, placed at true UTC with the day's offset.
 
@@ -508,11 +550,11 @@ class Polar247Data(Base247DataTemplate):
         same as the intraday steps. Read as UTC, every sample landed off by the wearer's
         offset - a run at 22:44 in Ohio in October stored at 18:44, and the samples stored
         at the run's real instant were the wearer asleep at 02:44. The day is placed the
-        way _build_step_samples places it: with the offset Polar stated on that day's sleep
-        record, the night ending that morning, else the night starting that evening. A day
-        with neither is skipped and logged rather than stored at a guessed instant.
+        way _build_step_samples places it, with ``_day_utc_offset``. A day that cannot be
+        placed is skipped and logged rather than stored at a guessed instant.
         """
         sleep_starts = sleep_starts or {}
+        utc_offsets = utc_offsets or {}
         samples: list[TimeSeriesSampleCreate] = []
         for raw in raw_items:
             if (parsed := self._parse(raw, ContinuousHeartRateJSON, user_id, "continuous_hr")) is None:
@@ -523,13 +565,12 @@ class Polar247Data(Base247DataTemplate):
                 day = datetime.fromisoformat(parsed.date).date()
             except ValueError:
                 continue
-            anchor = sleep_starts.get(day.isoformat()) or sleep_starts.get((day + timedelta(days=1)).isoformat())
-            utc_offset = anchor.utcoffset() if anchor is not None else None
+            utc_offset = self._day_utc_offset(day, sleep_starts, utc_offsets)
             if utc_offset is None:
                 log_structured(
                     self.logger,
                     "warning",
-                    "Polar continuous heart rate skipped: no sleep record to place the day's clock times",
+                    "Polar continuous heart rate skipped: no UTC offset to place the day's clock times",
                     provider="polar",
                     user_id=str(user_id),
                     date=day.isoformat(),
@@ -1155,16 +1196,30 @@ class Polar247Data(Base247DataTemplate):
                 return {"sleep": count}
 
             case PolarWebhookEventType.ACTIVITY_SUMMARY:
+                day = self._raw_day(raw.get("start_time"))
                 return {
                     "daily_activity": self._save_timeseries(
-                        db, self.normalize_daily_activity([raw], user_id, self._activity_sleep_starts(db, user_id, raw))
+                        db,
+                        self.normalize_daily_activity(
+                            [raw],
+                            user_id,
+                            self._activity_sleep_starts(db, user_id, raw),
+                            self._fallback_utc_offsets(db, user_id, day, day) if day else None,
+                        ),
                     )
                 }
 
             case PolarWebhookEventType.CONTINUOUS_HEART_RATE:
+                day = self._raw_day(raw.get("date"))
                 return {
                     "continuous_hr": self._save_timeseries(
-                        db, self.normalize_continuous_hr([raw], user_id, self._day_sleep_starts(db, user_id, raw))
+                        db,
+                        self.normalize_continuous_hr(
+                            [raw],
+                            user_id,
+                            self._day_sleep_starts(db, user_id, raw),
+                            self._fallback_utc_offsets(db, user_id, day, day) if day else None,
+                        ),
                     )
                 }
 
@@ -1286,6 +1341,16 @@ class Polar247Data(Base247DataTemplate):
             )
             return {}
 
+    @staticmethod
+    def _raw_day(value: Any) -> date | None:
+        """The local day of a webhook-fetched row's ``date``/``start_time``, if readable."""
+        if not isinstance(value, str):
+            return None
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            return None
+
     def _sleep_starts(self, raw_sleeps: list[dict[str, Any]], user_id: UUID) -> dict[str, datetime]:
         """Night date -> the sleep record's own start, with the offset Polar stated for it."""
         starts: dict[str, datetime] = {}
@@ -1323,6 +1388,15 @@ class Polar247Data(Base247DataTemplate):
                 sleep_raw = self.get_sleep_data(db, user_id, start_time, end_time)
             return sleep_raw
 
+        # Where a day has no sleep record to place its continuous HR and intraday steps.
+        offsets_raw: dict[date, int] | None = None
+
+        def fallback_offsets() -> dict[date, int]:
+            nonlocal offsets_raw
+            if offsets_raw is None:
+                offsets_raw = self._fallback_utc_offsets(db, user_id, start_time.date(), end_time.date())
+            return offsets_raw
+
         tasks: dict[str, Callable[[], WriteCounts | int]] = {
             "sleep": lambda: self._save_sleep(db, user_id, start_time, end_time, sleep_items()),
             "daily_activity": lambda: self._save_timeseries(
@@ -1331,6 +1405,7 @@ class Polar247Data(Base247DataTemplate):
                     self.get_daily_activity_statistics(db, user_id, start_time, end_time),
                     user_id,
                     self._sleep_starts(sleep_items(), user_id),
+                    fallback_offsets(),
                 ),
             ),
             "continuous_hr": lambda: self._save_timeseries(
@@ -1339,6 +1414,7 @@ class Polar247Data(Base247DataTemplate):
                     self.get_continuous_hr_data(db, user_id, start_time, end_time),
                     user_id,
                     self._sleep_starts(sleep_items(), user_id),
+                    fallback_offsets(),
                 ),
             ),
             "cardio_load": lambda: self._save_scores(

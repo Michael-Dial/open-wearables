@@ -252,7 +252,7 @@ class TestPolar247DailyActivityNormalization:
         samples = data_247.normalize_daily_activity([sample_activity], uuid4(), self.UTC_NIGHT)
 
         step_samples = [s for s in samples if s.series_type == SeriesType.steps]
-        assert [s.value for s in step_samples if s.recorded_at == datetime(2024, 1, 15)] == [9500]
+        assert [s.value for s in step_samples if s.recorded_at == datetime(2024, 1, 15, tzinfo=timezone.utc)] == [9500]
         assert [(s.recorded_at.isoformat(), int(s.value)) for s in step_samples if not s.is_daily_total] == [
             ("2024-01-15T00:00:01+00:00", 0),
             ("2024-01-15T07:10:00+00:00", 120),
