@@ -2,8 +2,8 @@
 
 The script runs two Celery workers in one container. A fake `uv` on PATH stands in for
 both, so the tests cover the shell logic only: signal forwarding, which worker decides
-the exit status, waiting for a worker that takes time to shut down, and that one
-worker's failure does not stop the other.
+the exit status, waiting for a worker that takes time to shut down, and that either
+worker's exit stops the other.
 """
 
 import contextlib
@@ -180,13 +180,11 @@ def test_cpu_worker_exit_stops_the_io_worker_and_the_container(run_worker_script
     assert "io stopped" in _events(events_log)
 
 
-def test_io_worker_crash_keeps_the_container_running(run_worker_script: Callable) -> None:
-    process, events_log = run_worker_script(EXIT_NOW_io="1")
-    _wait_for(events_log, "io exited", "cpu started")
+@pytest.mark.parametrize("io_status", [1, 127])
+def test_io_worker_exit_stops_the_cpu_worker_and_the_container(run_worker_script: Callable, io_status: int) -> None:
+    """A dead I/O worker must not leave the container up with nothing consuming sdk_sync."""
+    process, events_log = run_worker_script(EXIT_NOW_io=str(io_status), EXIT_DELAY="0.5", SHUTDOWN_DELAY_cpu="0.5")
+    _wait_for(events_log, "io started", "cpu started")
 
-    time.sleep(0.5)
-    assert process.poll() is None
-
-    process.send_signal(signal.SIGTERM)
-    assert process.wait(timeout=_TIMEOUT_S) == 0
-    assert "cpu got TERM" in _events(events_log)
+    assert process.wait(timeout=_TIMEOUT_S) == io_status
+    assert "cpu stopped" in _events(events_log)

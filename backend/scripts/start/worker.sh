@@ -15,7 +15,8 @@ cpu_pid=$!
 # the workers if it is forwarded. Without it both are SIGKILLed after the grace period
 # and tasks in flight are cut off instead of finishing (Celery warm shutdown).
 signalled=0
-trap 'signalled=1; kill -TERM "$io_pid" "$cpu_pid" 2>/dev/null || true' TERM INT
+stopping=0
+trap 'signalled=1; stopping=1; kill -TERM "$io_pid" "$cpu_pid" 2>/dev/null || true' TERM INT
 
 # set -e would exit on the first non-zero `wait` and skip waiting for the other worker.
 set +e
@@ -47,10 +48,26 @@ wait_for_exit() {
     return "$result"
 }
 
-# The container lives as long as the CPU worker, as before.
-wait_for_exit "$cpu_pid"
-status=$?
+# The container lives as long as both workers. The I/O worker is the only consumer of
+# sdk_sync, so if it died while the CPU worker kept the container up, the API went on
+# accepting SDK uploads (202) that then sat in Redis until something restarted the
+# container. Whichever worker exits first now stops the other, and the restart policy
+# brings both back. Polled rather than `wait -n`, which reaps the child and loses its
+# status for wait_for_exit.
+while [ "$stopping" = 0 ] && kill -0 "$io_pid" 2>/dev/null && kill -0 "$cpu_pid" 2>/dev/null; do
+    sleep 1 &
+    wait $!
+done
 
-kill -TERM "$io_pid" 2>/dev/null
+io_exited_first=0
+if [ "$stopping" = 0 ] && ! kill -0 "$io_pid" 2>/dev/null; then io_exited_first=1; fi
+kill -TERM "$io_pid" "$cpu_pid" 2>/dev/null
+
+wait_for_exit "$cpu_pid"
+cpu_status=$?
 wait_for_exit "$io_pid"
-exit "$status"
+io_status=$?
+
+# On a signal or a CPU worker exit the status is the CPU worker's, as before.
+if [ "$io_exited_first" = 1 ]; then exit "$io_status"; fi
+exit "$cpu_status"
