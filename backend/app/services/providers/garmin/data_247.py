@@ -678,7 +678,9 @@ class Garmin247Data(Base247DataTemplate):
         ``startTimeInSeconds``), and each row's steps and kcal cover only its own type.
         The series key is (source, type, second), so the rows of a slot are combined
         here rather than left to overwrite one another: steps and kcal are summed, and
-        the mean heart rate is weighted by each row's ``activeTimeInSeconds``.
+        the mean heart rate is weighted by each row's ``activeTimeInSeconds``. For the
+        same reason a slot starting at local midnight, where the dailies' totals sit, has
+        its steps and kcal stamped one second later (as Polar's intraday steps are).
 
         Args:
             raw_epochs: List of raw epoch data from API
@@ -712,6 +714,15 @@ class Garmin247Data(Base247DataTemplate):
             )
 
             slot = {"timestamp": recorded_at.isoformat(), "zone_offset": zone_offset, "external_id": slot_external_id}
+            # The day's first slot starts on the dailies' own instant (local midnight), and
+            # the key has no is_daily_total: its steps and kcal are stamped a second later
+            # so neither replaces the day's totals nor is replaced by them.
+            offset_seconds = rows[0].get("startTimeOffsetInSeconds") or 0
+            summed = (
+                {**slot, "timestamp": (recorded_at + timedelta(seconds=1)).isoformat()}
+                if (start_ts + offset_seconds) % 86_400 == 0
+                else slot
+            )
 
             # Heart rate
             mean_hr = self._slot_mean_heart_rate(rows)
@@ -721,12 +732,12 @@ class Garmin247Data(Base247DataTemplate):
             # Steps
             steps = [row["steps"] for row in rows if row.get("steps") is not None]
             if steps:
-                step_samples.append({**slot, "value": sum(steps)})
+                step_samples.append({**summed, "value": sum(steps)})
 
             # Active calories
             calories = [row["activeKilocalories"] for row in rows if row.get("activeKilocalories") is not None]
             if calories:
-                energy_samples.append({**slot, "value": sum(calories)})
+                energy_samples.append({**summed, "value": sum(calories)})
 
         return {
             "heart_rate": heart_rate_samples,

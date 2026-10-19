@@ -141,3 +141,76 @@ class TestEpochsPerActivityType:
         assert [s["value"] for s in normalized["energy"]] == [24]
         # Every row in a slot shares one per-slot id: the activity-type suffix is dropped.
         assert {s["external_id"] for s in normalized["steps"]} == {f"x153a5e8-{SLOT:x}"}
+
+
+DAILY = {
+    "userId": "4aacafe82427c251df9c9592d0c06768",
+    "summaryId": "x153a5e8-68e1ee40-15180-0",
+    "calendarDate": "2026-10-05",
+    "activityType": "WALKING",
+    "startTimeInSeconds": DAY_START,
+    "startTimeOffsetInSeconds": OFFSET,
+    "durationInSeconds": 86_400,
+    "steps": 9_874,
+    "distanceInMeters": 7_420.0,
+    "activeKilocalories": 512,
+    "bmrKilocalories": 1_690,
+    "restingHeartRateInBeatsPerMinute": 54,
+}
+# The day's first slot starts on the same instant as the daily summary: local midnight.
+FIRST_EPOCH = _epoch(
+    DAY_START, "SEDENTARY", 0, activeTimeInSeconds=900, steps=7, activeKilocalories=2, meanHeartRateInBeatsPerMinute=58
+)
+
+
+def _rows_with_flag(db: Session, user_id: UUID, series_type: SeriesType) -> dict[int, tuple[Decimal, bool | None]]:
+    rows = db.execute(
+        select(DataPointSeries.recorded_at, DataPointSeries.value, DataPointSeries.is_daily_total)
+        .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+        .where(
+            DataSource.user_id == user_id,
+            DataPointSeries.series_type_definition_id == get_series_type_id(series_type),
+        )
+    ).all()
+    return {int(r.recorded_at.timestamp()): (r.value, r.is_daily_total) for r in rows}
+
+
+class TestDailiesAndFirstEpochAtMidnight:
+    """The daily totals and the day's first epoch both start at local midnight.
+
+    Both land on one data source (wellness summaries carry no device), and the series key
+    has no is_daily_total, so whichever arrived last used to replace the other: a 15-minute
+    count where the day's total belonged, or the slot's count gone.
+    """
+
+    def _push_both(self, garmin_247: Garmin247Data, db: Session, order: list[str]) -> UUID:
+        user = UserFactory()
+        conn = UserConnectionFactory(user=user, provider="garmin")
+        items = {"dailies": DAILY, "epochs": FIRST_EPOCH}
+        with active_connection(conn.id):
+            for kind in order:
+                garmin_247.process_items_batch(db, user.id, kind, [items[kind]])
+        return user.id
+
+    @pytest.mark.parametrize("order", [["dailies", "epochs"], ["epochs", "dailies"]])
+    def test_both_survive_in_either_order(self, garmin_247: Garmin247Data, db: Session, order: list[str]) -> None:
+        user_id = self._push_both(garmin_247, db, order)
+
+        assert _rows_with_flag(db, user_id, SeriesType.steps) == {
+            DAY_START: (Decimal(9_874), True),
+            DAY_START + 1: (Decimal(7), False),
+        }
+        assert _rows_with_flag(db, user_id, SeriesType.active_energy) == {
+            DAY_START: (Decimal(512), True),
+            DAY_START + 1: (Decimal(2), False),
+        }
+
+    def test_only_the_midnight_slot_moves(self, garmin_247: Garmin247Data) -> None:
+        normalized = garmin_247.normalize_epochs([FIRST_EPOCH, SEDENTARY], uuid4())
+        samples = garmin_247._build_epochs_samples(uuid4(), normalized)
+
+        at = {(s.series_type, int(s.recorded_at.timestamp())) for s in samples}
+        assert (SeriesType.steps, DAY_START + 1) in at
+        assert (SeriesType.steps, SLOT) in at
+        # Heart rate is not a daily total, and stays on the 15 s all-day grid.
+        assert (SeriesType.heart_rate, DAY_START) in at

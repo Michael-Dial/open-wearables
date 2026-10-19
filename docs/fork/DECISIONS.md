@@ -1326,3 +1326,19 @@ then tell the watch's own data from an app's.
   the write: steps and kcal summed, the mean heart rate weighted by `activeTimeInSeconds`.
   The rows have to arrive in one push to meet; a slot whose activity types Garmin pushes
   separately still ends up with the last push's rows only (not yet seen in a live payload).
+
+## A Garmin day's first epoch is stamped clear of the dailies' totals
+
+- **Area**: backend
+- **Status**: active; upstreamable (the collision exists upstream too)
+- **On conflict**: keep ours (the `summed` stamp in `Garmin247Data.normalize_epochs`)
+- **Why**: the dailies' totals sit at the day's `startTimeInSeconds`, local midnight, and the
+  day's first epoch starts on the same instant. Wellness summaries carry no device, so both
+  resolve to one data source, and the key has no is_daily_total: whichever arrived last
+  replaced the other for steps and active kcal. An epoch arriving after the dailies left a
+  15-minute count flagged as an intraday sample where the day's total belonged; dailies
+  arriving after it erased the slot's count. An epoch slot that starts at local midnight
+  (by its own `startTimeOffsetInSeconds`) now has its steps and kcal stamped one second
+  later, as Polar's intraday steps are (`_clear_of_daily_totals`). Heart rate is not
+  moved: it is not a daily total, and the all-day grid must stay on multiples of 15 s.
+  Rows already stored keep whichever value won until Garmin re-sends the day.
