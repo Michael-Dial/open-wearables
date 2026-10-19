@@ -1311,3 +1311,18 @@ then tell the watch's own data from an app's.
   `POLAR_V4_ENABLED`. Disconnecting the last Polar account now revokes the v4 grant as well.
   The enum value, the `/oauth/polar_v4/callback` URL registered with Polar, and the token
   row are unchanged.
+
+## A Garmin epoch slot's activity-type rows are summed, not overwritten
+
+- **Area**: backend
+- **Status**: active; upstreamable (the collision exists upstream too)
+- **On conflict**: keep ours (`Garmin247Data.normalize_epochs` grouping by slot, and
+  `process_items_batch` normalizing a push's epochs together after its loop)
+- **Why**: Garmin sends one epoch row per 15-minute slot per activity type: a slot spent
+  partly sitting and partly walking arrives as a SEDENTARY and a WALKING row with the same
+  `startTimeInSeconds`, each holding the steps and kcal of its own type. Every row was
+  written at the slot start and the series key (source, type, second) kept the last one,
+  so per-slot steps and active kcal undercounted. A slot's rows are now combined before
+  the write: steps and kcal summed, the mean heart rate weighted by `activeTimeInSeconds`.
+  The rows have to arrive in one push to meet; a slot whose activity types Garmin pushes
+  separately still ends up with the last push's rows only (not yet seen in a live payload).
