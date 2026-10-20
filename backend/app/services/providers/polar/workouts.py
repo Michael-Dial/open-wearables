@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.constants.series_types.polar import RR_INTERVAL_SAMPLE_TYPE
 from app.constants.workout_types.polar import get_unified_workout_type
 from app.database import DbSession
-from app.schemas.enums import ProviderName, SampleRoute, SeriesType
+from app.schemas.enums import EventCategory, ProviderName, SampleRoute, SeriesType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -142,7 +142,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         zone_offset = offset_to_iso(raw_workout.start_time_utc_offset * 60)
 
         record = EventRecordCreate(
-            category="workout",
+            category=EventCategory.WORKOUT,
             type=workout_type.value,
             source_name=raw_workout.device,
             device_model=raw_workout.device,

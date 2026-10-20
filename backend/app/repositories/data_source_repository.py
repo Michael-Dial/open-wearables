@@ -14,6 +14,7 @@ from app.constants.devices_map import (
     HANDSET_DEVICE_TYPES,
     infer_device_type_from_model,
     infer_device_type_from_source_name,
+    is_host_model,
     reconcile_device_type,
 )
 from app.constants.devices_map.device_types import SINGLE_DEVICE_PROVIDER_TYPE
@@ -602,18 +603,22 @@ class DataSourceRepository(
             if original_source_name and existing.original_source_name is None:
                 object.__setattr__(existing, "original_source_name", original_source_name)
                 updated = True
-            device_type = self.next_device_type(
-                provider,
-                existing.device_type,
-                self._infer_device_type(
-                    device_model,
-                    original_source_name or existing.original_source_name,
-                    source,
-                    declared_sensor,
-                    provider=provider,
-                    reported_type=reported_type,
-                ),
+            resolved = self._infer_device_type(
+                device_model,
+                original_source_name or existing.original_source_name,
+                source,
+                declared_sensor,
+                provider=provider,
+                reported_type=reported_type,
             )
+            # Upstream #1902: a third-party writer's row keyed by the iPhone/Watch that
+            # relayed it got its stored type from that host, so it is re-resolved outright
+            # rather than left to the SDK upgrade-only rule, which would keep an Oura row
+            # typed "phone" forever. A resolution of UNKNOWN still never erases a type.
+            if is_host_model(existing.source_app_id, existing.device_model) and resolved is not DeviceType.UNKNOWN:
+                device_type = resolved.value
+            else:
+                device_type = self.next_device_type(provider, existing.device_type, resolved)
             if device_type != existing.device_type:
                 object.__setattr__(existing, "device_type", device_type)
                 updated = True

@@ -5,6 +5,7 @@ Applies the same rule as live sync (``DataSourceRepository.next_device_type``): 
 rows are recomputed outright, which also corrects types the old keywords got wrong (e.g. Garmin
 Index BPM stored as scale); SDK-provider rows only upgrade NULL/``other`` to a concrete type.
 iPad rows stored as phone move to tablet: that phone came from the same productType, not the SDK.
+Third-party iOS writers keyed by a relaying iPhone/Watch code are recomputed from their source name.
 Later mapping changes reach existing rows on their next sync, so this only needs to run once.
 
 Fork: resolved with the same classifier live sync uses (``DataSourceRepository._infer_device_type``)
@@ -26,6 +27,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.constants.devices_map import is_host_model
 from app.database import SessionLocal
 from app.models import DataSource
 from app.repositories.data_source_repository import DataSourceRepository
@@ -66,6 +68,10 @@ def backfill_device_types(db: Session, *, dry_run: bool) -> Counter[str]:
             and (ds.device_model or "").startswith("iPad")
         ):
             new_type = DeviceType.TABLET.value
+        # Fork: the classifier already reads the writer's name over a handset model, and a
+        # row always keeps a value, so UNKNOWN leaves the stored type alone rather than NULL.
+        if is_host_model(ds.source_app_id, ds.device_model) and resolved is not DeviceType.UNKNOWN:
+            new_type = resolved.value
         if new_type == ds.device_type:
             continue
         changes[f"{provider.value}: {ds.device_type} -> {new_type}"] += 1

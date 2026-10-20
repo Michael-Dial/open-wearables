@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 from app.database import DbSession
 from app.models import DataPointSeries
 from app.repositories import DataPointSeriesRepository
-from app.schemas.enums import SampleRoute, SeriesType
+from app.schemas.enums import EventCategory, SampleRoute, SeriesType
 from app.schemas.model_crud.activities import TimeSeriesSampleCreate
 from app.services.event_record_service import event_record_service
 
@@ -160,7 +160,7 @@ class PolarRrImportService:
 
         Raises PolarRrImportError on a malformed CSV (caller maps to 400).
         """
-        record = event_record_service.crud.get_record_with_details(db_session, workout_id, "workout")
+        record = event_record_service.crud.get_record_with_details(db_session, workout_id, EventCategory.WORKOUT)
         if not record:
             return None
         data_source = event_record_service.data_source_repo.get(db_session, record.data_source_id)
