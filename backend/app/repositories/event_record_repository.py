@@ -37,7 +37,7 @@ from app.repositories.data_source_repository import SOURCE_ID_FIELDS, DataSource
 from app.repositories.data_type_coverage_repository import data_type_coverage_repository
 from app.repositories.repositories import CrudRepository, source_filter_conditions, utc_bucket_start
 from app.schemas.data_type_coverage import CoverageSpan
-from app.schemas.enums import ProviderName, SeriesType, TimelineBucket, get_series_type_id
+from app.schemas.enums import EventCategory, ProviderName, SeriesType, TimelineBucket, get_series_type_id
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordQueryParams,
@@ -168,7 +168,7 @@ class EventRecordRepository(
             db_session.query(self.model)
             .filter(
                 self.model.data_source_id == data_source_id,
-                self.model.category != "meal",
+                self.model.category != EventCategory.MEAL,
                 self.model.start_datetime == creation.start_datetime,
                 self.model.end_datetime == creation.end_datetime,
             )
@@ -328,7 +328,7 @@ class EventRecordRepository(
                 .values(chunk)
                 .on_conflict_do_nothing(
                     index_elements=["data_source_id", "start_datetime", "end_datetime"],
-                    index_where=text("category <> 'meal'"),
+                    index_where=text(f"category <> '{EventCategory.MEAL}'"),
                 )
             )
             result = db_session.execute(stmt.returning(self.model.id))
@@ -402,7 +402,7 @@ class EventRecordRepository(
             stmt = insert(self.model).values([values for _, values in chunk])
             stmt = stmt.on_conflict_do_update(
                 index_elements=["data_source_id", "external_id"],
-                index_where=text("category = 'meal'"),
+                index_where=text(f"category = '{EventCategory.MEAL}'"),
                 set_={
                     column: stmt.excluded[column]
                     for column in (
@@ -434,7 +434,7 @@ class EventRecordRepository(
         self,
         db_session: DbSession,
         record_id: UUID,
-        category: str,
+        category: EventCategory,
     ) -> EventRecord | None:
         return (
             db_session.query(EventRecord)
@@ -603,7 +603,7 @@ class EventRecordRepository(
         aggregator's copy the list beside it leaves out.
         """
         filters = self._record_filters(
-            query_params.model_copy(update={"category": "workout"}), user_id, relay_plan=relay_plan
+            query_params.model_copy(update={"category": EventCategory.WORKOUT}), user_id, relay_plan=relay_plan
         )
         row = (
             db_session.query(
@@ -630,7 +630,10 @@ class EventRecordRepository(
     ) -> tuple[int, int, int, int, Decimal | None]:
         """Sessions, naps, asleep and in-bed seconds, and mean efficiency, in one aggregate."""
         filters = self._record_filters(
-            query_params.model_copy(update={"category": "sleep"}), user_id, restrict_to_record_ids, relay_plan
+            query_params.model_copy(update={"category": EventCategory.SLEEP}),
+            user_id,
+            restrict_to_record_ids,
+            relay_plan,
         )
         row = (
             db_session.query(
@@ -691,7 +694,7 @@ class EventRecordRepository(
 
         filters = [
             DataSource.user_id == UUID(user_id),
-            EventRecord.category == "sleep",
+            EventRecord.category == EventCategory.SLEEP,
         ]
         if relay_plan is not None:
             # Rank on the rows the caller will actually receive. Without this a redundant
@@ -787,7 +790,7 @@ class EventRecordRepository(
         query = (
             db_session.query(key_column, bucket_start, func.count(self.model.id).label("count"))
             .join(DataSource, self.model.data_source_id == DataSource.id)
-            .filter(DataSource.user_id == user_id, self.model.category == "workout")
+            .filter(DataSource.user_id == user_id, self.model.category == EventCategory.WORKOUT)
         )
         if provider is not None:
             query = query.filter(DataSource.provider == provider)
@@ -823,7 +826,7 @@ class EventRecordRepository(
             .join(DataSource, self.model.data_source_id == DataSource.id)
             .filter(
                 DataSource.user_id == user_id,
-                self.model.category == "workout",
+                self.model.category == EventCategory.WORKOUT,
                 self.model.type.isnot(None),
             )
             .group_by(self.model.type)
@@ -880,7 +883,7 @@ class EventRecordRepository(
             .join(DataSource, EventRecord.data_source_id == DataSource.id)
             .filter(
                 DataSource.user_id == user_id,
-                EventRecord.category == "sleep",
+                EventRecord.category == EventCategory.SLEEP,
                 SleepDetails.sleep_stages.contains([{"stage": stage_name}]),
             )
             .order_by(desc(EventRecord.start_datetime))
@@ -1021,7 +1024,7 @@ class EventRecordRepository(
             .outerjoin(SleepDetails, SleepDetails.record_id == EventRecord.id)
             .filter(
                 DataSource.user_id == user_id,
-                EventRecord.category == "sleep",
+                EventRecord.category == EventCategory.SLEEP,
                 # An aggregator's copy of a night the maker's own API already reported
                 # must not be aggregated as a second night for the same date.
                 *_relay_conditions(relay_plan),
@@ -1264,7 +1267,7 @@ class EventRecordRepository(
             .outerjoin(SleepDetails, SleepDetails.record_id == EventRecord.id)
             .filter(
                 DataSource.user_id == user_id,
-                EventRecord.category == "sleep",
+                EventRecord.category == EventCategory.SLEEP,
                 EventRecord.end_datetime >= start_date - timedelta(days=1),
                 local_sleep_date >= cast(start_date, Date),
                 local_sleep_date < cast(end_date, Date),
@@ -1328,7 +1331,7 @@ class EventRecordRepository(
             .outerjoin(WorkoutDetails, self.model.id == WorkoutDetails.record_id)
             .filter(
                 DataSource.user_id == user_id,
-                self.model.category == "workout",
+                self.model.category == EventCategory.WORKOUT,
                 *_relay_conditions(relay_plan),
                 self.model.end_datetime >= start_date - timedelta(days=1),
                 local_workout_date >= cast(start_date, Date),
@@ -1400,7 +1403,7 @@ class EventRecordRepository(
             scope.append(DataSource.source == source)
         filters = [
             *scope,
-            self.model.category == "sleep",
+            self.model.category == EventCategory.SLEEP,
             self.model.type == "sleep_session",
             self.model.start_datetime <= end_time + threshold,
             self.model.end_datetime >= start_time - threshold,
@@ -1521,7 +1524,7 @@ class EventRecordRepository(
             .outerjoin(SleepDetails, SleepDetails.record_id == EventRecord.id)
             .filter(
                 DataSource.user_id == user_id,
-                EventRecord.category == "sleep",
+                EventRecord.category == EventCategory.SLEEP,
                 EventRecord.end_datetime >= start_dt,
                 EventRecord.start_datetime < end_dt,
             )

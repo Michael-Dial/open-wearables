@@ -18,6 +18,7 @@ from app.repositories.data_point_series_repository import WriteCounts
 from app.schemas.enums import (
     DeviceIdentityKind,
     DeviceType,
+    EventCategory,
     HealthScoreCategory,
     ProviderName,
     SampleRoute,
@@ -759,7 +760,7 @@ class Oura247Data(Base247DataTemplate):
 
             record = EventRecordCreate(
                 id=sleep_id,
-                category="sleep",
+                category=EventCategory.SLEEP,
                 type="sleep_session",
                 source_name="Oura",
                 device_model=None,

@@ -318,6 +318,26 @@ class TestUnrecognisedWritersKeepTheirName:
         repo.ensure_data_source(db, **identity)
         assert repo.get_by_identity(db, **identity).device_type == DeviceType.BP_MONITOR
 
+    def test_host_typed_relay_row_is_corrected_on_sync(self, db: Session) -> None:
+        """Upstream #1902: SDK rows only upgrade from unset, except a third-party writer's row
+        whose type came from the iPhone that relayed it - that one is re-resolved on sync."""
+        user = UserFactory()
+        repo = DataSourceRepository(DataSource)
+        identity = {
+            "user_id": user.id,
+            "provider": ProviderName.APPLE,
+            "device_model": "iPhone16,1",
+            "source": "Oura",
+            "source_app_id": "com.ouraring.oura",
+        }
+        stored = repo.ensure_data_source(db, **identity)
+        object.__setattr__(stored, "device_type", DeviceType.PHONE.value)
+        db.flush()
+
+        repo.ensure_data_source(db, **identity)
+        db.expire_all()
+        assert db.get(DataSource, stored.id).device_type == DeviceType.RING
+
     def test_batch_upgrades_unset_device_type(self, db: Session) -> None:
         user = UserFactory()
         repo = DataSourceRepository(DataSource)

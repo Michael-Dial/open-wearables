@@ -18,7 +18,14 @@ from app.repositories import (
     UserConnectionRepository,
 )
 from app.repositories.data_point_series_repository import DataPointSeriesRepository, WriteCounts
-from app.schemas.enums import HealthScoreCategory, ProviderName, SampleRoute, SeriesType, daily_total_flag
+from app.schemas.enums import (
+    EventCategory,
+    HealthScoreCategory,
+    ProviderName,
+    SampleRoute,
+    SeriesType,
+    daily_total_flag,
+)
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -348,7 +355,7 @@ class Garmin247Data(Base247DataTemplate):
         nap_id = uuid4()
         record = EventRecordCreate(
             id=nap_id,
-            category="sleep",
+            category=EventCategory.SLEEP,
             type="sleep_session",
             source_name="Garmin",
             device_model=None,
@@ -397,7 +404,7 @@ class Garmin247Data(Base247DataTemplate):
 
         record = EventRecordCreate(
             id=sleep_id,
-            category="sleep",
+            category=EventCategory.SLEEP,
             type="sleep_session",
             source_name="Garmin",
             device_model=None,
@@ -1068,7 +1075,7 @@ class Garmin247Data(Base247DataTemplate):
         record_id = uuid4()
         record = EventRecordCreate(
             id=record_id,
-            category="workout",
+            category=EventCategory.WORKOUT,
             type=activity_type.lower(),
             source_name="Garmin",
             device_model=raw_activity.get("deviceName"),
@@ -1268,7 +1275,7 @@ class Garmin247Data(Base247DataTemplate):
         try:
             created_record = event_record_service.create(db, record)
             detail.record_id = created_record.id
-            event_record_service.create_detail(db, detail, detail_type="workout")
+            event_record_service.create_detail(db, detail, detail_type=EventCategory.WORKOUT)
             return 1
         except Exception as e:
             self.logger.debug(f"Activity may already exist: {e}")
@@ -1914,7 +1921,7 @@ class Garmin247Data(Base247DataTemplate):
 
         return EventRecordCreate(
             id=uuid4(),
-            category="activity",
+            category=EventCategory.ACTIVITY,
             type=f"moveiq_{activity_type.lower()}",
             source_name="Garmin Move IQ",
             device_model=None,
@@ -1972,7 +1979,7 @@ class Garmin247Data(Base247DataTemplate):
 
         record = EventRecordCreate(
             id=uuid4(),
-            category="menstrual_cycle",
+            category=EventCategory.MENSTRUAL_CYCLE,
             type=phase_type,
             source_name="Garmin",
             duration_seconds=cycle_length * 24 * 3600 if cycle_length else None,
@@ -2339,17 +2346,17 @@ class Garmin247Data(Base247DataTemplate):
             # Bulk create sleep details for actually inserted records
             sleep_details = [d for d in all_sleep_details if d.record_id in inserted_set]
             if sleep_details:
-                event_record_service.bulk_create_details(db, sleep_details, detail_type="sleep")
+                event_record_service.bulk_create_details(db, sleep_details, detail_type=EventCategory.SLEEP)
 
             # Bulk create workout details for actually inserted records
             workout_details = [d for d in all_workout_details if d.record_id in inserted_set]
             if workout_details:
-                event_record_service.bulk_create_details(db, workout_details, detail_type="workout")
+                event_record_service.bulk_create_details(db, workout_details, detail_type=EventCategory.WORKOUT)
 
             # Bulk create MCT details for actually inserted records
             mct_details = [d for d in all_mct_details if d.record_id in inserted_set]
             if mct_details:
-                event_record_service.bulk_create_details(db, mct_details, detail_type="menstrual_cycle")  # ty:ignore[invalid-argument-type]
+                event_record_service.bulk_create_details(db, mct_details, detail_type=EventCategory.MENSTRUAL_CYCLE)  # ty:ignore[invalid-argument-type]
 
             count += WriteCounts(len(inserted_ids), 0)
 

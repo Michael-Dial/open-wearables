@@ -784,6 +784,15 @@ Template:
   never erases a known type. The inference it re-resolves with is the fork's, so a sensor
   declared on the connection still decides the type.
 
+  Upstream #1902 added one exception to the SDK rule, kept here: a third-party writer's
+  row keyed by the iPhone/Watch that relayed it (`is_host_model`) is re-resolved on every
+  sync, because its stored type came from the host. Upstream gets there by dropping the
+  host model from `infer_device_type`; the fork's `_infer_from_strings` already reads the
+  writer's name over a handset model, so only the re-resolution was taken, and a result of
+  `unknown` still leaves the stored type alone. The one place the two still differ: a
+  writer whose name names no device (Strava on an iPhone) stays `phone` here and becomes
+  `unknown` upstream.
+
 ## The device-type backfill uses the fork's classifier
 
 - **Area**: backend (data migration)
@@ -794,6 +803,7 @@ Template:
   `user_connection.sensor_label`. Run as written it would reclassify each Strava source a
   person marked as recorded with an ECG strap from `chest_strap` back to `watch`. It now
   resolves through `DataSourceRepository._infer_device_type`, the same path live sync uses.
+  Upstream's host-row recompute (#1902) is applied to that result, as in live sync.
 
 ## SDK device types are read only from routes that classify the hardware
 

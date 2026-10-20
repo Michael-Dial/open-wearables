@@ -9,7 +9,7 @@ from xml.etree import ElementTree as ET
 from app.config import settings
 from app.constants.series_types.sdk import get_apple_sleep_phase, get_series_type_from_metric_type
 from app.constants.workout_types import get_unified_apple_workout_type_xml
-from app.schemas.enums import SampleRoute, SeriesType, daily_total_flag
+from app.schemas.enums import EventCategory, SampleRoute, SeriesType, daily_total_flag
 from app.schemas.enums.provider import ProviderName
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
@@ -278,7 +278,7 @@ class XMLService:
         duration_seconds = int((document["endDate"] - document["startDate"]).total_seconds())
 
         record = EventRecordCreate(
-            category="workout",
+            category=EventCategory.WORKOUT,
             type=workout_type.value,
             source_name=document["sourceName"],
             device_model=device_info.device_model,
