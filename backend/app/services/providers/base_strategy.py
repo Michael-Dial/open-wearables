@@ -106,6 +106,12 @@ class ProviderCapabilities:
     max_historical_days:
         Hard upper limit on how far back the provider allows data to be
         fetched. ``None`` means no known limit. Garmin: 30 days.
+    live_pull_lookback:
+        Trailing window every *live* pull re-fetches, whatever ``PULL_SYNC_LOOKBACK``
+        says. For providers whose API is keyed by the day the data was recorded rather
+        than when it reached the provider: a live pull starting at the last sync would
+        never ask again for a day the device uploads later. ``None`` means no floor.
+        Polar.
     """
 
     rest_pull: bool = False
@@ -118,6 +124,7 @@ class ProviderCapabilities:
     webhook_subscription_per_user: bool = False
     webhook_inbound_secret: bool = False
     max_historical_days: int | None = None
+    live_pull_lookback: timedelta | None = None
 
     def __post_init__(self) -> None:
         if self.webhook_stream and self.webhook_ping:

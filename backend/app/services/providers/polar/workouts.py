@@ -5,6 +5,7 @@ from typing import Any, Iterable
 from uuid import UUID, uuid4
 
 import isodate
+from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from app.constants.series_types.polar import RR_INTERVAL_SAMPLE_TYPE
@@ -55,7 +56,15 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             "zones": str(zones).lower(),
             "route": str(route).lower(),
         }
-        return self._make_api_request(db, user_id, "/v3/exercises", params=params)
+        try:
+            return self._make_api_request(db, user_id, "/v3/exercises", params=params) or []
+        except HTTPException as e:
+            # No exercises in the last 30 days comes back as an empty body (204), which the
+            # API client reports as a 500 around a JSON decode error. That is no exercises,
+            # not a failed sync.
+            if e.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and "Expecting value" in str(e.detail):
+                return []
+            raise
 
     def get_workout_detail_from_api(self, db: DbSession, user_id: UUID, workout_id: str, **kwargs: Any) -> Any:
         """Get detailed exercise data from Polar API."""
