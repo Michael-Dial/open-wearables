@@ -36,6 +36,14 @@ class ProviderName(str, Enum):
     ULTRAHUMAN = "ultrahuman"
     SENSORBIO = "sensorbio"
     WITHINGS = "withings"
+    # Not a wearable platform: records a person typed or uploaded for a reference
+    # instrument that has no API - a PSG export, a Kubios analysis of a chest strap, an
+    # EEG headband's file. Written only by `/users/{id}/import/manual/*`, on a
+    # connection classified `reference`. It has a strategy so the code paths that walk
+    # every connection (periodic sync, the connections listing, priorities) see a
+    # provider with nothing to sync rather than an unknown name, but it is listed
+    # nowhere a person connects or configures a provider.
+    MANUAL = "manual"
     UNKNOWN = "unknown"
     INTERNAL = "internal"
 
@@ -55,12 +63,22 @@ class ProviderName(str, Enum):
         source_lower = source.lower()
         # Check each provider (except UNKNOWN) to see if it appears in the source string
         for provider in cls:
-            if provider in (cls.UNKNOWN, cls.INTERNAL):
+            # MANUAL is never inferred: a HealthKit writer called "Manual entry" is
+            # still Apple's data, and the import route names its provider outright.
+            if provider in UNLISTED_PROVIDERS:
                 continue
             if provider.value in source_lower:
                 return provider
 
         return cls.UNKNOWN
+
+
+# Members no person connects and no admin configures: the two sentinels, and the manual
+# reference import. Left out of provider settings, the coverage matrix and the default
+# priority order, and never inferred from a source string.
+UNLISTED_PROVIDERS: frozenset[ProviderName] = frozenset(
+    {ProviderName.UNKNOWN, ProviderName.INTERNAL, ProviderName.MANUAL}
+)
 
 
 # Grants that ride on another provider's account rather than being a provider of their
@@ -83,7 +101,8 @@ def add_on_grants_of(host: str) -> list[str]:
 
 
 # Default order for a fresh deployment. Covers every provider a user can connect;
-# UNKNOWN and INTERNAL are deliberately absent because they are not configurable;
+# UNKNOWN, INTERNAL and MANUAL are deliberately absent because they are not configurable
+# (a manual reference source gets the next free rank when its first row is written);
 # add-on grants (POLAR_V4) are too, because they hold tokens and their data files under
 # the host provider.
 DEFAULT_PROVIDER_PRIORITY: dict[ProviderName, int] = {

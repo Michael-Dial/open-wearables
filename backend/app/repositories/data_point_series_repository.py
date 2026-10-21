@@ -1,5 +1,5 @@
 import contextlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, LiteralString, NamedTuple, overload
@@ -660,6 +660,46 @@ class DataPointSeriesRepository(
         # Limit + 1 to check for next page
         limit = params.limit or 50
         return query.limit(limit + 1).all(), total_count
+
+    def iter_samples(
+        self,
+        db_session: DbSession,
+        params: TimeSeriesQueryParams,
+        types: list[SeriesType],
+        user_id: UUID,
+        data_source_ids: Sequence[UUID] | None = None,
+        batch_size: int = 2000,
+    ) -> Iterator[tuple[DataPointSeries, DataSource]]:
+        """Every matching sample, oldest first, read through a server-side cursor.
+
+        The bulk export's read: no page, no cursor and no count, so a window of any
+        size is one query, and ``yield_per`` fetches it ``batch_size`` rows at a time
+        instead of loading the result whole. The filters and bounds are
+        ``get_samples``'s (start inclusive, end exclusive) so the two reads cannot
+        disagree about which rows a window holds. Ordered by recorded_at, then data
+        source, then series type: a total order under the row's unique key, so two
+        sources sampled on the same second come out in a stable order.
+
+        The session's transaction has to stay open while the caller iterates - the
+        cursor lives in it.
+        """
+        query = self._apply_sample_filters(
+            db_session.query(self.model, DataSource)
+            .join(DataSource, self.model.data_source_id == DataSource.id)
+            .filter(DataSource.user_id == user_id),
+            params,
+            types,
+            params.start_datetime,
+            params.end_datetime,
+        )
+        if data_source_ids:
+            query = query.filter(self.model.data_source_id.in_(list(data_source_ids)))
+        query = query.order_by(
+            asc(self.model.recorded_at),
+            asc(self.model.data_source_id),
+            asc(self.model.series_type_definition_id),
+        )
+        yield from query.yield_per(batch_size)
 
     def get_aggregated_samples(
         self,

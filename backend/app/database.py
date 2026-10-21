@@ -104,4 +104,10 @@ async def _get_async_db_dependency() -> AsyncGenerator[AsyncSession, None]:
 
 
 DbSession = Annotated[Session, Depends(_get_db_dependency)]
+# Held until the response has been sent, not only until the endpoint returns. A streaming
+# export reads its rows while the body is being written, so the session behind the
+# server-side cursor has to outlive the endpoint function. Same callable as DbSession, so
+# a test override of _get_db_dependency reaches it, and an auth dependency declaring the
+# ordinary DbSession in the same request shares the one session rather than opening two.
+StreamingDbSession = Annotated[Session, Depends(_get_db_dependency, scope="request")]
 AsyncDbSession = Annotated[AsyncSession, Depends(_get_async_db_dependency)]

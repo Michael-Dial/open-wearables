@@ -182,12 +182,13 @@ class TestSeedMissingProviders:
         assert [(p.provider, p.priority) for p in repo.get_all_ordered(db)] == snapshot
 
     def test_default_order_covers_every_connectable_provider(self) -> None:
-        """Every provider except UNKNOWN/INTERNAL has a default priority, with no duplicate numbers."""
-        from app.schemas.enums import DEFAULT_PROVIDER_PRIORITY
+        """Every provider except the unlisted ones has a default priority, with no duplicate numbers."""
+        from app.schemas.enums import DEFAULT_PROVIDER_PRIORITY, UNLISTED_PROVIDERS
 
         # POLAR_V4 is a token holder for Polar's v4 API, not a data source: what it
-        # fetches files under POLAR, so it has no priority of its own to rank.
-        not_ranked = (ProviderName.UNKNOWN, ProviderName.INTERNAL, ProviderName.POLAR_V4)
+        # fetches files under POLAR, so it has no priority of its own to rank. MANUAL
+        # (with the sentinels in UNLISTED_PROVIDERS) is ranked when its first row lands.
+        not_ranked = (*UNLISTED_PROVIDERS, ProviderName.POLAR_V4)
         expected = {p for p in ProviderName if p not in not_ranked}
         assert set(DEFAULT_PROVIDER_PRIORITY) == expected
         assert len(set(DEFAULT_PROVIDER_PRIORITY.values())) == len(DEFAULT_PROVIDER_PRIORITY)

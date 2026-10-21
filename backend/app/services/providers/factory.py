@@ -5,6 +5,7 @@ from app.services.providers.fitbit.strategy import FitbitStrategy
 from app.services.providers.garmin.strategy import GarminStrategy
 from app.services.providers.google_health.strategy import GoogleHealthStrategy
 from app.services.providers.health_connect.strategy import HealthConnectStrategy
+from app.services.providers.manual.strategy import ManualStrategy
 from app.services.providers.oura.strategy import OuraStrategy
 from app.services.providers.polar.strategy import PolarStrategy
 from app.services.providers.polar.v4_strategy import PolarV4Strategy
@@ -53,5 +54,7 @@ class ProviderFactory:
                 return UltrahumanStrategy()
             case ProviderName.WITHINGS.value:
                 return WithingsStrategy()
+            case ProviderName.MANUAL.value:
+                return ManualStrategy()
             case _:
                 raise ValueError(f"Unknown provider: {provider_name}")

@@ -7,7 +7,7 @@ from fastapi import APIRouter
 
 from app import __version__ as core_version
 from app.extensions import LoadedExtension, get_extensions
-from app.schemas.enums import ProviderName, SeriesType, is_add_on_grant
+from app.schemas.enums import UNLISTED_PROVIDERS, ProviderName, SeriesType, is_add_on_grant
 from app.schemas.enums.health_score_category import HEALTH_SCORE_DESCRIPTION_BY_ENUM, HealthScoreCategory
 from app.schemas.enums.series_types import (
     SERIES_TYPE_CATEGORY_BY_ENUM,
@@ -54,7 +54,8 @@ def _build_coverage() -> CoverageResponse:
     coverage_by_provider: dict[str, ProviderCoverage] = {}
     for name in ProviderName:
         # Add-on grants (Polar v4) declare nothing: their data is the host's coverage.
-        if is_add_on_grant(name.value):
+        # The manual reference import has a strategy but no feed to describe.
+        if is_add_on_grant(name.value) or name in UNLISTED_PROVIDERS:
             continue
         # Skip sentinel providers (UNKNOWN/INTERNAL) that have no strategy.
         with suppress(ValueError):

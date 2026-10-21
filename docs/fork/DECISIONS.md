@@ -1373,3 +1373,73 @@ then tell the watch's own data from an app's.
   intraday samples were tz-aware; written in one batch, the coverage span compared the two
   and raised, so any day whose steps could be placed lost its totals and samples alike.
   The stamp is now explicitly UTC, the same instant as before.
+
+## Bulk export of every raw time-series row: `GET /users/{id}/export/series`
+
+- **Area**: backend, docs
+- **Status**: active; upstreamable
+- **On conflict**: keep ours. `app/services/series_export_service.py`, the route in
+  `app/api/routes/v1/timeseries.py`, `DataPointSeriesRepository.iter_samples` and
+  `TimeSeriesService.iter_export_samples` are fork-only additions; `StreamingDbSession`
+  in `app/database.py` is one line beside `DbSession`. If upstream changes
+  `_apply_sample_filters` or `_to_sample`, take theirs - both new paths call them so
+  the export inherits whatever `/timeseries` does.
+- **Why**: a study-wide recompute read every participant's season through
+  `/timeseries` at 1000 rows a page, which for a night of 1 Hz data and beat-to-beat
+  RR is hundreds of round trips per participant per night, each one re-planning the
+  same query under a keyset. The export is the same rows, with the same fields and
+  the same bounds, in one streamed response: `yield_per` on the ORM query opens a
+  server-side cursor, the session is held for the request rather than the endpoint
+  (FastAPI's `scope="request"` on the same `_get_db_dependency`, so a test override
+  still reaches it and the auth dependency shares the one session), and rows are
+  written as the cursor delivers them, so memory does not grow with the window.
+
+  Two things are deliberately not inherited from `/timeseries`: the priority filter
+  and the relay dedup. Method comparison needs both arms - the maker's feed and the
+  aggregator's copy, both units of one model - and which to keep is the consumer's
+  rule. NDJSON lines are `TimeSeriesSample` as `/timeseries` renders it, through the
+  same `_to_sample`, so the two cannot drift; CSV flattens the `source` object into
+  named columns, read off the schema. No row count is announced up front, because a
+  count is a second scan of the window before the first byte.
+
+## A `manual` provider for reference instruments that have no API
+
+- **Area**: backend, docs
+- **Status**: active
+- **On conflict**: keep ours. `ProviderName.MANUAL` and `UNLISTED_PROVIDERS` in
+  `app/schemas/enums/provider.py`, the `manual` case in `ProviderFactory`, route ids
+  140-141 in `app/schemas/enums/sample_route.py` (stored; never renumber), the
+  `vendor_stage` field on `SleepStage`, and the `UNLISTED_PROVIDERS` skip in
+  `_build_coverage` and `listed_providers`. The import itself
+  (`app/services/manual_import_service.py`, `app/schemas/manual_import.py`,
+  `app/api/routes/v1/import_manual.py`, `app/services/providers/manual/`) is
+  fork-only. If upstream adds a sentinel-skip of its own, fold ours into it.
+- **Why**: a validation study scores nights against instruments no wearable platform
+  serves - a PSG export, a Kubios analysis of a Polar H10, an EEG headband's file -
+  and the Sleep Validation Hub kept those in its own tables, which made it a second
+  measurement store with its own attribution to get wrong. They now land here, on a
+  `user_connection` with `provider=manual` created as `account_type=reference` (the
+  classification the hub already filters on), one `data_source` per instrument keyed
+  on the label, written through `create_or_merge_sleep` and the ordinary series
+  upsert so a file sent twice is stored once. Both columns are plain strings, so no
+  migration.
+
+  The value is a real enum member with a strategy, not a bare string, because
+  `sync_vendor_data_task`, the connections listing and `priority_service` call
+  `ProviderFactory.get_provider(connection.provider)` on every connection, and the
+  periodic sync does so without catching `ValueError`: a `manual` row would have
+  stopped every user's sync. The strategy declares nothing to pull, so the sync skips
+  it. `UNLISTED_PROVIDERS` replaces the two hard-coded sentinel checks so the admin
+  provider list, the coverage matrix (and `docs/providers/coverage.mdx` generated
+  from it) and source-string inference all leave it out from one definition.
+
+  The stage alphabet is the instrument's. `SleepStage.stage` stays `SleepStageType`,
+  because the response contract, the merge arithmetic and the frontend's hypnogram
+  all read a closed set; the new `vendor_stage` carries the label verbatim, `stage`
+  is OW's word only where the label already was one, and a foreign label files as
+  `unknown` with **null** totals - the fold from N1/N2/N3 to light/deep is the hub's
+  comparison-time rule (`foldStage`), and a total summed over a fold this store did
+  not make would be a synthesised figure. A declared `interval_seconds` files the
+  rows under a window-kind route (`manual.windows`) rather than being inferred from
+  sample spacing, for the same reason the Oura and Apple windows are stated, never
+  guessed.

@@ -268,15 +268,28 @@ class UserConnectionService(
         """Return other active OW users sharing the same external account, grouped by (provider, provider_user_id)."""
         return self.crud.get_linked_user_ids(db_session, user_id, provider_pairs)
 
-    def ensure_sdk_connection(self, db_session: DbSession, user_id: UUID, provider: str) -> UserConnection:
+    def ensure_sdk_connection(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        *,
+        account_type: str | None = None,
+        account_label: str | None = None,
+    ) -> UserConnection:
         """Ensure an SDK connection exists, emitting ``connection.created`` on state change.
 
         SDK providers have no OAuth callback, so this is where their connection is born --
         on the first upload. ``connected_at`` is taken from the row rather than ``now()``
         because it feeds the webhook idempotency key: this runs on every batch and the
         Celery task retries, so a row-derived key is what collapses the duplicates.
+
+        ``account_type`` and ``account_label`` are applied only when the row is created;
+        an existing account keeps whatever a person set on it.
         """
-        connection, outcome = self.crud.ensure_sdk_connection(db_session, user_id, provider)
+        connection, outcome = self.crud.ensure_sdk_connection(
+            db_session, user_id, provider, account_type=account_type, account_label=account_label
+        )
 
         if outcome == SdkConnectionOutcome.EXISTING:
             return connection

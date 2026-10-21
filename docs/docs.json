@@ -148,6 +148,7 @@
               "dev-guides/multiple-provider-accounts",
               "dev-guides/aggregator-deduplication",
               "dev-guides/workout-export",
+              "dev-guides/manual-reference-import",
               "dev-guides/data-migrations",
               "dev-guides/ngrok-setup"
             ]
@@ -261,7 +262,8 @@
           {
             "group": "Timeseries",
             "pages": [
-              "GET /api/v1/users/{user_id}/timeseries"
+              "GET /api/v1/users/{user_id}/timeseries",
+              "GET /api/v1/users/{user_id}/export/series"
             ]
           },
           {
@@ -304,6 +306,13 @@
               "POST /api/v1/users/{user_id}/import/apple/xml/s3/multipart/complete",
               "POST /api/v1/users/{user_id}/import/apple/xml/s3/multipart/abort",
               "POST /api/v1/users/{user_id}/import/apple/xml/direct"
+            ]
+          },
+          {
+            "group": "Manual Reference Import",
+            "pages": [
+              "POST /api/v1/users/{user_id}/import/manual/sleep-stages",
+              "POST /api/v1/users/{user_id}/import/manual/series"
             ]
           },
           {

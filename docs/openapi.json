@@ -2928,6 +2928,142 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/export/series": {
+      "get": {
+        "tags": [
+          "External: Timeseries"
+        ],
+        "summary": "Export Series",
+        "description": "Stream every raw time-series row of one user over a window, in one response.\n\nThe bulk counterpart of `/timeseries?resolution=raw`: the same rows, with the same\nfields, same window bounds (`start_time` inclusive, `end_time` exclusive) and the\nsame `types` parsing, but no page size and no cursor. A study-wide recompute is one\nrequest per participant instead of thousands of 1000-row pages. Rows are read\nthrough a server-side cursor and written as they arrive, so a window of any size\nis bounded by the client's throughput, not by the server's memory.\n\n**Every source's rows are returned.** No priority filtering and no relay\ndeduplication is applied, unlike the default `/timeseries` read: a method\ncomparison needs both arms, the maker's own feed and the copy an aggregator\nrelayed, and both units of one model worn together. Tell them apart by\n`source.data_source_id` (NDJSON) or the `data_source_id` column (CSV); the `route`\nand `route_kind` fields say which feed of a source wrote each row.\n\nOrdered by `timestamp`, then `data_source_id`. The row count is not announced up\nfront - counting would scan the window once more before the first row is sent.",
+        "operationId": "export_series_api_v1_users__user_id__export_series_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days.",
+              "examples": [
+                "2023-11-07T05:31:56Z",
+                "2023-11-07"
+              ],
+              "format": "date-time",
+              "title": "Start Time"
+            },
+            "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days."
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days.",
+              "examples": [
+                "2023-11-07T05:31:56Z",
+                "2023-11-07"
+              ],
+              "format": "date-time",
+              "title": "End Time"
+            },
+            "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days."
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/SeriesType"
+              },
+              "description": "Series to export; every series when omitted. Repeated, or one comma-joined value.",
+              "default": [],
+              "title": "Types"
+            },
+            "description": "Series to export; every series when omitted. Repeated, or one comma-joined value."
+          },
+          {
+            "name": "data_source_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "description": "Only these data sources (repeat the parameter). Every source when omitted.",
+              "default": [],
+              "title": "Data Source Id"
+            },
+            "description": "Only these data sources (repeat the parameter). Every source when omitted."
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExportFormat",
+              "description": "`ndjson` (default) or `csv`.",
+              "default": "ndjson"
+            },
+            "description": "`ndjson` (default) or `csv`."
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every raw sample in the window, streamed. NDJSON: one `/timeseries` `data[]` item per line. CSV: a header row, then one row per sample with the `source` object flattened into columns.",
+            "content": {
+              "application/x-ndjson": {},
+              "text/csv": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/beat-capture": {
       "get": {
         "tags": [
@@ -8051,6 +8187,156 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UploadDataResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/import/manual/sleep-stages": {
+      "post": {
+        "tags": [
+          "External: Manual Reference Import"
+        ],
+        "summary": "Import Manual Sleep Stages",
+        "description": "Import one scored night from a reference instrument that has no provider.\n\nFor PSG exports, Kubios outputs and EEG headband files: the stages land as one\nsleep record with `sleep_stage_intervals`, exactly as a night relayed through\nApple Health is stored, on the user's `manual` connection (created with\n`account_type` `reference` if there is none) and under a data source named by\n`device_label`. Read it back with `/users/{user_id}/events/sleep?include=stages`.\n\nThe instrument's stage labels are kept verbatim (`vendor_stage`); a label that is\nnot one of OW's words is filed with `stage` = `unknown` and no totals, because\nfolding N1/N2/N3 to light/deep is the consumer's rule. Re-importing the same\nnight (same `external_id`, or the same label and start when none is given)\nreplaces the record. Two instruments scoring one night are two records.\n\n400 when the body is inconsistent; 404 when `connection_id` is not a manual\nconnection of this user.",
+        "operationId": "import_manual_sleep_stages_api_v1_users__user_id__import_manual_sleep_stages_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualSleepStagesImport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualSleepImportResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/import/manual/series": {
+      "post": {
+        "tags": [
+          "External: Manual Reference Import"
+        ],
+        "summary": "Import Manual Series",
+        "description": "Import time-series samples from a reference instrument that has no provider.\n\nRows go through the same upsert every provider uses, keyed on (data source,\nseries type, second), so sending a file twice changes nothing and a corrected\nvalue replaces the old one. They read back from `/users/{user_id}/timeseries`\nand the bulk export with `route` `manual.samples`, or `manual.windows` when\n`interval_seconds` was given, which is also stored on each row.\n\n404 when `connection_id` is not a manual connection of this user.",
+        "operationId": "import_manual_series_api_v1_users__user_id__import_manual_series_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualSeriesImport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualSeriesImportResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -18139,6 +18425,14 @@
         ],
         "title": "EventTypeResponse"
       },
+      "ExportFormat": {
+        "type": "string",
+        "enum": [
+          "ndjson",
+          "csv"
+        ],
+        "title": "ExportFormat"
+      },
       "ExtensionInfo": {
         "properties": {
           "name": {
@@ -19101,6 +19395,341 @@
         },
         "type": "object",
         "title": "Macros"
+      },
+      "ManualSampleIn": {
+        "properties": {
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recorded_at",
+          "value"
+        ],
+        "title": "ManualSampleIn"
+      },
+      "ManualSeriesImport": {
+        "properties": {
+          "connection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id",
+            "description": "The user's `manual` connection to file under. Omitted: the user's existing manual connection, created with account_type `reference` if there is none yet."
+          },
+          "device_label": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Device Label",
+            "description": "The instrument, as a person names it (\"PSG - Compumedics Grael\", \"Polar H10 via Kubios\", \"Muse S\"). Becomes the data source's device_model and source, so two instruments are two sources and a night from one never merges with the same night from the other."
+          },
+          "series_type": {
+            "$ref": "#/components/schemas/SeriesType"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/ManualSampleIn"
+            },
+            "type": "array",
+            "maxItems": 200000,
+            "minItems": 1,
+            "title": "Samples"
+          },
+          "interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Seconds",
+            "description": "Seconds of signal each value summarises, when the instrument states it (a 5-minute RMSSD is 300). Stored on every row and exposed as `interval_seconds`; the rows are then filed under the `manual.windows` feed rather than `manual.samples`."
+          },
+          "zone_offset": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10,
+                "pattern": "^[+-]\\d{2}:\\d{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Offset",
+            "description": "The local offset to stamp on every row, `+HH:MM`. Default: each sample's own offset.",
+            "examples": [
+              "+01:00",
+              "-05:30"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_label",
+          "series_type",
+          "samples"
+        ],
+        "title": "ManualSeriesImport"
+      },
+      "ManualSeriesImportResult": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Connection Id"
+          },
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "series_type": {
+            "$ref": "#/components/schemas/SeriesType"
+          },
+          "route": {
+            "type": "string",
+            "title": "Route"
+          },
+          "received": {
+            "type": "integer",
+            "title": "Received"
+          },
+          "inserted": {
+            "type": "integer",
+            "title": "Inserted",
+            "description": "Rows that did not exist at that (source, type, second)."
+          },
+          "updated": {
+            "type": "integer",
+            "title": "Updated",
+            "description": "Rows that already existed; refreshed where the value differed, kept otherwise."
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id",
+          "data_source_id",
+          "series_type",
+          "route",
+          "received",
+          "inserted",
+          "updated"
+        ],
+        "title": "ManualSeriesImportResult"
+      },
+      "ManualSleepImportResult": {
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Record Id",
+            "description": "The sleep record, as `/users/{user_id}/events/sleep` lists it."
+          },
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Connection Id"
+          },
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "external_id": {
+            "type": "string",
+            "title": "External Id"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Time"
+          },
+          "stage_count": {
+            "type": "integer",
+            "title": "Stage Count"
+          },
+          "replaced": {
+            "type": "boolean",
+            "title": "Replaced",
+            "description": "True when a record with this external_id already existed and was replaced."
+          },
+          "totals_scored": {
+            "type": "boolean",
+            "title": "Totals Scored",
+            "description": "True when every stage label was one of OW's words, so the record's stage minutes, total sleep and efficiency are filled. False when any label was foreign (N1/N2/N3): the totals are then null rather than figures derived from a fold this store refuses to make."
+          }
+        },
+        "type": "object",
+        "required": [
+          "record_id",
+          "connection_id",
+          "data_source_id",
+          "external_id",
+          "start_time",
+          "end_time",
+          "stage_count",
+          "replaced",
+          "totals_scored"
+        ],
+        "title": "ManualSleepImportResult"
+      },
+      "ManualSleepStageIn": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Stage",
+            "description": "The instrument's own label, kept verbatim as `vendor_stage`. One of OW's words (in_bed, awake, sleeping, light, deep, rem, unknown; case-insensitive) is also stored as `stage`; any other label (N1, N2, N3, W, R, ...) is stored with `stage` = unknown and is folded by the consumer, never here."
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Time"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "start_time",
+          "end_time"
+        ],
+        "title": "ManualSleepStageIn"
+      },
+      "ManualSleepStagesImport": {
+        "properties": {
+          "connection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id",
+            "description": "The user's `manual` connection to file under. Omitted: the user's existing manual connection, created with account_type `reference` if there is none yet."
+          },
+          "device_label": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Device Label",
+            "description": "The instrument, as a person names it (\"PSG - Compumedics Grael\", \"Polar H10 via Kubios\", \"Muse S\"). Becomes the data source's device_model and source, so two instruments are two sources and a night from one never merges with the same night from the other."
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/ManualSleepStageIn"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Stages",
+            "description": "The scored intervals, in any order."
+          },
+          "sleep_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Start",
+            "description": "Start of the record (lights off). Default: the first stage's start."
+          },
+          "sleep_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep End",
+            "description": "End of the record (lights on). Default: the last stage's end."
+          },
+          "zone_offset": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10,
+                "pattern": "^[+-]\\d{2}:\\d{2}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Offset",
+            "description": "The local offset of the night, `+HH:MM`. Default: the offset of `sleep_start`.",
+            "examples": [
+              "+01:00",
+              "-05:30"
+            ]
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id",
+            "description": "The importer's own id for this night. Re-importing with the same id replaces the record. Default: derived from the device label and the record's start."
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_label",
+          "stages"
+        ],
+        "title": "ManualSleepStagesImport"
       },
       "Meal": {
         "properties": {
@@ -20532,6 +21161,7 @@
           "ultrahuman",
           "sensorbio",
           "withings",
+          "manual",
           "unknown",
           "internal"
         ],
@@ -22168,6 +22798,17 @@
             "type": "string",
             "format": "date-time",
             "title": "End Time"
+          },
+          "vendor_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor Stage"
           }
         },
         "type": "object",
