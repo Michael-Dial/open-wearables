@@ -99,6 +99,10 @@ class SampleRoute(StrEnum):
     SDK_RECORDS = "sdk.records"
     SDK_WORKOUT_STATISTICS = "sdk.workout_statistics"
     APPLE_XML_RECORDS = "apple_xml.records"
+    # Manual reference import (`/users/{id}/import/manual/series`): point samples, and
+    # values the importer declared as windows (`interval_seconds`), e.g. 5-min RMSSD.
+    MANUAL_SAMPLES = "manual.samples"
+    MANUAL_WINDOWS = "manual.windows"
 
 
 # (id, route, kind). The id is what data_point_series.route_id stores.
@@ -149,6 +153,8 @@ SAMPLE_ROUTE_DEFINITIONS: list[tuple[int, SampleRoute, RouteKind]] = [
     (120, SampleRoute.SDK_RECORDS, RouteKind.INTRADAY),
     (121, SampleRoute.SDK_WORKOUT_STATISTICS, RouteKind.SUMMARY),
     (130, SampleRoute.APPLE_XML_RECORDS, RouteKind.INTRADAY),
+    (140, SampleRoute.MANUAL_SAMPLES, RouteKind.INTRADAY),
+    (141, SampleRoute.MANUAL_WINDOWS, RouteKind.WINDOW),
 ]
 
 ROUTE_ID_BY_ROUTE: dict[SampleRoute, int] = {route: route_id for route_id, route, _ in SAMPLE_ROUTE_DEFINITIONS}

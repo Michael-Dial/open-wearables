@@ -1,0 +1,186 @@
+---
+title: "Manual reference import"
+description: "Write a PSG export, a Kubios analysis or an EEG headband's scoring into Open Wearables by hand, beside the devices it scores."
+---
+
+## In one paragraph
+
+A validation study scores nights against instruments no wearable platform serves: a
+polysomnograph's export, a Kubios analysis of a Polar H10 recording, an EEG
+headband's file. For Open Wearables to stay a study's only measurement store, those
+records need a way in that lands them under the same attribution as everything else.
+Two endpoints do that. They write to a `user_connection` with `provider` **`manual`**,
+created on first use with `account_type` **`reference`**, and to one `data_source` per
+instrument, named by the `device_label` you send. From there the records read back
+through the ordinary endpoints — `/events/sleep?include=stages`, `/timeseries` and the
+[bulk export](/dev-guides/consuming-all-data) — and a consumer tells them from the
+devices under test the way it tells any two sources apart.
+
+What the import does **not** do is interpret. A stage label is stored as the
+instrument said it, totals are computed only when every label was already one of
+OW's words, and a value is never folded, rounded or inferred on the way in.
+
+## Which connection the records land on
+
+Both endpoints take an optional `connection_id`:
+
+| | |
+| --- | --- |
+| omitted | The user's existing `manual` connection, or a new one classified `reference` and labelled "Reference instruments (manual import)". A person can reclassify it afterwards; the import never puts the classification back. |
+| given | That connection, which must belong to this user and be a `manual` one. Anything else is a 404, never a different account. |
+
+One connection holds every reference instrument of the user; the instruments are kept
+apart as data sources. `device_label` becomes the data source's `device_model` *and*
+its `source`, so "PSG - Compumedics Grael" and "Polar H10 via Kubios" are two sources
+with two ids, and a night from one never merges with the same night from the other.
+
+The `manual` provider has a strategy (so the periodic sync, the connections listing
+and the priority tables treat its connection as an ordinary row with nothing to
+sync) but is listed nowhere a person connects a provider, is left out of the coverage
+matrix, and is never inferred from a source string.
+
+## Sleep stages
+
+```
+POST /api/v1/users/{user_id}/import/manual/sleep-stages
+```
+
+```json
+{
+  "device_label": "PSG - Compumedics Grael",
+  "stages": [
+    { "stage": "W",  "start_time": "2026-10-05T22:00:00-04:00", "end_time": "2026-10-05T22:30:00-04:00" },
+    { "stage": "N2", "start_time": "2026-10-05T22:30:00-04:00", "end_time": "2026-10-06T00:30:00-04:00" },
+    { "stage": "N3", "start_time": "2026-10-06T00:30:00-04:00", "end_time": "2026-10-06T02:30:00-04:00" },
+    { "stage": "R",  "start_time": "2026-10-06T02:30:00-04:00", "end_time": "2026-10-06T04:00:00-04:00" },
+    { "stage": "N2", "start_time": "2026-10-06T04:00:00-04:00", "end_time": "2026-10-06T06:00:00-04:00" }
+  ],
+  "sleep_start": "2026-10-05T21:45:00-04:00",
+  "sleep_end": "2026-10-06T06:15:00-04:00",
+  "external_id": "psg-p07-night-03"
+}
+```
+
+<ParamField body="device_label" type="string" required>
+  The instrument. Becomes the data source's `device_model` and `source`.
+</ParamField>
+<ParamField body="stages" type="array" required>
+  The scored intervals, in any order. Each has `stage` (the instrument's own label),
+  `start_time` and `end_time` (ISO 8601 **with an offset**; a naive time is refused).
+</ParamField>
+<ParamField body="sleep_start / sleep_end" type="datetime">
+  The record's window (lights off / lights on). Default: the first stage's start and
+  the last stage's end. Time in bed is this span.
+</ParamField>
+<ParamField body="zone_offset" type="string">
+  `+HH:MM` for the night. Default: the offset of `sleep_start`.
+</ParamField>
+<ParamField body="external_id" type="string">
+  Your own id for the night. Re-importing with the same id **replaces** the record.
+  Default: derived from the label and the record's start, which gives the same result
+  for a file sent twice.
+</ParamField>
+<ParamField body="connection_id" type="uuid">See above.</ParamField>
+
+One sleep record is written exactly as a night relayed through Apple Health is
+stored: `event_record` plus `sleep_details.sleep_stages`, through the same
+`create_or_merge_sleep` every provider uses. Read it back:
+
+```
+GET /api/v1/users/{user_id}/events/sleep?start_date=2026-10-05&end_date=2026-10-07&include=stages
+```
+
+```json
+{
+  "source": { "provider": "manual", "device": "PSG - Compumedics Grael", "ingestion_route": "direct", "user_connection_id": "…" },
+  "sleep_stage_intervals": [
+    { "stage": "unknown", "vendor_stage": "W",  "start_time": "2026-10-06T02:00:00Z", "end_time": "2026-10-06T02:30:00Z" },
+    { "stage": "unknown", "vendor_stage": "N2", "start_time": "2026-10-06T02:30:00Z", "end_time": "2026-10-06T04:30:00Z" }
+  ],
+  "sleep_duration_seconds": null,
+  "time_in_bed_seconds": 30600,
+  "efficiency_percent": null
+}
+```
+
+### The alphabet is the instrument's
+
+Every interval carries the label you sent, verbatim, in **`vendor_stage`**. `stage` is
+OW's word for it **only when it already is one** (`in_bed`, `awake`, `sleeping`,
+`light`, `deep`, `rem`, `unknown`, case-insensitive); any other label — `N1`, `N3`,
+`W`, `R` — is filed with `stage` = `unknown`. The fold from a PSG alphabet to a
+wrist alphabet is a comparison-time rule that belongs to the consumer, and this store
+does not make it on the way in.
+
+The totals follow the same rule. When every label was one of OW's words the record's
+stage minutes, `sleep_duration_seconds` and `efficiency_percent` are filled (overlaps
+clipped, as the Apple path does), and the response says `"totals_scored": true`. When
+any label was foreign, every total is **null** — not zero — and `totals_scored` is
+false. `time_in_bed_seconds` is the record's span either way. Derive what you need
+from the intervals.
+
+### Re-import and merging
+
+Re-sending a night with the same `external_id` replaces it in place; the response's
+`replaced` says which happened. Two fragments of one night from one instrument, within
+`SLEEP_END_GAP_MINUTES` of each other and with different ids, are joined into one
+record the way a provider's fragments are. Two instruments scoring one night are two
+records, always: the adjacency lookup is scoped to the data source's `source`, which
+is the instrument's label.
+
+## Time series
+
+```
+POST /api/v1/users/{user_id}/import/manual/series
+```
+
+```json
+{
+  "device_label": "Polar H10 via Kubios",
+  "series_type": "heart_rate_variability_rmssd",
+  "interval_seconds": 300,
+  "samples": [
+    { "recorded_at": "2026-10-05T22:00:00-04:00", "value": 48.5 },
+    { "recorded_at": "2026-10-05T22:05:00-04:00", "value": 51.2 }
+  ]
+}
+```
+
+<ParamField body="series_type" type="string" required>
+  Any series `/timeseries` serves (`heart_rate`, `rr_interval`,
+  `heart_rate_variability_rmssd`, `respiratory_rate`, …). An unknown name is refused.
+</ParamField>
+<ParamField body="samples" type="array" required>
+  Up to 200 000 per request; `recorded_at` with an offset.
+</ParamField>
+<ParamField body="interval_seconds" type="integer">
+  Seconds of signal each value summarises, when the instrument states it (a 5-minute
+  RMSSD is 300). Stored on every row and read back as `interval_seconds`; the rows are
+  then filed under the `manual.windows` feed (`route_kind` `window`) instead of
+  `manual.samples` (`intraday`). Never inferred from the spacing of the samples.
+</ParamField>
+<ParamField body="zone_offset" type="string">
+  `+HH:MM` to stamp on every row. Default: each sample's own offset.
+</ParamField>
+
+Rows go through the same bulk upsert every provider uses, keyed on
+(data source, series type, second): the same file sent twice changes nothing, and a
+corrected value replaces the old one. The response splits the rows into `inserted`
+(did not exist) and `updated` (existed; refreshed where the value differed):
+
+```json
+{ "connection_id": "…", "data_source_id": "…", "series_type": "heart_rate_variability_rmssd",
+  "route": "manual.windows", "received": 2, "inserted": 2, "updated": 0 }
+```
+
+Read them back from `/timeseries?types=heart_rate_variability_rmssd&resolution=raw` or
+the bulk export; each row says `route: "manual.windows"`, `interval_seconds: 300` and
+`source.provider: "manual"`.
+
+## Errors
+
+| Status | When |
+| --- | --- |
+| 400 | A stage ends before it starts, an empty stage list, `sleep_end` before `sleep_start`, a naive timestamp, an unknown `series_type`, an empty label. Nothing is written. |
+| 401 | No API key or developer token. |
+| 404 | The user does not exist, or `connection_id` is not a `manual` connection of this user. |

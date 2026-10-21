@@ -37,6 +37,7 @@ from .health_score_category import HealthScoreCategory
 from .provider import (
     ADD_ON_GRANTS,
     DEFAULT_PROVIDER_PRIORITY,
+    UNLISTED_PROVIDERS,
     IngestionRoute,
     ProviderName,
     add_on_grants_of,
@@ -108,6 +109,7 @@ __all__ = [
     "WORKOUTS_WITH_PACE",
     "IngestionRoute",
     "ProviderName",
+    "UNLISTED_PROVIDERS",
     "ADD_ON_GRANTS",
     "add_on_grants_of",
     "is_add_on_grant",

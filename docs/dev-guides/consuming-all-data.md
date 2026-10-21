@@ -150,6 +150,60 @@ GET /users/{user_id}/timeseries?start_time=…&end_time=…&types=…&resolution
   one (workout > intraday > window > summary); a daily total against a sample is the
   exception and keeps whichever arrived last.
 
+### Bulk export — every raw row of a window in one response
+
+```
+GET /users/{user_id}/export/series?start_time=…&end_time=…[&types=…][&data_source_id=…][&format=ndjson|csv]
+```
+
+The same rows `/timeseries?resolution=raw` would page through, streamed in one
+response with **no page size and no cursor**, so a study-wide recompute is one request
+per participant instead of thousands of 1000-row pages. Rows are read through a
+server-side cursor and written as they arrive; a month of 1 Hz data is bounded by your
+download speed, not by the server's memory.
+
+- **Same contract as `/timeseries`.** `start_time` inclusive, `end_time` exclusive;
+  `types` repeated (`types=a&types=b`) or comma-joined (`types=a,b`), every series when
+  omitted; same credential (API key or developer token). `data_source_id` may be
+  repeated to export only those sources.
+- **Every source, always.** No priority filtering and *no relay dedup*: unlike the
+  default `/timeseries` read, the aggregator's copy of a maker that is also connected
+  directly is **included**. Method comparison needs both arms; tell them apart by
+  `source.data_source_id` and `source.ingestion_route`, and keep whichever your
+  reconciliation wants.
+- **NDJSON** (default, `application/x-ndjson`): one JSON object per line, each exactly
+  a `/timeseries` `data[]` item — `timestamp`, `zone_offset`, `type`, `value`, `unit`,
+  `is_daily_total`, `interval_seconds`, `route`, `route_kind`, `beat_series_id`,
+  `preceded_by_gap`, and the full `source` object. The two endpoints share one schema,
+  so a field added to one appears on the other.
+- **CSV** (`format=csv`): a header row, then one row per sample. The row's own fields
+  come first, in the order above, then the `source` object flattened:
+  `data_source_id, provider, source, device, device_name, device_hardware_name,
+  device_type, device_id, device_label, device_display_name, user_connection_id,
+  original_source_name, ingestion_route, provider_device_id`. Nulls are empty cells,
+  booleans are `true`/`false`.
+- **Order**: `timestamp`, then `data_source_id`, then series type — a total order under
+  the row key, so two sources sampled on the same second come out in a stable order.
+- No row count is announced up front: counting would scan the window once more before
+  the first row is sent. Count the lines you received.
+
+```bash
+curl -sS -H "X-Open-Wearables-API-Key: $OW_KEY" \
+  "$OW/api/v1/users/$USER/export/series?start_time=2026-10-03T20:00:00Z&end_time=2026-10-04T10:00:00Z&types=heart_rate,heart_rate_variability_rmssd,rr_interval" \
+  | while read -r line; do printf '%s\n' "$line" | jq -c '[.timestamp, .type, .value, .source.data_source_id, .route]'; done
+```
+
+### Reference instruments with no provider — `/import/manual/*`
+
+A PSG export, a Kubios analysis of a Polar H10, an EEG headband's file: these are written
+into OW by hand through `POST /users/{user_id}/import/manual/sleep-stages` and
+`POST /users/{user_id}/import/manual/series`, on a connection with `provider=manual`
+classified `account_type=reference`, one data source per instrument (`device_label`).
+They read back through the same endpoints as everything else: `/events/sleep?include=stages`
+(with the instrument's own stage labels kept verbatim in `vendor_stage`), `/timeseries`
+and the bulk export (`route` = `manual.samples` or `manual.windows`). See
+[Manual reference import](/dev-guides/manual-reference-import).
+
 ### Workouts — all-sources
 
 ```

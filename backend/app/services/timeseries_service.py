@@ -1,5 +1,6 @@
 import threading
 from collections import defaultdict
+from collections.abc import Iterator, Sequence
 from datetime import datetime
 from decimal import Decimal
 from logging import Logger, getLogger
@@ -72,11 +73,11 @@ def _to_sample(
     data_source: DataSource | None,
     provider_metadata: dict | None = None,
     route_id: int | None = None,
+    source: SourceMetadata | None = None,
 ) -> TimeSeriesSample:
     series_type = get_series_type_from_id(series_type_definition_id)
     route = ROUTE_BY_ID.get(route_id) if route_id is not None else None
-    source = None
-    if data_source is not None:
+    if source is None and data_source is not None:
         # from_data_source, not an inline SourceMetadata: it also carries the fork's
         # join identity (data_source_id, source_tag, original_source_name) and the
         # resolved ingestion_route, which consumers use to tell a direct read from
@@ -344,6 +345,47 @@ class TimeSeriesService(
             previous_cursor=encode_bucket_cursor(samples[0].bucket, "prev") if has_previous else None,
             relay_plan=relay_plan,
         )
+
+    def iter_export_samples(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        types: list[SeriesType],
+        params: TimeSeriesQueryParams,
+        data_source_ids: Sequence[UUID] | None = None,
+    ) -> Iterator[TimeSeriesSample]:
+        """Every raw sample in the window, from every source, shaped as a `/timeseries` row.
+
+        The bulk export's view. Deliberately not ``get_timeseries`` with a bigger page:
+        no priority filter and no relay dedup are applied, because a method comparison
+        needs both arms of a relayed stream and both units of one model, and whichever
+        of them this instance would rank first is the consumer's call, not the store's.
+        Rows are produced as the cursor delivers them, never collected first.
+
+        Each row goes through the same ``_to_sample`` as a `/timeseries` row, so a field
+        added there appears here without a second definition. Attribution is built once
+        per data source rather than per row: an export is many rows over a few sources,
+        and ``SourceMetadata.from_data_source`` costs the same either way.
+
+        Not wrapped in ``handle_exceptions``: a generator returns before it runs, so the
+        decorator would catch nothing.
+        """
+        sources: dict[UUID, SourceMetadata] = {}
+        for sample, data_source in self.crud.iter_samples(db_session, params, types, user_id, data_source_ids):
+            source = sources.get(data_source.id)
+            if source is None:
+                source = sources[data_source.id] = SourceMetadata.from_data_source(data_source)
+            yield _to_sample(
+                sample.recorded_at,
+                sample.zone_offset,
+                sample.series_type_definition_id,
+                sample.value,
+                sample.is_daily_total,
+                data_source,
+                sample.provider_metadata,
+                sample.route_id,
+                source=source,
+            )
 
     @handle_exceptions
     def get_timeseries(

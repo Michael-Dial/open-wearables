@@ -3,7 +3,7 @@ from app.database import DbSession
 from app.models import ProviderSetting
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.auth import LiveSyncMode
-from app.schemas.enums import ProviderName, add_on_grants_of, is_add_on_grant
+from app.schemas.enums import UNLISTED_PROVIDERS, ProviderName, add_on_grants_of, is_add_on_grant
 from app.schemas.model_crud.data_priority import (
     ProviderSettingRead,
     ProviderSettingUpdate,
@@ -11,7 +11,7 @@ from app.schemas.model_crud.data_priority import (
 from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities
 from app.services.providers.factory import ProviderFactory
 
-_NON_PROVIDER_NAMES = {ProviderName.UNKNOWN, ProviderName.INTERNAL}
+_NON_PROVIDER_NAMES = UNLISTED_PROVIDERS
 
 
 def listed_providers() -> list[ProviderName]:
