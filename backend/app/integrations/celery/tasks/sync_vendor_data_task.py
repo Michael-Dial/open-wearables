@@ -63,6 +63,13 @@ def _emit_sync_status(fn: Any, /, *args: Any, **kwargs: Any) -> None:
         )
 
 
+def live_pull_lookback(configured: timedelta | None, provider_floor: timedelta | None) -> timedelta | None:
+    """The trailing window a live pull re-fetches: the longer of the global setting and the
+    provider's own floor, or None when neither asks for one."""
+    windows = [w for w in (configured, provider_floor) if isinstance(w, timedelta) and w > timedelta(0)]
+    return max(windows) if windows else None
+
+
 def _written_status(written: int) -> SyncStatus:
     return SyncStatus.SUCCESS if written else SyncStatus.SKIPPED
 
@@ -383,7 +390,10 @@ def sync_vendor_data(
                                 last = last.replace(tzinfo=timezone.utc)
                             # Optional trailing lookback so late provider revisions get
                             # re-fetched (live pull only; capped by max_historical_days).
-                            lookback = settings.pull_sync_lookback
+                            # A provider may set its own floor (Polar: data arrives late).
+                            lookback = live_pull_lookback(
+                                settings.pull_sync_lookback, strategy.capabilities.live_pull_lookback
+                            )
                             if lookback is not None and not is_historical:
                                 last -= lookback
                                 max_days = strategy.capabilities.max_historical_days
@@ -594,7 +604,7 @@ def sync_vendor_data(
                         task="sync_vendor_data",
                         user_id=user_id,
                         effective_start=effective_start,
-                        lookback=format_duration(settings.pull_sync_lookback) if settings.pull_sync_lookback else None,
+                        lookback=format_duration(applied_lookback) if applied_lookback else None,
                     )
 
                     final_status = run_status_from(data_type_outcomes)

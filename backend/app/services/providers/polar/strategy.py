@@ -1,3 +1,4 @@
+from app.config import settings
 from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities, ProviderCoverage
 from app.services.providers.polar.coverage import HEALTH_SCORES, SLEEP_FIELDS, TIMESERIES, WORKOUT_FIELDS
 from app.services.providers.polar.data_247 import Polar247Data
@@ -44,7 +45,12 @@ class PolarStrategy(BaseProviderStrategy):
     @property
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
-            rest_pull=True, webhook_ping=True, webhook_registration_api=True, webhook_inbound_secret=True
+            rest_pull=True,
+            webhook_ping=True,
+            webhook_registration_api=True,
+            webhook_inbound_secret=True,
+            # AccessLink is keyed by recording day; data lands when the watch syncs with Flow.
+            live_pull_lookback=settings.polar_pull_lookback,
         )
 
     @property

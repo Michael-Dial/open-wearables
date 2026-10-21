@@ -233,6 +233,12 @@ class Settings(BaseSettings):
     # provider switch of its own; turn it off if the v4 callback is not registered on the
     # AccessLink client, or every Polar connection stops at auth.polar.com.
     polar_v4_enabled: bool = True
+    # How far back every live Polar pull re-reads. AccessLink files data under the day it
+    # was recorded, and it reaches Polar only when the watch syncs with Flow, often hours
+    # or days later; a pull that starts at the last sync never asks for that day again.
+    # Same compact duration format as PULL_SYNC_LOOKBACK; empty turns it off. The larger
+    # of the two applies.
+    polar_pull_lookback: timedelta | None = timedelta(days=3)
 
     # WHOOP OAUTH SETTINGS
     whoop_client_id: str | None = None
@@ -505,7 +511,7 @@ class Settings(BaseSettings):
             return None
         return name
 
-    @field_validator("pull_sync_lookback", mode="before")
+    @field_validator("pull_sync_lookback", "polar_pull_lookback", mode="before")
     @classmethod
     def _parse_pull_sync_lookback(cls, v: Any) -> timedelta | None:
         if v is None or isinstance(v, timedelta):

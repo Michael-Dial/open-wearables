@@ -50,6 +50,16 @@ Polar provides access to exercise, daily activity, sleep, and heart rate data fr
 Webhook delivery requires a registered webhook subscription and `POLAR_WEBHOOK_SIGNATURE_SECRET` set in your environment. See the configuration step below.
 </Note>
 
+<Note>
+**Live pulls re-read the last three days.** AccessLink files 24/7 data under the day it was
+recorded, and that data reaches Polar only when the watch syncs with Flow, which can be hours
+or days later. In `pull` mode each live sync therefore re-requests a trailing window, set by
+`POLAR_PULL_LOOKBACK` (default `3d`; same format as `PULL_SYNC_LOOKBACK`, and the larger of the
+two applies). Re-read days are upserted. A day first uploaded more than that window after it
+was recorded is fetched only by a historical sync. Each extra day adds one sleep request per
+stored night and, for v4 users, one PPI request; the range endpoints cost the same either way.
+</Note>
+
 ### RR intervals (ECG-derived HRV)
 
 AccessLink carries raw beat-to-beat RR intervals as exercise **sample type 11**, and only
@@ -250,6 +260,8 @@ POLAR_CLIENT_ID=your-polar-client-id
 POLAR_CLIENT_SECRET=your-polar-client-secret
 # Optional — required only if using webhooks (set automatically on first registration)
 POLAR_WEBHOOK_SIGNATURE_SECRET=
+# Optional — how far back every live pull re-reads (default 3d; empty turns it off)
+# POLAR_PULL_LOOKBACK=3d
 ```
 
     **Configuration details:**
@@ -260,6 +272,7 @@ POLAR_WEBHOOK_SIGNATURE_SECRET=
     | `POLAR_CLIENT_ID` | Client ID from the Polar AccessLink Admin panel |
     | `POLAR_CLIENT_SECRET` | Client Secret from the Polar AccessLink Admin panel |
     | `POLAR_WEBHOOK_SIGNATURE_SECRET` | HMAC-SHA256 signing secret returned by Polar on webhook creation. Returned once — save it immediately. Used to verify incoming webhook payloads. |
+    | `POLAR_PULL_LOOKBACK` | Trailing window every live pull re-reads, because Polar data arrives when the watch syncs, not when it was recorded. Default `3d`. Empty turns it off. |
 
     <Note>
     The OAuth scope is hardcoded to `accesslink.read_all` which grants full read access to the AccessLink API. No additional scope configuration is needed.

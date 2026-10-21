@@ -1374,6 +1374,28 @@ then tell the watch's own data from an app's.
   and raised, so any day whose steps could be placed lost its totals and samples alike.
   The stamp is now explicitly UTC, the same instant as before.
 
+## A live Polar pull re-reads the last three days
+
+- **Area**: backend
+- **Status**: active; upstreamable (the gap is upstream's too)
+- **On conflict**: keep ours (`ProviderCapabilities.live_pull_lookback`, `live_pull_lookback` in
+  `sync_vendor_data_task.py`, `POLAR_PULL_LOOKBACK`, and the empty-list handling in
+  `PolarWorkouts.get_workouts_from_api`)
+- **Why**: a live pull starts at the connection's last sync, and Polar's 24/7 endpoints are
+  keyed by the day the data was recorded. That data reaches AccessLink only when the watch
+  syncs with Flow, so anything uploaded after its day had passed was never requested: with
+  hourly pulls, a night, a day of continuous HR, or the evening hours of a US day (already
+  the next date in UTC) were lost for good, and Nightly Recharge's 5-minute HRV for a night
+  outside the window was dropped for want of the sleep record that places it. Only exercises,
+  which Polar lists for 30 days, kept arriving. Every live Polar pull now starts at least
+  `POLAR_PULL_LOOKBACK` (default 3 days) before the last sync; the global
+  `PULL_SYNC_LOOKBACK` still applies when it is longer. Re-read days upsert. The cost is one
+  sleep request per stored night and, for v4 users, one PPI request per extra day; the range
+  endpoints are one request either way.
+  An empty exercise list (an empty body from `/v3/exercises`) also no longer fails the
+  workouts step: the API client reports it as a 500 around a JSON decode error, which marked
+  every pull of a participant with no recent exercise as completed with errors.
+
 ## Bulk export of every raw time-series row: `GET /users/{id}/export/series`
 
 - **Area**: backend, docs
