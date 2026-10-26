@@ -782,6 +782,7 @@ Key differences and limitations to be aware of when working with each provider:
   - Sleep biometrics (HR, HRV, SpO2 during sleep) not yet extracted as part of sleep records
   - Some walking metrics require iPhone in pocket during activity
   - HRV is measured as SDNN, typically during sleep or rest periods
+  - Since 0.11.0, Apple Watch sleeping wrist temperature is stored as `skin_temperature`. Rows written earlier (SDK sync or Apple Health XML import) kept it in `body_temperature`; `backend/scripts/data_migrations/relabel_apple_wrist_temp_to_skin_temp.py` moves them (manual, run `--dry-run` first)
 </Accordion>
 
 <Accordion title="Garmin">
