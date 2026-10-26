@@ -1096,7 +1096,8 @@ then tell the watch's own data from an app's.
 ## Apple sleeping wrist temperature is skin_temperature, not body_temperature
 
 - **Area**: backend
-- **Status**: active; upstreamable
+- **Status**: mapping merged upstream (the-momentum/open-wearables#1971, 0.11.0); the
+  relabel script and the coverage-doc line naming it stay fork-only
 - **On conflict**: keep ours, unless upstream lands the dedicated series proposed in
   the-momentum/open-wearables#1324, then take theirs and relabel these rows again
 - **Why**: the SDK metric map, shared by the mobile SDK and the Apple Health XML import,

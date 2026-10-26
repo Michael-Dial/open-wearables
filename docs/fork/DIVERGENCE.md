@@ -6,13 +6,13 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-10-23 19:21 UTC |
-| Our ref | `HEAD` — bb2bb9fb (2026-10-23) Merge upstream the-momentum/open-wearables main (16 commits, f067907b) |
-| Upstream `main` | f067907b (2026-10-23) chore: bump the python-minor-patch group across 2 directories with 15 updates (#1967) |
+| Generated | 2026-10-26 13:22 UTC |
+| Our ref | `HEAD` — 6984beaa (2026-10-25) Merge pull request #102 from dial203/claude/ecstatic-heisenberg-43n9ft |
+| Upstream `main` | 8adbd0ae (2026-10-25) fix(backend): store Apple sleeping wrist temperature as skin_temperature (#1971) |
 | Last common commit | f067907b (2026-10-23) chore: bump the python-minor-patch group across 2 directories with 15 updates (#1967) |
-| Commits we are ahead | 223 |
-| Upstream commits not merged | 0 |
-| Latest sync tag | upstream-sync/2026-10-16 |
+| Commits we are ahead | 195 |
+| Upstream commits not merged | 1 |
+| Latest sync tag | _none yet_ |
 
 ## How to use this
 
@@ -22,7 +22,7 @@ debugging it here.
 
 ```bash
 # everything we changed since the last known-good sync
-git diff upstream-sync/2026-10-16..HEAD
+git diff upstream-sync/<date>..HEAD
 
 # upstream's version of one file, to compare against ours
 git show upstream/main:<path>
@@ -32,6 +32,9 @@ git log --oneline f067907b93d0f92500308b8a93f85e68abbf8ad8..HEAD -- <path>
 ```
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
+
+> **1 upstream commits are not merged yet.** The table below compares against the
+> last common commit, so it does not include changes upstream has made since.
 
 ## Diverged files
 
@@ -379,7 +382,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `docs/dev-guides/workout-export.mdx` | fork-only | — |
 | `docs/developer-portal/settings/credentials.mdx` | modified | +41/-0 |
 | `docs/docs.json` | modified | +20/-1 |
-| `docs/openapi.json` | modified | +13102/-6170 |
+| `docs/openapi.json` | modified | +13100/-6170 |
 | `docs/providers/coverage.mdx` | modified | +9/-5 |
 | `docs/providers/google-api-integration.mdx` | modified | +3/-3 |
 | `docs/providers/polar-api-integration.mdx` | modified | +152/-1 |
