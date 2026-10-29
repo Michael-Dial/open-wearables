@@ -21,17 +21,17 @@ jobs:
           - name: backend
             context: ./backend
             dockerfile: ./backend/Dockerfile
-            image: ghcr.io/dial203/open-wearables-platform
+            image: ghcr.io/michael-dial/open-wearables-platform
           # The fork's React dashboard (served). Upstream's SvelteKit portal is
           # built alongside it for previewing the port; see docs/fork/DECISIONS.md.
           - name: frontend
             context: ./frontend-react
             dockerfile: ./frontend-react/Dockerfile
-            image: ghcr.io/dial203/open-wearables-frontend
+            image: ghcr.io/michael-dial/open-wearables-frontend
           - name: portal
             context: ./frontend
             dockerfile: ./frontend/Dockerfile
-            image: ghcr.io/dial203/open-wearables-portal
+            image: ghcr.io/michael-dial/open-wearables-portal
     steps:
       - uses: actions/checkout@v4
 

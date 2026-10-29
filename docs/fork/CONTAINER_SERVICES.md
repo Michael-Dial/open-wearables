@@ -5,13 +5,20 @@ GitHub holds the code and builds the images; the cluster only runs images that t
 Flux repo names.
 
 ```
-push to main ──► build.yml ──► ghcr.io/dial203/open-wearables-{platform,frontend}:sha-<7>
+push to main ──► build.yml ──► ghcr.io/michael-dial/open-wearables-{platform,frontend}:sha-<7>
                                               │
 merge request in flux_pit changing the tag ◄──┘
         │
         ▼
 Flux reconciles namespace pit
 ```
+
+The images moved from `ghcr.io/dial203/*` to `ghcr.io/michael-dial/*` when the repo moved to
+the Michael-Dial org: an org repo's `GITHUB_TOKEN` can't push to a personal account's packages.
+Tags built before the move stay at the old path, and new tags exist only at the new one, so the
+first `flux_pit` merge request after the move changes the image path as well as the tag. New org
+packages start private, and the cluster pulls GHCR anonymously, so set each package's visibility
+to public (org package settings) before that merge request.
 
 Images build automatically. Changing the tag is a manual merge request on purpose: the
 API runs Alembic and data migrations every time it starts, so every tag change migrates
@@ -74,7 +81,7 @@ service; there is no Postgres container.
 1. **Images.** Use a `sha-<7>` tag from `main` at or after `bdfadad`: the platform tag in
    `ow-api`, `ow-worker` and `ow-beat`, the frontend tag in `ow-web`. Earlier tags run as root
    and won't start under `runAsUser`. The GHCR packages are public; check both pull while logged out:
-   `docker logout ghcr.io && docker pull ghcr.io/dial203/open-wearables-platform:sha-<7> && docker pull ghcr.io/dial203/open-wearables-frontend:sha-<7>`.
+   `docker logout ghcr.io && docker pull ghcr.io/michael-dial/open-wearables-platform:sha-<7> && docker pull ghcr.io/michael-dial/open-wearables-frontend:sha-<7>`.
 2. **Ask Container Services** for:
    - managed Postgres with one database, `open-wearables`, owned by the app's user. Alembic
      creates the schema; no extensions are needed. Ask which versions they support. The stack

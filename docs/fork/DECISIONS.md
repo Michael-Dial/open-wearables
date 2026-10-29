@@ -1287,7 +1287,9 @@ then tell the watch's own data from an app's.
 - **Why**: Upstream's `publish-images.yml` pushes multi-arch images to `themomentum/*` on
   Docker Hub nightly and on release. This fork has no credentials for those repositories,
   so every scheduled run failed. The fork publishes through `build.yml` to
-  `ghcr.io/dial203/*` instead, which is what both Portainer and Container Services pull.
+  `ghcr.io/michael-dial/*` instead, which is what both Portainer and Container Services pull.
+  (Before the repo moved to the Michael-Dial org it was `ghcr.io/dial203/*`; see
+  `CONTAINER_SERVICES.md`.)
 
 ## Database credentials are URL-encoded
 
