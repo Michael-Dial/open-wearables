@@ -101,9 +101,12 @@ export interface WorkoutSamplesExportParams {
   pad_seconds?: number;
 }
 
-export interface CsvDownload {
+export interface FileDownload {
   blob: Blob;
   filename: string;
+}
+
+export interface CsvDownload extends FileDownload {
   /** Samples (or workouts) in the file; null when the header was not readable. */
   rowCount: number | null;
   /** Sources the rows came from; null when the header was not readable. */
@@ -118,15 +121,12 @@ function countHeader(response: Response, name: string): number | null {
 }
 
 /**
- * GET a CSV export through the authenticated client and keep it as a blob.
- * The row counts come back in headers so an empty export can be reported
- * rather than saved silently.
+ * GET a file through the authenticated client, failing with the API's error.
  */
-async function fetchCsv(
+async function fetchFile(
   endpoint: string,
-  params: Record<string, string | number | undefined>,
-  fallbackName: string
-): Promise<CsvDownload> {
+  params: Record<string, string | number | undefined>
+): Promise<Response> {
   const response = await apiClient.fetchRaw(endpoint, { params });
   if (!response.ok) {
     const text = await response.text();
@@ -138,6 +138,20 @@ async function fetchCsv(
     }
     throw ApiError.fromResponse(response, data);
   }
+  return response;
+}
+
+/**
+ * GET a CSV export through the authenticated client and keep it as a blob.
+ * The row counts come back in headers so an empty export can be reported
+ * rather than saved silently.
+ */
+async function fetchCsv(
+  endpoint: string,
+  params: Record<string, string | number | undefined>,
+  fallbackName: string
+): Promise<CsvDownload> {
+  const response = await fetchFile(endpoint, params);
   return {
     blob: await response.blob(),
     filename: filenameFromDisposition(
@@ -536,6 +550,26 @@ export const healthService = {
       },
       `workout-${workoutId}-${params.layout}.csv`
     );
+  },
+
+  /**
+   * The raw FIT file the provider delivered for a workout (Garmin only).
+   */
+  async downloadWorkoutFit(
+    userId: string,
+    workoutId: string
+  ): Promise<FileDownload> {
+    const response = await fetchFile(
+      API_ENDPOINTS.userWorkoutFit(userId, workoutId),
+      {}
+    );
+    return {
+      blob: await response.blob(),
+      filename: filenameFromDisposition(
+        response.headers.get('content-disposition'),
+        `workout-${workoutId}.fit`
+      ),
+    };
   },
 
   /**

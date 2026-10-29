@@ -430,6 +430,20 @@ export function useExportWorkoutSamples(userId: string, workoutId: string) {
 }
 
 /**
+ * Download the raw FIT file stored for a workout.
+ */
+export function useDownloadWorkoutFit(userId: string, workoutId: string) {
+  return useMutation({
+    mutationFn: () => healthService.downloadWorkoutFit(userId, workoutId),
+    onSuccess: (download) => {
+      saveBlob(download.blob, download.filename);
+      toast.success(`Saved ${download.filename}`);
+    },
+    onError: (error: unknown) => toast.error(exportErrorMessage(error)),
+  });
+}
+
+/**
  * Download one row per workout in a date range as CSV.
  */
 export function useExportWorkouts(userId: string) {

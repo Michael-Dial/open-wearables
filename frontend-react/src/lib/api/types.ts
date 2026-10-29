@@ -963,6 +963,8 @@ export interface EventRecordResponse {
   // Elevation and pace
   elevation_gain_meters?: number | null;
   avg_pace_sec_per_km?: number | null;
+  // True when the raw FIT file is stored (Garmin, with STORE_FIT_FILES on)
+  has_fit_file?: boolean;
 
   // Legacy fields (keeping for compatibility if needed, but marked optional)
   user_id?: string;

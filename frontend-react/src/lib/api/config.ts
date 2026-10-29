@@ -47,6 +47,8 @@ export const API_ENDPOINTS = {
     `/api/v1/users/${userId}/events/workouts/export`,
   userWorkoutSamplesExport: (userId: string, workoutId: string) =>
     `/api/v1/users/${userId}/events/workouts/${workoutId}/export`,
+  userWorkoutFit: (userId: string, workoutId: string) =>
+    `/api/v1/users/${userId}/events/workouts/${workoutId}/fit`,
   userAppleXmlImport: (userId: string) =>
     `/api/v1/users/${userId}/import/apple/xml/direct`,
   userAppleXmlPresignedUrl: (userId: string) =>

@@ -18,6 +18,7 @@ import {
   useTimeSeries,
   useDeleteWorkout,
   useExportWorkoutSamples,
+  useDownloadWorkoutFit,
   useExportWorkouts,
 } from '@/hooks/api/use-health';
 import { useCursorPagination } from '@/hooks/use-cursor-pagination';
@@ -125,6 +126,27 @@ function WorkoutExportMenu({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+// The raw FIT file as the provider delivered it
+function WorkoutFitButton({
+  userId,
+  workoutId,
+}: {
+  userId: string;
+  workoutId: string;
+}) {
+  const downloadFit = useDownloadWorkoutFit(userId, workoutId);
+  return (
+    <button
+      onClick={() => downloadFit.mutate()}
+      disabled={downloadFit.isPending}
+      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+    >
+      <Download className="h-3.5 w-3.5" />
+      {downloadFit.isPending ? 'Downloading...' : 'FIT file'}
+    </button>
   );
 }
 
@@ -360,7 +382,12 @@ function WorkoutRow({
 
           {/* Export and delete */}
           <div className="flex justify-between pt-2 border-t border-border/40">
-            <WorkoutExportMenu userId={userId} workoutId={workout.id} />
+            <div className="flex items-center gap-4">
+              <WorkoutExportMenu userId={userId} workoutId={workout.id} />
+              {workout.has_fit_file && (
+                <WorkoutFitButton userId={userId} workoutId={workout.id} />
+              )}
+            </div>
             <button
               onClick={() => setShowDelete(true)}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive-muted transition-colors"
