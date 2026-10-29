@@ -6,12 +6,12 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-10-26 13:22 UTC |
-| Our ref | `HEAD` — 6984beaa (2026-10-25) Merge pull request #102 from dial203/claude/ecstatic-heisenberg-43n9ft |
-| Upstream `main` | 8adbd0ae (2026-10-25) fix(backend): store Apple sleeping wrist temperature as skin_temperature (#1971) |
-| Last common commit | f067907b (2026-10-23) chore: bump the python-minor-patch group across 2 directories with 15 updates (#1967) |
-| Commits we are ahead | 195 |
-| Upstream commits not merged | 1 |
+| Generated | 2026-10-29 15:36 UTC |
+| Our ref | `HEAD` — 5299a20f (2026-10-29) Merge upstream the-momentum/open-wearables main (6 commits) |
+| Upstream `main` | e39be73e (2026-10-29) docs: darken text to match openwearables.io (#2008) |
+| Last common commit | e39be73e (2026-10-29) docs: darken text to match openwearables.io (#2008) |
+| Commits we are ahead | 194 |
+| Upstream commits not merged | 0 |
 | Latest sync tag | _none yet_ |
 
 ## How to use this
@@ -28,13 +28,10 @@ git diff upstream-sync/<date>..HEAD
 git show upstream/main:<path>
 
 # which of our commits touched a file
-git log --oneline f067907b93d0f92500308b8a93f85e68abbf8ad8..HEAD -- <path>
+git log --oneline e39be73ed30a0938bbcfb20824d54a53aa32f694..HEAD -- <path>
 ```
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
-
-> **1 upstream commits are not merged yet.** The table below compares against the
-> last common commit, so it does not include changes upstream has made since.
 
 ## Diverged files
 
@@ -383,7 +380,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `docs/developer-portal/settings/credentials.mdx` | modified | +41/-0 |
 | `docs/docs.json` | modified | +20/-1 |
 | `docs/openapi.json` | modified | +13100/-6170 |
-| `docs/providers/coverage.mdx` | modified | +9/-5 |
+| `docs/providers/coverage.mdx` | modified | +8/-4 |
 | `docs/providers/google-api-integration.mdx` | modified | +3/-3 |
 | `docs/providers/polar-api-integration.mdx` | modified | +152/-1 |
 | `docs/providers/strava-api-integration.mdx` | modified | +153/-0 |
