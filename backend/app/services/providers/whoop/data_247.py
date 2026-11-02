@@ -1,10 +1,9 @@
 """Whoop 247 Data implementation for sleep, recovery, and activity samples."""
 
-from contextlib import suppress
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from app.config import settings
 from app.database import DbSession
@@ -43,6 +42,8 @@ from app.utils.structured_logging import log_structured
 _MAX_PAGE_LIMIT = 25  # Whoop API limit
 
 _SLEEP_ENDPOINT = "/v2/activity/sleep"
+# Namespace for sleep record ids derived from (user, Whoop sleep id); see normalize_sleep.
+_SLEEP_ID_NAMESPACE = UUID("6f0c2b1e-5d3a-4c8e-9b7f-2a1d4e6c8b90")
 _RECOVERY_ENDPOINT = "/v2/recovery"
 _CYCLE_ENDPOINT = "/v2/cycle"
 # /v2/cycle matches on intersection, so the window only has to straddle the boundary.
@@ -284,11 +285,14 @@ class Whoop247Data(Base247DataTemplate):
         # Efficiency percentage
         efficiency = score.get("sleep_efficiency_percentage")
 
-        # Generate UUID for our internal ID (use Whoop ID if it's a valid UUID string)
-        internal_id = uuid4()
-        if sleep_id:
-            with suppress(ValueError, TypeError):
-                internal_id = UUID(sleep_id)
+        # The record id is the event_record primary key, which is global across users,
+        # so it must not be Whoop's own sleep id: one Whoop account connected to two
+        # profiles fetches the same sleep twice, and whichever profile synced second
+        # hit a primary-key conflict that save_sleep_data swallowed - the night was
+        # silently dropped from that profile. Derived from (user, Whoop id) instead,
+        # so it stays stable across re-syncs for one user and distinct between users.
+        # Re-ingestion matches on external_id, which still carries the Whoop id.
+        internal_id = uuid5(_SLEEP_ID_NAMESPACE, f"{user_id}:{sleep_id}") if sleep_id else uuid4()
 
         normalized = {
             "id": internal_id,
