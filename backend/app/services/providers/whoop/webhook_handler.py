@@ -178,8 +178,14 @@ class WhoopWebhookHandler(BaseWebhookHandler):
         except (ValidationError, TypeError) as exc:
             return {"status": "error", "error": f"Invalid payload: {exc}"}
 
-        connection = self.connection_repo.get_by_provider_user_id(db, "whoop", str(notification.user_id))
-        if not connection:
+        # One Whoop account can be connected to several profiles (the same strap
+        # on a participant's own profile and on a study profile). Whoop notifies
+        # once per account, so the notification is fanned out to every profile
+        # holding it - resolving only the oldest left the others with nothing but
+        # the backfill they got at connect time, since Whoop in webhook mode is
+        # not polled.
+        connections = self.connection_repo.get_all_by_provider_user_id(db, "whoop", str(notification.user_id))
+        if not connections:
             log_structured(
                 logger,
                 "warning",
@@ -191,46 +197,57 @@ class WhoopWebhookHandler(BaseWebhookHandler):
             )
             return {"status": "user_not_found", "whoop_user_id": notification.user_id, "event_type": notification.type}
 
-        user_id: UUID = connection.user_id
         resource_id = str(notification.id)
+        results: list[dict[str, Any]] = []
+        for connection in connections:
+            user_id: UUID = connection.user_id
+            log_structured(
+                logger,
+                "info",
+                "Processing Whoop webhook notification",
+                provider="whoop",
+                trace_id=trace_id,
+                user_id=str(user_id),
+                connection_id=str(connection.id),
+                whoop_user_id=notification.user_id,
+                event_type=notification.type,
+                resource_id=resource_id,
+            )
 
-        log_structured(
-            logger,
-            "info",
-            "Processing Whoop webhook notification",
-            provider="whoop",
-            trace_id=trace_id,
-            user_id=str(user_id),
-            whoop_user_id=notification.user_id,
-            event_type=notification.type,
-            resource_id=resource_id,
-        )
+            self.connection_repo.update_last_synced_at(db, connection)
 
-        self.connection_repo.update_last_synced_at(db, connection)
+            # Everything below re-resolves the connection from (user, provider) to
+            # fetch the changed resource. The user may hold several Whoop accounts,
+            # and the webhook named one of them - bind it so the fetch uses that
+            # account's token and its data lands on that account's data sources.
+            with active_connection(connection.id):
+                if notification.type.is_delete_type:
+                    result = self._handle_deleted(db, notification.type, user_id, resource_id)
+                elif notification.type.is_update_type:
+                    result = self._handle_updated(db, notification.type, user_id, resource_id)
+                else:
+                    log_structured(
+                        logger,
+                        "info",
+                        "Unhandled Whoop webhook event type",
+                        provider="whoop",
+                        trace_id=trace_id,
+                        event_type=notification.type,
+                        user_id=str(user_id),
+                    )
+                    result = {"status": "ignored", "reason": f"unhandled_event_type: {notification.type}"}
 
-        # Everything below re-resolves the connection from (user, provider) to
-        # fetch the changed resource. The user may hold several Whoop accounts,
-        # and the webhook named one of them - bind it so the fetch uses that
-        # account's token and its data lands on that account's data sources.
-        with active_connection(connection.id):
-            if notification.type.is_delete_type:
-                result = self._handle_deleted(db, notification.type, user_id, resource_id)
-            elif notification.type.is_update_type:
-                result = self._handle_updated(db, notification.type, user_id, resource_id)
-            else:
-                log_structured(
-                    logger,
-                    "info",
-                    "Unhandled Whoop webhook event type",
-                    provider="whoop",
-                    trace_id=trace_id,
-                    event_type=notification.type,
-                    user_id=str(user_id),
-                )
-                result = {"status": "ignored", "reason": f"unhandled_event_type: {notification.type}"}
+            result.setdefault("user_id", str(user_id))
+            results.append(result)
 
-        result.setdefault("user_id", str(user_id))
-        return result
+        if len(results) == 1:
+            return results[0]
+        # Keep the single-profile shape at the top level so existing consumers of
+        # the task result read it unchanged; the per-profile outcomes ride along.
+        combined = dict(results[0])
+        combined["user_ids"] = [r["user_id"] for r in results]
+        combined["results"] = results
+        return combined
 
     # ------------------------------------------------------------------
     # Per-event-type handlers
