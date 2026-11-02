@@ -25,7 +25,7 @@ AGGREGATION_METHOD_BY_TYPE: dict[SeriesType, AggregationMethod] = {
     SeriesType.resting_heart_rate: AggregationMethod.AVG,
     SeriesType.heart_rate_variability_sdnn: AggregationMethod.AVG,
     SeriesType.heart_rate_recovery_one_minute: AggregationMethod.AVG,
-    SeriesType.walking_heart_rate_average: AggregationMethod.AVG,
+    SeriesType.walking_heart_rate: AggregationMethod.AVG,
     SeriesType.heart_rate_variability_rmssd: AggregationMethod.AVG,
     SeriesType.rr_interval: AggregationMethod.AVG,
     SeriesType.pulse_to_pulse_interval: AggregationMethod.AVG,
@@ -64,7 +64,6 @@ AGGREGATION_METHOD_BY_TYPE: dict[SeriesType, AggregationMethod] = {
     SeriesType.exercise_time: AggregationMethod.SUM,
     SeriesType.physical_effort: AggregationMethod.AVG,
     SeriesType.flights_climbed: AggregationMethod.SUM,
-    SeriesType.average_met: AggregationMethod.AVG,
     SeriesType.active_time: AggregationMethod.SUM,
     # ── Activity — Distance ──
     SeriesType.distance_walking_running: AggregationMethod.SUM,
@@ -95,6 +94,8 @@ AGGREGATION_METHOD_BY_TYPE: dict[SeriesType, AggregationMethod] = {
     SeriesType.speed: AggregationMethod.AVG,
     SeriesType.workout_effort_score: AggregationMethod.AVG,
     SeriesType.estimated_workout_effort_score: AggregationMethod.AVG,
+    SeriesType.distance: AggregationMethod.SUM,
+    SeriesType.elevation_gain: AggregationMethod.SUM,
     # ── Environmental ──
     SeriesType.environmental_audio_exposure: AggregationMethod.AVG,
     SeriesType.headphone_audio_exposure: AggregationMethod.AVG,
@@ -177,7 +178,7 @@ def get_aggregation_method(series_type: SeriesType) -> AggregationMethod:
 
 
 def daily_total_flag(series_type: SeriesType, is_daily: bool) -> bool | None:
-    """Value for DataPointSeries.is_daily_total at ingestion.
+    """Value for SeriesSample.is_daily_total at ingestion.
 
     Only summable (SUM) series have a meaningful daily-total vs intraday-sample
     distinction — they are the ones the prefer-daily aggregation sums, so a daily

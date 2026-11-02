@@ -1484,3 +1484,84 @@ then tell the watch's own data from an app's.
   (`frontend-react/src/components/user/scores-section.tsx`) keeps showing historical
   internal scores; if the removal breaks an import there, drop the internal-score
   handling rather than restore the code.
+
+## Upstream aggregates (2026-11 sync): what the fork keeps on the new tables
+
+Upstream moved day and session values out of `data_point_series` (renamed `series_sample`)
+into `series_aggregate` / `event_record_aggregate`, rolled up every 15 minutes, and read
+summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from them
+(#1929-#1941, #2026). Taken whole; the entries below are what the fork kept on top.
+
+### Polar exercise retiming is not run twice
+
+- **Area**: backend (data)
+- **Status**: active
+- **On conflict**: keep ours; never carry `fix_polar_workout_utc_offset.py`
+- **Why**: Upstream #2019 fixes Polar exercises stored twice their UTC offset away and
+  ships a startup script that retimes stored rows. The fork fixed the same bug in
+  2026-09 (`96e2530f`) and retimed the stored exercises and their RR beats in alembic
+  `c6d2a8f4e1b3`. Upstream's script would move every exercise it can't re-read from
+  Polar's 30-day window by twice its offset again, and not its RR beats. The script and
+  its test are removed, its `app.sh` hook is gone, and merge revision `d8b3f1a6c2e4`
+  records it in `data_migration` as completed, so a later sync that brings it back skips it.
+
+### Account-aware day reads
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile (keep the account in the key)
+- **Why**: Upstream's `daily_activity` groups by provider, source, model and type, which
+  adds two accounts' days together (two Whoops: doubled steps). The fork keys it on
+  `user_connection_id` too, applies the relay-dedup plan to day rows
+  (`RelayDedupPlan.hides_day`: an aggregator's day is dropped where the brand's own API
+  covers it, by overlap), and keeps `filter_by_priority=false`. The archive merge in
+  summaries is gone: the aggregate backfill copies archived days into the day rows.
+  `/timeseries` at `1day`+ has no relay dedup (day rows carry no per-sample time); with
+  `filter_by_priority` it still returns one source per series.
+
+### Sleep summaries: per data source, no borrowed vitals
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile
+- **Why**: Upstream reads a night's vitals from its sleeps' aggregates (adopted), keyed
+  by (date, provider, source, model). The fork keys nights by (date, data source), so
+  two accounts' nights never pool, and drops upstream's fallback to the user's other
+  data sources' samples: a night reports its own source's vitals, or none (an Oura
+  night once showed a Whoop HRV). Added on top: resting HR, and the provider's day value
+  for the wake-up day (Oura's daily SpO2 is stamped at 00:00 UTC, before a US night
+  starts). The sleep source is still chosen in Python after the read
+  (`_filter_by_priority`), so every source's timelines on a page are loaded.
+
+### Apple sleep sessions: fork Redis layout, upstream grouping
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile
+- **Why**: Upstream #1876 keeps one Redis hash per user, a field per writer app, with
+  Apple's own sources (Watch, iPhone) sharing one session. The fork keeps its string key
+  per scope and its active-member set, so sessions open at deploy keep being finalised,
+  and adopts the grouping: scope = provider + writer (`apple` for Apple's own, else the
+  app id; with no app id, source name and device model) + account. Ported: the
+  Apple-Watch quiet-upload finish (`is_ready_to_finish`), null for unmeasured stages
+  (#1953), writer-scoped adjacent lookup. The Watch flag reads the Apple writer and a
+  `Watch*` model, not the SDK's deviceType, which on Apple names the handset.
+
+### Token cache, refresh lock and dead-grant state per account
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: Upstream #1950 caches tokens on the session keyed (user, provider); a sync
+  walks a user's accounts on one session, so account B was fetched with A's token and
+  its data filed under B. Keyed with the active connection; the refresh lock is per
+  connection, the dead-grant counter per account, and revokes run in that account's scope.
+
+### Polar sleep keeps the bare date as its external_id
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: Upstream #1870 keys Polar nights `sleep-<date>`; the fork's nights already
+  carry `<date>`. Taking upstream's form would leave every stored night unmatched and
+  re-append it on each re-read. `dedupe_polar_sleep.py` writes the bare date too.

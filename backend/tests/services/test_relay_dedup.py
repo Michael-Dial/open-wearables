@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import DataPointSeries, DataSource, User
+from app.models import DataSource, SeriesSample, User
 from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import Resolution, SeriesType, get_series_type_id
 from app.schemas.model_crud.activities import EventRecordQueryParams, TimeSeriesQueryParams
@@ -40,7 +40,7 @@ HEART_RATE_ID = get_series_type_id(SeriesType.heart_rate)
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 
 
-def _heart_rate(data_source: DataSource, at: datetime, value: int = 60) -> DataPointSeries:
+def _heart_rate(data_source: DataSource, at: datetime, value: int = 60) -> SeriesSample:
     return DataPointSeriesFactory(
         data_source=data_source,
         series_type=SeriesTypeDefinitionFactory.get_or_create_heart_rate(),

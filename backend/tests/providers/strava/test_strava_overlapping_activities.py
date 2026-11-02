@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import DataPointSeries, DataSource, EventRecord
+from app.models import DataSource, EventRecord, SeriesSample
 from app.repositories.event_record_repository import EventRecordRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.enums import SeriesType, get_series_type_id
@@ -84,11 +84,11 @@ def _push(
 def _hr_by_source(db: Session, user_id: Any) -> dict[str, set[float]]:
     """Heart-rate values per data source, keyed "<device_model>|<source>"."""
     rows = db.execute(
-        select(DataSource.device_model, DataSource.source, DataPointSeries.value)
-        .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+        select(DataSource.device_model, DataSource.source, SeriesSample.value)
+        .join(DataSource, DataSource.id == SeriesSample.data_source_id)
         .where(
             DataSource.user_id == user_id,
-            DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.heart_rate),
+            SeriesSample.series_type_definition_id == get_series_type_id(SeriesType.heart_rate),
         )
     ).all()
     out: dict[str, set[float]] = {}

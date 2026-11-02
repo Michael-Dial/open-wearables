@@ -150,6 +150,35 @@ GET /users/{user_id}/timeseries?start_time=…&end_time=…&types=…&resolution
   one (workout > intraday > window > summary); a daily total against a sample is the
   exception and keeps whichever arrived last.
 
+### Day values (resting HR, nightly HRV, SpO2, daily totals) — `resolution=1day`
+
+Since the 2026-11 upstream sync, a value a provider reports **for a day, night or
+workout** (Garmin's daily steps, Oura's daily SpO2, a night's resting HR or HRV, a
+workout's average) is stored as a day or session value, not as a raw sample:
+
+- `/timeseries?resolution=1day|1week|1month` returns one value per local day, week or
+  month, the provider's own day value where it sent one, else ours rolled up from the
+  samples, with every statistic under `stats`. **At `raw` and minute resolutions these
+  types are often empty.** Ask for `1day` when the question is "what was X on these days".
+- The bulk export streams raw samples only, so it no longer carries provider day values.
+- Day rows carry no `route`, `provider_metadata` or per-sample time. Raw samples keep them.
+- Relay dedup is not applied at `1day`+; leave `filter_by_priority` on (the default) to get
+  one source per series, or filter by `data_source_id` yourself.
+
+Also changed in that sync, for scripts written before it:
+
+- **Series renamed:** `walking_heart_rate_average` → `walking_heart_rate`, and
+  `average_met` merged into `physical_effort`, whose unit is now `met` (it was `score`).
+  Old names still work as `types=` filters; responses use the new names only. Webhook
+  events follow: `series.walking_heart_rate.created`; `series.average_met.created` is gone.
+- **Sleep stages a source did not measure are `null`, not 0** (deep/light/REM/awake
+  minutes, and `stages`). Average across nights with stage data only. Nights stored
+  earlier are corrected by a startup migration.
+- **`/health-scores` returns one Open Wearables (`internal`) score per category and day**,
+  picked by source priority; provider scores are unchanged. There is no all-sources option
+  for internal scores, and the pick does not know about reference accounts.
+- **New series:** `distance` and `elevation_gain`, whole-workout values in meters.
+
 ### Bulk export — every raw row of a window in one response
 
 ```

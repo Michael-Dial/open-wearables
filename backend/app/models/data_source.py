@@ -21,8 +21,8 @@ from app.mappings import (
 from app.schemas.enums import ProviderName
 
 if TYPE_CHECKING:
-    from app.models.data_point_series import DataPointSeries
     from app.models.device import Device
+    from app.models.series_sample import SeriesSample
     from app.models.event_record import EventRecord
 
 
@@ -145,4 +145,4 @@ class DataSource(BaseDbModel):
     device: Mapped[ManyToOne["Device"]]
 
     event_records: Mapped[OneToMany["EventRecord"]]
-    data_points: Mapped[OneToMany["DataPointSeries"]]
+    data_points: Mapped[OneToMany["SeriesSample"]]

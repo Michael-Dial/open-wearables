@@ -61,7 +61,7 @@ class EventRecord(BaseDbModel):
     zone_offset: Mapped[str_10 | None]
 
     # Per-record metadata exactly as the platform sent it, or NULL when it sent none.
-    # See DataPointSeries.provider_metadata; the same reasoning applies to a workout,
+    # See SeriesSample.provider_metadata; the same reasoning applies to a workout,
     # where the writing app is frequently an aggregator and the metadata is the only
     # thing naming which of several sensors recorded the session.
     provider_metadata: Mapped[json_object | None]

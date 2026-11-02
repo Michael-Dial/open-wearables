@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 
 from app.database import DbSession
-from app.models import DataPointSeries, DataSource, EventRecord, HealthScore, SeriesTypeDefinition
+from app.models import DataSource, EventRecord, HealthScore, SeriesSample, SeriesTypeDefinition
 
 
 class SourceActivityRow:
@@ -101,19 +101,19 @@ class SourceActivityRepository:
         """
         stmt = (
             select(
-                DataPointSeries.data_source_id,
+                SeriesSample.data_source_id,
                 SeriesTypeDefinition.code,
                 func.count().label("n"),
-                func.max(DataPointSeries.recorded_at).label("last_at"),
-                func.min(DataPointSeries.recorded_at).label("first_at"),
+                func.max(SeriesSample.recorded_at).label("last_at"),
+                func.min(SeriesSample.recorded_at).label("first_at"),
             )
-            .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+            .join(DataSource, DataSource.id == SeriesSample.data_source_id)
             .join(
                 SeriesTypeDefinition,
-                SeriesTypeDefinition.id == DataPointSeries.series_type_definition_id,
+                SeriesTypeDefinition.id == SeriesSample.series_type_definition_id,
             )
-            .where(DataSource.user_id == user_id, DataPointSeries.recorded_at >= self._since(days))
-            .group_by(DataPointSeries.data_source_id, SeriesTypeDefinition.code)
+            .where(DataSource.user_id == user_id, SeriesSample.recorded_at >= self._since(days))
+            .group_by(SeriesSample.data_source_id, SeriesTypeDefinition.code)
         )
         return [SourceActivityRow(r[0], r[1], r[2], r[3], r[4]) for r in db_session.execute(stmt).all()]
 

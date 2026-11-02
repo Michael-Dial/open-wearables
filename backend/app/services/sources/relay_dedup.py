@@ -54,14 +54,14 @@ Known limits, stated because they decide whether an analysis can trust this:
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.database import DbSession
-from app.models import DataPointSeries, DataPointSeriesArchive, DataSource, EventRecord, HealthScore
+from app.models import DataPointSeriesArchive, DataSource, EventRecord, HealthScore, SeriesSample
 from app.schemas.enums import IngestionRoute, ProviderName, RelayVisibility
 from app.schemas.utils.metadata import HiddenRelayInfo, RelayDedupMetadata
 from app.utils.device_registry import (
@@ -162,6 +162,30 @@ class RelayDedupPlan:
         if not matches:
             return []
         return [or_(data_source_id_column.is_(None), ~or_(*matches))]
+
+    def hides_day(self, data_source_id: UUID | None, key: int | None, day: date) -> bool:
+        """Whether a day row (one source, one series, one local day) is a redundant relay.
+
+        The day-row counterpart of ``conditions``: a day row has no instant to compare, so it is
+        hidden when its day overlaps a span. Overlap, not containment: a day the direct route
+        reports only part of still has the direct route's own day row, and summing the relay's
+        whole day beside it is the double count this rule exists to prevent.
+        """
+        if data_source_id is None:
+            return False
+        day_start = datetime.combine(day, time.min, tzinfo=timezone.utc)
+        day_end = day_start + timedelta(days=1)
+        for span in self.spans:
+            if data_source_id not in span.source_ids:
+                continue
+            if span.key is not None and key is not None and span.key != key:
+                continue
+            if span.start is not None and day_end <= span.start:
+                continue
+            if span.end is not None and day_start > span.end:
+                continue
+            return True
+        return False
 
 
 def _provider_slug(provider: object) -> str:
@@ -474,7 +498,7 @@ def build_series_plan(
         for direct in candidates.directs.get(brand, []):
             if per_type:
                 for type_id in type_ids:
-                    probes.append(((brand, type_id), direct.id, [DataPointSeries.series_type_definition_id == type_id]))
+                    probes.append(((brand, type_id), direct.id, [SeriesSample.series_type_definition_id == type_id]))
                     archive_probes.append(
                         ((brand, type_id), direct.id, [DataPointSeriesArchive.series_type_definition_id == type_id])
                     )
@@ -484,8 +508,8 @@ def build_series_plan(
 
     covered = _measure_coverage(
         db_session,
-        DataPointSeries.recorded_at,
-        DataPointSeries.data_source_id,
+        SeriesSample.recorded_at,
+        SeriesSample.data_source_id,
         probes,
         start,
         end,

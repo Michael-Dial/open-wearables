@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
@@ -255,7 +255,7 @@ def oauth_callback(
 
     # Stamp last_synced_at=now so the first periodic sync uses the connection
     # timestamp as its live-sync cursor and won't attempt to pull all history.
-    user_connection_service.stamp_last_synced_at(
+    previous_synced_at = user_connection_service.stamp_last_synced_at(
         db, oauth_state.user_id, provider_name.value, connection_id=connection_id
     )
 
@@ -265,16 +265,22 @@ def oauth_callback(
     if settings.historical_sync_on_connect:
         caps = strategy.capabilities
         if caps.webhook_callback:
+            gap_start = user_connection_service.reconnect_gap_start(
+                db, oauth_state.user_id, provider_name.value, previous_synced_at, connection_id=connection_id
+            )
             start_garmin_full_backfill.delay(
                 str(oauth_state.user_id),
                 connection_id=str(connection_id) if connection_id else None,
+                since=gap_start.isoformat() if gap_start else None,
             )
         elif caps.rest_pull:
             now = datetime.now(timezone.utc)
-            start_date = (now - timedelta(days=90)).isoformat()
+            start_date = user_connection_service.historical_start_on_connect(
+                db, oauth_state.user_id, provider_name.value, previous_synced_at, days=90, connection_id=connection_id
+            )
             sync_vendor_data.delay(
                 user_id=str(oauth_state.user_id),
-                start_date=start_date,
+                start_date=start_date.isoformat(),
                 end_date=now.isoformat(),
                 providers=[provider_name.value],
                 is_historical=True,

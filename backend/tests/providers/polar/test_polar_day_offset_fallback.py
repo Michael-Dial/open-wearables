@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models import DataPointSeries, DataSource, User
+from app.models import DataSource, SeriesAggregate, SeriesSample, User
 from app.schemas.enums import ProviderName, SeriesType, get_series_type_id
 from app.schemas.providers.polar import PolarWebhookEventType
 from app.services.providers.polar.data_247 import Polar247Data
@@ -71,17 +71,32 @@ def _exercise_with_offset(db: Session, user: User, start: datetime, zone_offset:
     db.flush()
 
 
-def _rows(db: Session, user_id: UUID, series_type: SeriesType) -> list[DataPointSeries]:
+def _rows(db: Session, user_id: UUID, series_type: SeriesType) -> list[SeriesSample]:
     return (
-        db.query(DataPointSeries)
-        .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+        db.query(SeriesSample)
+        .join(DataSource, DataSource.id == SeriesSample.data_source_id)
         .filter(
             DataSource.user_id == user_id,
-            DataPointSeries.series_type_definition_id == get_series_type_id(series_type),
+            SeriesSample.series_type_definition_id == get_series_type_id(series_type),
         )
-        .order_by(DataPointSeries.recorded_at)
+        .order_by(SeriesSample.recorded_at)
         .all()
     )
+
+
+def _day_totals(db: Session, user_id: UUID, series_type: SeriesType) -> list[tuple[str, int]]:
+    """The provider's day values: since the aggregate tables they live in series_aggregate, not as samples."""
+    rows = (
+        db.query(SeriesAggregate)
+        .join(DataSource, DataSource.id == SeriesAggregate.data_source_id)
+        .filter(
+            DataSource.user_id == user_id,
+            SeriesAggregate.series_type_definition_id == get_series_type_id(series_type),
+        )
+        .order_by(SeriesAggregate.period_start)
+        .all()
+    )
+    return [(row.period_start.date().isoformat(), int(row.sum)) for row in rows if row.sum is not None]
 
 
 @pytest.fixture
@@ -124,11 +139,10 @@ class TestADayWithNoSleepRecord:
 
         rows = _rows(db, user.id, SeriesType.steps)
         assert [(r.recorded_at.isoformat(), r.is_daily_total, int(r.value)) for r in rows] == [
-            # The day's total keeps upstream's stamp: local midnight read as UTC.
-            ("2026-09-10T00:00:00+00:00", True, 6_210),
-            ("2026-09-10T18:00:00+00:00", False, 150),
-            ("2026-09-10T18:10:00+00:00", False, 0),
+            ("2026-09-10T18:00:00+00:00", None, 150),
+            ("2026-09-10T18:10:00+00:00", None, 0),
         ]
+        assert _day_totals(db, user.id, SeriesType.steps) == [("2026-09-10", 6_210)]
 
     def test_a_day_nothing_can_place_is_still_skipped_not_guessed(self, data_247: Polar247Data, db: Session) -> None:
         user = UserFactory()
@@ -139,7 +153,9 @@ class TestADayWithNoSleepRecord:
         _webhook(data_247, db, user, PolarWebhookEventType.ACTIVITY_SUMMARY, f"/v3/users/activities/{DAY}")
 
         assert _rows(db, user.id, SeriesType.heart_rate) == []
-        assert [r.is_daily_total for r in _rows(db, user.id, SeriesType.steps)] == [True]
+        # No intraday steps without an offset to place them; the day's total is still kept.
+        assert _rows(db, user.id, SeriesType.steps) == []
+        assert [total for _, total in _day_totals(db, user.id, SeriesType.steps)] == [6_210]
 
 
 class TestADayWithASleepRecord:
@@ -162,10 +178,10 @@ class TestADayWithASleepRecord:
 
         rows = _rows(db, user.id, SeriesType.steps)
         assert [(r.recorded_at.isoformat(), r.is_daily_total) for r in rows] == [
-            ("2026-09-10T00:00:00+00:00", True),
-            ("2026-09-10T18:00:00+00:00", False),
-            ("2026-09-10T18:10:00+00:00", False),
+            ("2026-09-10T18:00:00+00:00", None),
+            ("2026-09-10T18:10:00+00:00", None),
         ]
+        assert [total for _, total in _day_totals(db, user.id, SeriesType.steps)] == [6_210]
 
 
 class TestTheSleepRecordStillComesFirst:

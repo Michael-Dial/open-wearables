@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.models import DataPointSeries
+from app.models import SeriesSample
 from app.repositories.data_point_series_repository import DataPointSeriesRepository
 from app.schemas.enums import ProviderName, SampleRoute, SeriesType
 from app.schemas.model_crud.activities import TimeSeriesSampleCreate
@@ -59,7 +59,7 @@ def _write(
     points: list[tuple[datetime, int]],
     route: SampleRoute | None = SampleRoute.GARMIN_ACTIVITY_DETAILS,
 ) -> None:
-    DataPointSeriesRepository(DataPointSeries).bulk_create(
+    DataPointSeriesRepository(SeriesSample).bulk_create(
         db,
         [
             TimeSeriesSampleCreate(

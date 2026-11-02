@@ -210,7 +210,7 @@ class OpenWearablesClient:
             start_time: Start of the window (ISO-8601, e.g. "2026-04-05T00:00:00Z")
             end_time: End of the window (ISO-8601, e.g. "2026-04-05T23:59:59Z")
             types: SeriesType codes to include (e.g. ["heart_rate", "oxygen_saturation"])
-            resolution: One of "raw", "1min", "5min", "15min", "1hour"
+            resolution: One of "raw", "1min", "5min", "15min", "1hour", "1day", "1week", "1month"
             limit: Page size (1-100)
             cursor: Opaque pagination cursor returned by a previous call
             include_redundant_relays: Keep an aggregator's copy of a maker that is also

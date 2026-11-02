@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DataPointSeries, DataSource, EventRecord, User
+from app.models import DataSource, EventRecord, SeriesSample, User
 from app.repositories.event_record_repository import EventRecordRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
@@ -201,13 +201,13 @@ class TestRrSurvivesThePull:
     @staticmethod
     def _stored_rr(db: Session, user_id: UUID) -> list[int]:
         values = db.scalars(
-            select(DataPointSeries.value)
-            .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+            select(SeriesSample.value)
+            .join(DataSource, DataSource.id == SeriesSample.data_source_id)
             .where(
                 DataSource.user_id == user_id,
-                DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.rr_interval),
+                SeriesSample.series_type_definition_id == get_series_type_id(SeriesType.rr_interval),
             )
-            .order_by(DataPointSeries.recorded_at)
+            .order_by(SeriesSample.recorded_at)
         )
         return [int(v) for v in values]
 

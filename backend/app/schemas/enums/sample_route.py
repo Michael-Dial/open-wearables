@@ -1,6 +1,6 @@
 """Which feed wrote a time-series sample, and which feed wins when two meet.
 
-A row in ``data_point_series`` is keyed on (data source, series type, second). A
+A row in ``series_sample`` is keyed on (data source, series type, second). A
 provider with two feeds for one series - a workout's per-second heart rate and the
 same watch's all-day monitoring, say - resolves both to one data source, so the key
 cannot tell them apart and whichever arrived last used to own every second both had.
@@ -105,7 +105,7 @@ class SampleRoute(StrEnum):
     MANUAL_WINDOWS = "manual.windows"
 
 
-# (id, route, kind). The id is what data_point_series.route_id stores.
+# (id, route, kind). The id is what series_sample.route_id stores.
 SAMPLE_ROUTE_DEFINITIONS: list[tuple[int, SampleRoute, RouteKind]] = [
     (1, SampleRoute.GARMIN_ACTIVITY_DETAILS, RouteKind.WORKOUT),
     (2, SampleRoute.GARMIN_DAILIES, RouteKind.WINDOW),

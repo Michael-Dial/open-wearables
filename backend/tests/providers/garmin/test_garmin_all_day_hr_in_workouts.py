@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import DataPointSeries, DataSource
+from app.models import DataSource, SeriesSample
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.enums import SeriesType, get_series_type_id
 from app.services.providers.garmin.data_247 import Garmin247Data
@@ -90,11 +90,11 @@ def _epoch_at(slot_start: int) -> dict[str, Any]:
 
 def _hr_rows(db: Session, user_id: UUID) -> dict[int, float]:
     rows = db.execute(
-        select(DataPointSeries.recorded_at, DataPointSeries.value)
-        .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+        select(SeriesSample.recorded_at, SeriesSample.value)
+        .join(DataSource, DataSource.id == SeriesSample.data_source_id)
         .where(
             DataSource.user_id == user_id,
-            DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.heart_rate),
+            SeriesSample.series_type_definition_id == get_series_type_id(SeriesType.heart_rate),
         )
     ).all()
     return {int(r.recorded_at.timestamp()): float(r.value) for r in rows}
@@ -207,11 +207,11 @@ class TestAllDayHeartRateInsideWorkouts:
         self._push(garmin_247, db, band.id, user.id, "dailies", _dailies())
 
         band_rows = db.execute(
-            select(DataPointSeries.recorded_at)
-            .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+            select(SeriesSample.recorded_at)
+            .join(DataSource, DataSource.id == SeriesSample.data_source_id)
             .where(
                 DataSource.user_connection_id == band.id,
-                DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.heart_rate),
+                SeriesSample.series_type_definition_id == get_series_type_id(SeriesType.heart_rate),
             )
         ).all()
         assert any(_in_run(int(r.recorded_at.timestamp())) for r in band_rows)

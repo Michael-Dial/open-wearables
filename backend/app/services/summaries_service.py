@@ -7,15 +7,12 @@ from decimal import Decimal
 from logging import Logger, getLogger
 from uuid import UUID
 
+from app.algorithms.sleep import awakenings, significant_awakenings
 from app.config import settings
 from app.constants.devices_map import infer_device_type_from_model
 from app.database import DbSession
-from app.models import DataPointSeries, EventRecord, HealthScore, ProviderPriority, User
+from app.models import EventRecord, HealthScore, ProviderPriority, SeriesSample, User
 from app.repositories import EventRecordRepository, ProviderPriorityRepository
-from app.repositories.archival_repository import (
-    ArchivalSettingRepository,
-    DataPointSeriesArchiveRepository,
-)
 from app.repositories.data_point_series_repository import (
     ActiveMinutesResult,
     DataPointSeriesRepository,
@@ -23,6 +20,7 @@ from app.repositories.data_point_series_repository import (
 )
 from app.repositories.device_type_priority_repository import DeviceTypePriorityRepository
 from app.repositories.health_score_repository import HealthScoreRepository
+from app.repositories.series_aggregate_repository import SeriesAggregateRepository, daily_activity
 from app.repositories.user_repository import UserRepository
 from app.schemas.enums import (
     DeviceType,
@@ -31,6 +29,7 @@ from app.schemas.enums import (
     SeriesType,
     get_series_type_id,
 )
+from app.schemas.model_crud.activities import SleepStage
 from app.schemas.responses.activity import (
     ActivitySummary,
     ActivityTotals,
@@ -53,6 +52,7 @@ from app.schemas.utils import (
     TimeseriesMetadata,
 )
 from app.schemas.utils.metadata import device_metadata_fields
+from app.services.aggregate_backfill_service import days_from_samples
 from app.services.sources.relay_dedup import (
     RelayDedupPlan,
     build_event_plan,
@@ -173,16 +173,29 @@ def _midnight(day: date) -> datetime:
     return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
 
 
+def _interruptions_count(sessions: list[dict]) -> int | None:
+    """Significant awakenings across the day's main sleeps; None without main sleep or a usable timeline."""
+    main_sessions = [s for s in sessions if not s["is_nap"]]
+    if not main_sessions:
+        return None
+    count = 0
+    for session in main_sessions:
+        durations = awakenings([SleepStage(**stage) for stage in session["sleep_stages"] or []])
+        if durations is None:
+            return None
+        count += significant_awakenings(durations)
+    return count
+
+
 class SummariesService:
     """Service for aggregating daily health summaries."""
 
     def __init__(self, log: Logger):
         self.logger = log
         self.event_record_repo = EventRecordRepository(EventRecord)
-        self.data_point_repo = DataPointSeriesRepository(DataPointSeries)
+        self.data_point_repo = DataPointSeriesRepository(SeriesSample)
+        self.series_aggregate_repo = SeriesAggregateRepository()
         self.user_repo = UserRepository(User)
-        self.archival_settings_repo = ArchivalSettingRepository()
-        self.archive_repo = DataPointSeriesArchiveRepository()
         self.health_score_repo = HealthScoreRepository(HealthScore)
 
     # Keys that identify a summary row rather than measure anything on it.
@@ -385,48 +398,6 @@ class SummariesService:
             "vigorous_max": int(max_hr * HR_ZONE_VIGOROUS[1]),
         }
 
-    def _merge_archive_activity(
-        self,
-        db_session: DbSession,
-        user_id: UUID,
-        start_date: datetime,
-        end_date: datetime,
-        live_results: list,  # noqa: ANN401  — accepts ActivityAggregateResult | dict
-        relay_plan: RelayDedupPlan | None = None,
-    ) -> list:
-        """Merge archived daily aggregates into live results.
-
-        If archival is enabled, some days may only have data in the archive table.
-        This method queries the archive and merges rows, preferring live data when
-        both exist for the same (date, source, device_model, account) key.
-        """
-        try:
-            self.archival_settings_repo.get(db_session)
-        except Exception:
-            return live_results
-
-        series_type_ids = [get_series_type_id(t) for t in ACTIVITY_SERIES]
-
-        archive_results = self.archive_repo.get_daily_activity_aggregates_from_archive(
-            db_session, user_id, start_date, end_date, series_type_ids, relay_plan
-        )
-
-        if not archive_results:
-            return live_results
-
-        # Build lookup from live data keyed on (date, source, device_model, account)
-        live_keys = {_activity_key(r["activity_date"], r) for r in live_results}
-
-        # Add archive rows that are NOT already covered by live data
-        merged = list(live_results)
-        for ar in archive_results:
-            if _activity_key(ar["activity_date"], ar) not in live_keys:
-                merged.append(ar)
-
-        # Sort by date
-        merged.sort(key=lambda r: r["activity_date"])
-        return merged
-
     @handle_exceptions
     def get_sleep_summaries(
         self,
@@ -552,6 +523,7 @@ class SummariesService:
                 time_in_bed_minutes=result.get("time_in_bed_minutes"),
                 efficiency_percent=result.get("efficiency_percent"),
                 stages=stages,
+                interruptions_count=_interruptions_count(raw_sessions),
                 nap_count=result.get("nap_count"),
                 nap_duration_minutes=result.get("nap_duration_minutes"),
                 avg_heart_rate_bpm=avg_hr,
@@ -965,15 +937,18 @@ class SummariesService:
         relay_plan: "RelayDedupPlan | None",
         filter_by_priority: bool,
     ) -> list[dict]:
-        """The rows for [start, end): live and archived, collapsed per date when asked.
+        """The rows for [start, end) from the day aggregates, collapsed per date when asked.
+
+        One row per day, device and account (daily_activity keys on the account), with an
+        aggregator's day left out where the brand's own API covers it. Archived days need no
+        merge any more: the aggregate backfill copied them into the day rows.
 
         Sorted by the full cursor key, not the date alone: the cursor compares on
         (date, source, device, account), which only walks a list sorted the same way.
         Sorted by date only, a day holding several sources could skip or repeat a row
         at a page boundary.
         """
-        results = self.data_point_repo.get_daily_activity_aggregates(db_session, user_id, start, end, relay_plan)
-        results = self._merge_archive_activity(db_session, user_id, start, end, results, relay_plan)
+        results = daily_activity(db_session, user_id, start, end, days_from_samples(db_session), relay_plan)
         # Upstream #1863: a day with a workout but no time series still gets a row. The
         # workout read hides redundant relays whenever the series read does.
         workout_plan = (
@@ -1197,23 +1172,25 @@ class SummariesService:
             age=age,
         )
 
-        # --- AVERAGED: Get aggregates for vitals over the period ---
+        # --- AVERAGED: the vitals' day values over the period ---
+        # A resting pulse or a night's HRV is a day value for most providers, so the day rows hold every
+        # device's: the provider's where it sent one, ours rolled up from the samples where it did not.
         period_end = now
         period_start = now - timedelta(days=average_period_days)
 
-        vitals_aggregates = self.data_point_repo.get_aggregates_for_period(
-            db_session, user_id, period_start, period_end, BODY_AVERAGED_SERIES
+        first_day, last_day = period_start.date(), period_end.date()
+        nights = self.event_record_repo.night_values(
+            db_session, user_id, [get_series_type_id(t) for t in BODY_AVERAGED_SERIES], first_day, last_day
+        )
+        averages = self.series_aggregate_repo.period_averages(
+            db_session, user_id, BODY_AVERAGED_SERIES, first_day, last_day, nights, days_from_samples(db_session)
         )
 
-        resting_hr_data = vitals_aggregates.get(SeriesType.resting_heart_rate)
-        hrv_sdnn_data = vitals_aggregates.get(SeriesType.heart_rate_variability_sdnn)
-        hrv_rmssd_data = vitals_aggregates.get(SeriesType.heart_rate_variability_rmssd)
-
-        resting_hr_avg = resting_hr_data.get("avg") if resting_hr_data else None
+        resting_hr_avg = averages.get(SeriesType.resting_heart_rate)
         resting_hr = int(round(resting_hr_avg)) if resting_hr_avg else None
-        hrv_sdnn_raw = hrv_sdnn_data.get("avg") if hrv_sdnn_data else None
+        hrv_sdnn_raw = averages.get(SeriesType.heart_rate_variability_sdnn)
         hrv_sdnn_avg = round(hrv_sdnn_raw, 1) if hrv_sdnn_raw is not None else None
-        hrv_rmssd_raw = hrv_rmssd_data.get("avg") if hrv_rmssd_data else None
+        hrv_rmssd_raw = averages.get(SeriesType.heart_rate_variability_rmssd)
         hrv_rmssd_avg = round(hrv_rmssd_raw, 1) if hrv_rmssd_raw is not None else None
 
         body_averaged = BodyAveraged(
@@ -1234,6 +1211,13 @@ class SummariesService:
         skin_temp_reading = self.data_point_repo.get_latest_reading_within_window(
             db_session, user_id, SeriesType.skin_temperature, latest_window_start, now
         )
+        # Whoop and Polar report skin temperature once a night, as a day value.
+        if skin_temp_reading is None and (
+            day_value := self.series_aggregate_repo.latest_day_value(
+                db_session, user_id, SeriesType.skin_temperature, latest_window_start.date()
+            )
+        ):
+            skin_temp_reading = (*day_value, "", None)
         # Get blood pressure readings within the window
         bp_systolic_reading = self.data_point_repo.get_latest_reading_within_window(
             db_session, user_id, SeriesType.blood_pressure_systolic, latest_window_start, now

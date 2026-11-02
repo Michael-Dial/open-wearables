@@ -2,6 +2,7 @@ from .archival import (
     ArchivalSettingRead,
     ArchivalSettingUpdate,
     ArchivalSettingWithEstimate,
+    HistoryRollupStatus,
     StorageEstimate,
 )
 from .metadata import (
@@ -25,6 +26,7 @@ __all__ = [
     "ArchivalSettingUpdate",
     "StorageEstimate",
     "ArchivalSettingWithEstimate",
+    "HistoryRollupStatus",
     # Query params
     "FilterParams",
     # Pagination

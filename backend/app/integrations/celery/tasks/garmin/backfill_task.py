@@ -8,6 +8,7 @@ Timeout detection lives in ``backfill_timeout``.
 Redis state management lives in ``app.services.providers.garmin.backfill_state``.
 """
 
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any
 from uuid import UUID
@@ -61,6 +62,7 @@ from app.services.sync_status_service import (
     emit_sync_completed,
     emit_sync_progress,
     emit_sync_started,
+    last_backfill_requested_until,
 )
 from app.utils.connection_context import bind_active_connection
 from app.utils.structured_logging import log_structured
@@ -117,7 +119,9 @@ def _release_shared_backfill_primary(user_id: str, *, overall_status: SyncStatus
 
 
 @shared_task(name=CeleryTask.GARMIN_START_FULL_BACKFILL)
-def start_full_backfill(user_id: str, connection_id: str | None = None, attempt: int = 0) -> dict[str, Any]:
+def start_full_backfill(
+    user_id: str, connection_id: str | None = None, *, since: str | None = None, attempt: int = 0
+) -> dict[str, Any]:
     """Initialize and start full 30-day backfill for all backfill data types.
 
     This is called after OAuth connection to auto-trigger historical sync.
@@ -133,6 +137,7 @@ def start_full_backfill(user_id: str, connection_id: str | None = None, attempt:
     other's window and type tracking. A second account asking for a backfill
     while one is in flight is re-queued rather than dropped - see the lock
     branch below - so it starts once the first finishes.
+    On a reconnect, ``since`` (ISO) limits the backfill to the gap since the last sync.
     """
 
     try:
@@ -185,6 +190,19 @@ def start_full_backfill(user_id: str, connection_id: str | None = None, attempt:
             )
             return {"status": "skipped", "reason": "HISTORICAL_DATA_EXPORT permission not granted"}
 
+        # Garmin rejects a range it was already asked for with a 409 and sends nothing, so a reconnect
+        # requests only the gap, starting after the last accepted backfill window (+1s for second truncation).
+        start = None
+        if since is not None:
+            start = datetime.fromisoformat(since)
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            requested_until = last_backfill_requested_until(db, UUID(user_id), "garmin")
+            if requested_until is not None:
+                start = max(start, requested_until + timedelta(seconds=1))
+            if start >= datetime.now(timezone.utc):
+                return {"status": "skipped", "reason": "No gap since the last backfill"}
+
     # Acquire exclusive lock
     if not acquire_backfill_lock(user_id):
         # A backfill for one of this user's other Garmin accounts holds the lock.
@@ -203,7 +221,7 @@ def start_full_backfill(user_id: str, connection_id: str | None = None, attempt:
                 attempt=attempt,
             )
             start_full_backfill.apply_async(
-                kwargs={"user_id": user_id, "connection_id": connection_id, "attempt": attempt + 1},
+                kwargs={"user_id": user_id, "connection_id": connection_id, "since": since, "attempt": attempt + 1},
                 countdown=_BACKFILL_REQUEUE_DELAY,
             )
             return {"status": "requeued", "attempt": attempt + 1}
@@ -352,7 +370,7 @@ def start_full_backfill(user_id: str, connection_id: str | None = None, attempt:
         }
 
     # Fresh start
-    init_window_state(user_id, total_windows=BACKFILL_WINDOW_COUNT)
+    init_window_state(user_id, total_windows=BACKFILL_WINDOW_COUNT, start=start)
 
     log_structured(
         logger,

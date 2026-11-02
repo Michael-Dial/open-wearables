@@ -48,12 +48,12 @@ from sqlalchemy.orm import InstrumentedAttribute, aliased
 
 from app.database import DbSession
 from app.models import (
-    DataPointSeries,
     DataPointSeriesArchive,
     DataSource,
     DeviceHistory,
     EventRecord,
     HealthScore,
+    SeriesSample,
     UserConnection,
     UserConnectionDevicePeriod,
     WorkoutDetails,
@@ -584,7 +584,7 @@ class DeviceTimelineService:
 
     @staticmethod
     def _sample_conditions(source: DataSource, span: DeviceSpan, keep_captures: bool) -> list[ColumnElement[bool]]:
-        conditions = [DataPointSeries.data_source_id == source.id, *_in_span(DataPointSeries.recorded_at, span)]
+        conditions = [SeriesSample.data_source_id == source.id, *_in_span(SeriesSample.recorded_at, span)]
         if keep_captures:
             # A sample inside one of this source's own workouts was recorded by it.
             workout = aliased(EventRecord)
@@ -592,8 +592,8 @@ class DeviceTimelineService:
                 ~exists().where(
                     workout.data_source_id == source.id,
                     workout.category == WORKOUT,
-                    workout.start_datetime <= DataPointSeries.recorded_at,
-                    workout.end_datetime >= DataPointSeries.recorded_at,
+                    workout.start_datetime <= SeriesSample.recorded_at,
+                    workout.end_datetime >= SeriesSample.recorded_at,
                 )
             )
         return conditions
@@ -607,7 +607,7 @@ class DeviceTimelineService:
         before = DeviceSpan("", None, first)
         return _Counts(
             event_records=self._count(db_session, EventRecord, *self._event_conditions(source, before, keep_captures)),
-            samples=self._count(db_session, DataPointSeries, *self._sample_conditions(source, before, keep_captures)),
+            samples=self._count(db_session, SeriesSample, *self._sample_conditions(source, before, keep_captures)),
             archive_days=0
             if keep_captures
             else self._count(
@@ -662,15 +662,15 @@ class DeviceTimelineService:
         )
 
         # Samples: the unique key is (source, type, instant).
-        other_dp = aliased(DataPointSeries)
+        other_dp = aliased(SeriesSample)
         dp_span = self._sample_conditions(source, span, keep_captures)
         dp_clash = exists().where(
             other_dp.data_source_id == target_id,
-            other_dp.series_type_definition_id == DataPointSeries.series_type_definition_id,
-            other_dp.recorded_at == DataPointSeries.recorded_at,
+            other_dp.series_type_definition_id == SeriesSample.series_type_definition_id,
+            other_dp.recorded_at == SeriesSample.recorded_at,
         )
-        dp_total = self._count(db_session, DataPointSeries, *dp_span)
-        dp_conflicts = self._count(db_session, DataPointSeries, *dp_span, dp_clash) if target_id else 0
+        dp_total = self._count(db_session, SeriesSample, *dp_span)
+        dp_conflicts = self._count(db_session, SeriesSample, *dp_span, dp_clash) if target_id else 0
         result.moved.samples = dp_total - dp_conflicts
         result.conflicts.samples = dp_conflicts
 
@@ -739,7 +739,7 @@ class DeviceTimelineService:
             .execution_options(synchronize_session=False)
         )
         db_session.execute(
-            update(DataPointSeries)
+            update(SeriesSample)
             .where(*dp_span, ~dp_clash)
             .values(data_source_id=target_id)
             .execution_options(synchronize_session=False)

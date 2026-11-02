@@ -73,10 +73,10 @@ _WATCH_SOURCE = """
     AND ds.device_model_origin IS DISTINCT FROM :label
 """
 
-# data_point_series: unique on (data_source_id, series_type_definition_id, recorded_at)
+# series_sample: unique on (data_source_id, series_type_definition_id, recorded_at)
 _SERIES_COUNT = text(f"""
     SELECT COUNT(*)
-    FROM data_point_series dps
+    FROM series_sample dps
     JOIN data_source ds ON ds.id = dps.data_source_id
     WHERE {_WATCH_SOURCE}
       AND dps.series_type_definition_id = :body
@@ -86,12 +86,12 @@ _SERIES_COUNT = text(f"""
 # these get deleted, not relabeled.
 _SERIES_CONFLICT_COUNT = text(f"""
     SELECT COUNT(*)
-    FROM data_point_series dps
+    FROM series_sample dps
     JOIN data_source ds ON ds.id = dps.data_source_id
     WHERE {_WATCH_SOURCE}
       AND dps.series_type_definition_id = :body
       AND EXISTS (
-          SELECT 1 FROM data_point_series e
+          SELECT 1 FROM series_sample e
           WHERE e.data_source_id = dps.data_source_id
             AND e.series_type_definition_id = :skin
             AND e.recorded_at = dps.recorded_at
@@ -99,14 +99,14 @@ _SERIES_CONFLICT_COUNT = text(f"""
 """)
 
 _SERIES_UPDATE = text(f"""
-    UPDATE data_point_series dps
+    UPDATE series_sample dps
     SET series_type_definition_id = :skin
     FROM data_source ds
     WHERE ds.id = dps.data_source_id
       AND {_WATCH_SOURCE}
       AND dps.series_type_definition_id = :body
       AND NOT EXISTS (
-          SELECT 1 FROM data_point_series e
+          SELECT 1 FROM series_sample e
           WHERE e.data_source_id = dps.data_source_id
             AND e.series_type_definition_id = :skin
             AND e.recorded_at = dps.recorded_at
@@ -118,13 +118,13 @@ _SERIES_UPDATE = text(f"""
 # duplicates - rows without a skin_temperature counterpart (e.g. written by an old pod
 # during a rolling deploy) are left for the next run to pick up via _SERIES_UPDATE.
 _SERIES_DELETE_DUPLICATES = text(f"""
-    DELETE FROM data_point_series dps
+    DELETE FROM series_sample dps
     USING data_source ds
     WHERE ds.id = dps.data_source_id
       AND {_WATCH_SOURCE}
       AND dps.series_type_definition_id = :body
       AND EXISTS (
-          SELECT 1 FROM data_point_series e
+          SELECT 1 FROM series_sample e
           WHERE e.data_source_id = dps.data_source_id
             AND e.series_type_definition_id = :skin
             AND e.recorded_at = dps.recorded_at
@@ -140,7 +140,7 @@ _SERIES_REVIEW = text(f"""
         MIN(dps.value) AS min_value,
         AVG(dps.value) AS avg_value,
         MAX(dps.value) AS max_value
-    FROM data_point_series dps
+    FROM series_sample dps
     JOIN data_source ds ON ds.id = dps.data_source_id
     WHERE {_WATCH_SOURCE}
       AND dps.series_type_definition_id = :body
@@ -148,7 +148,7 @@ _SERIES_REVIEW = text(f"""
 
 _SERIES_LEFT_COUNT = text(f"""
     SELECT COUNT(*)
-    FROM data_point_series dps
+    FROM series_sample dps
     JOIN data_source ds ON ds.id = dps.data_source_id
     WHERE ds.provider = :provider
       AND dps.series_type_definition_id = :body
@@ -241,7 +241,7 @@ def relabel_apple_wrist_temp(db: Session, *, dry_run: bool) -> dict[str, int]:
         series_updated = _scalar_count(db, _SERIES_COUNT) - series_deleted
         archive_deleted = _scalar_count(db, _ARCHIVE_CONFLICT_COUNT)
         archive_updated = _scalar_count(db, _ARCHIVE_COUNT) - archive_deleted
-        print(f"data_point_series:         Would relabel {series_updated}, remove {series_deleted} duplicate(s)")
+        print(f"series_sample:         Would relabel {series_updated}, remove {series_deleted} duplicate(s)")
         _print_review(db)
         print(f"data_point_series_archive: Would relabel {archive_updated}, remove {archive_deleted} duplicate(s)")
         print("\nDry run — no changes made.")
@@ -257,7 +257,7 @@ def relabel_apple_wrist_temp(db: Session, *, dry_run: bool) -> dict[str, int]:
     archive_updated = db.execute(_ARCHIVE_UPDATE, _PARAMS).rowcount  # ty: ignore[unresolved-attribute]
     archive_deleted = db.execute(_ARCHIVE_DELETE_DUPLICATES, _PARAMS).rowcount  # ty: ignore[unresolved-attribute]
 
-    print(f"data_point_series:         Relabeled {series_updated}, removed {series_deleted} duplicate(s)")
+    print(f"series_sample:         Relabeled {series_updated}, removed {series_deleted} duplicate(s)")
     print(f"data_point_series_archive: Relabeled {archive_updated}, removed {archive_deleted} duplicate(s)")
 
     return {

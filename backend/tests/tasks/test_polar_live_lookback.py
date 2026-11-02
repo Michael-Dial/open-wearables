@@ -116,7 +116,7 @@ class TestLateUploadedNight:
         ).scalar()
         hrv = db.execute(
             text(
-                "select count(*) from data_point_series s join data_source d on d.id = s.data_source_id "
+                "select count(*) from series_sample s join data_source d on d.id = s.data_source_id "
                 "join series_type_definition t on t.id = s.series_type_definition_id "
                 "where d.user_id = :u and t.code = 'heart_rate_variability_rmssd'"
             ),
