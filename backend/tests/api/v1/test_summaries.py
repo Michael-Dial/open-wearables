@@ -8,9 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import DataPointSeriesArchive
-from app.models.archival_setting import ArchivalSetting
-from app.schemas.enums import AggregationMethod, HealthScoreCategory, ProviderName
+from app.models import EventRecordAggregate, SeriesAggregate
+from app.repositories import AggregateRepository
+from app.schemas.enums import ComputedBy, HealthScoreCategory, ProviderName, SeriesType
+from app.schemas.model_crud.activities import CalendarPeriod
 from tests.factories import (
     ApiKeyFactory,
     DataPointSeriesFactory,
@@ -23,6 +24,8 @@ from tests.factories import (
     UserConnectionFactory,
     UserFactory,
     WorkoutDetailsFactory,
+    provider_day,
+    roll_up_everything,
 )
 from tests.utils import api_key_headers
 
@@ -149,6 +152,7 @@ class TestSleepSummaryEndpoint:
             )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/sleep",
             headers=api_key_headers(api_key.plain_key),
@@ -206,6 +210,56 @@ class TestSleepSummaryEndpoint:
         assert sleep_data["avg_hrv_rmssd_ms"] is None
         assert sleep_data["avg_respiratory_rate"] is None
         assert sleep_data["avg_spo2_percent"] is None
+
+    def test_get_sleep_summary_never_takes_another_devices_readings(self, client: TestClient, db: Session) -> None:
+        """Fork: a night reports its own data source's vitals only. Upstream fills what an app's sleep lacks from
+        a watch worn that night; here another source's readings stay out, so a night never mixes two devices
+        (an Oura night once reported a Whoop HRV) or, with two accounts on one provider, two people."""
+        user = UserFactory()
+        app = DataSourceFactory(user=user, source="Sleep Cycle")
+        watch = DataSourceFactory(user=user, source="Apple Watch")
+        sleep_start = datetime(2025, 12, 25, 22, 0, 0, tzinfo=timezone.utc)
+        sleep = EventRecordFactory(
+            mapping=app, category="sleep", start_datetime=sleep_start, end_datetime=sleep_start + timedelta(hours=8)
+        )
+        rmssd = SeriesTypeDefinitionFactory.get_or_create_heart_rate_variability_rmssd()
+        heart_rate = SeriesTypeDefinitionFactory.get_or_create_heart_rate()
+        for hour, value in enumerate(("55", "57", "80")):
+            DataPointSeriesFactory(
+                mapping=watch,
+                series_type=heart_rate,
+                recorded_at=sleep_start + timedelta(hours=hour),
+                value=Decimal(value),
+            )
+        DataPointSeriesFactory(
+            mapping=watch, series_type=rmssd, recorded_at=sleep_start + timedelta(hours=2), value=Decimal("80")
+        )
+        # Outside the sleep: not the night's.
+        DataPointSeriesFactory(
+            mapping=watch, series_type=heart_rate, recorded_at=sleep_start + timedelta(hours=9), value=Decimal("120")
+        )
+        AggregateRepository(EventRecordAggregate).upsert(
+            db,
+            [
+                {
+                    "record_id": sleep.id,
+                    "series_type_definition_id": rmssd.id,
+                    "computed_by": ComputedBy.PROVIDER,
+                    "avg": Decimal("52"),
+                    "count": 1,
+                }
+            ],
+        )
+        api_key = ApiKeyFactory()
+
+        response = client.get(
+            f"/api/v1/users/{user.id}/summaries/sleep",
+            headers=api_key_headers(api_key.plain_key),
+            params={"start_date": "2025-12-25T00:00:00Z", "end_date": "2025-12-27T00:00:00Z"},
+        )
+
+        (night,) = response.json()["data"]
+        assert (night["avg_heart_rate_bpm"], night["avg_hrv_rmssd_ms"], night["avg_spo2_percent"]) == (None, 52.0, None)
 
     def test_get_sleep_summary_with_naps(self, client: TestClient, db: Session) -> None:
         """Test sleep summary tracks naps separately from main sleep."""
@@ -642,26 +696,27 @@ class TestActivitySummaryPerAccount:
         assert len(rows) == 2
         assert [r["active_minutes"] for r in rows] == [0, 0]
 
-    def test_an_archived_day_is_not_mistaken_for_the_other_accounts_live_day(
-        self, client: TestClient, db: Session
-    ) -> None:
-        # The live and archived halves are merged on a key; without the account in it
-        # the right account's archived day matched the left's live day and was dropped.
+    def test_a_stored_day_is_not_mistaken_for_the_other_accounts_day(self, client: TestClient, db: Session) -> None:
+        # Days are read from the day rows (series_aggregate) since the aggregates release, keyed
+        # by provider, source and model; without the account in that key the right account's
+        # stored day added into the left's, as the archived day was once dropped against it.
         user = UserFactory()
         left, left_source = self._account(db, user)
         right, right_source = self._account(db, user)
         self._steps(left_source, 1000, self.MORNING)
-        if not db.query(ArchivalSetting).filter(ArchivalSetting.id == 1).first():
-            db.add(ArchivalSetting(id=1, archive_after_days=30, delete_after_days=None))
+        period = CalendarPeriod.of_date(self.MORNING.date())
         db.add(
-            DataPointSeriesArchive(
+            SeriesAggregate(
                 id=uuid4(),
                 data_source_id=right_source.id,
                 series_type_definition_id=SeriesTypeDefinitionFactory.get_or_create_steps().id,
-                bucket_start_at=datetime(2025, 12, 26, 0, 0, 0, tzinfo=timezone.utc),
-                aggregation_type=AggregationMethod.SUM,
-                value=Decimal("3000"),
-                sample_count=1,
+                period_kind=period.kind,
+                period_start=period.start,
+                period_end=period.end,
+                zone_offset=period.zone_offset,
+                computed_by=ComputedBy.PROVIDER,
+                sum=Decimal("3000"),
+                count=1,
             )
         )
         db.commit()
@@ -759,6 +814,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -806,6 +862,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -834,6 +891,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -855,6 +913,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -884,6 +943,7 @@ class TestActivitySummaryEndpoint:
             )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -936,6 +996,7 @@ class TestActivitySummaryEndpoint:
         DataPointSeriesFactory(mapping=mapping, series_type=flights_type, value=Decimal("12"), recorded_at=base_time)
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -975,21 +1036,13 @@ class TestActivitySummaryEndpoint:
         user = UserFactory()
         mapping = DataSourceFactory(user=user, source=ProviderName.GARMIN)
         steps_type = SeriesTypeDefinitionFactory.get_or_create_steps()
-        active_time_type = SeriesTypeDefinitionFactory.get_or_create_active_time()
 
         base_time = datetime(2025, 12, 26, 8, 0, 0, tzinfo=timezone.utc)
-        # Single daily-total step row -> step-threshold heuristic would yield active_minutes == 1.
-        DataPointSeriesFactory(
-            mapping=mapping, series_type=steps_type, value=Decimal("8500"), recorded_at=base_time, is_daily_total=True
-        )
+        # One intraday step row -> the step-threshold heuristic would yield active_minutes == 1.
+        DataPointSeriesFactory(mapping=mapping, series_type=steps_type, value=Decimal("8500"), recorded_at=base_time)
+        roll_up_everything(db)
         # Provider-reported active time for the day.
-        DataPointSeriesFactory(
-            mapping=mapping,
-            series_type=active_time_type,
-            value=Decimal("312"),
-            recorded_at=base_time,
-            is_daily_total=True,
-        )
+        provider_day(db, mapping, SeriesType.active_time, base_time.date(), sum=Decimal("312"))
 
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
@@ -1015,6 +1068,8 @@ class TestActivitySummaryEndpoint:
             mapping=mapping, series_type=steps_type, value=Decimal("200"), recorded_at=base_time + timedelta(minutes=5)
         )
 
+        roll_up_everything(db)
+
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(ApiKeyFactory().plain_key),
@@ -1024,41 +1079,6 @@ class TestActivitySummaryEndpoint:
         assert response.status_code == 200
         activity = response.json()["data"][0]
         assert activity["active_minutes"] == 2
-
-    def test_active_minutes_from_archive_backed_day(self, client: TestClient, db: Session) -> None:
-        """An archive-only day populates active_minutes from the provider active_time archive row."""
-        user = UserFactory()
-        mapping = DataSourceFactory(user=user, source=ProviderName.GARMIN)
-        active_time_type = SeriesTypeDefinitionFactory.get_or_create_active_time()
-
-        # Enable archival (singleton id=1) so the summaries service queries the archive.
-        if not db.query(ArchivalSetting).filter(ArchivalSetting.id == 1).first():
-            db.add(ArchivalSetting(id=1, archive_after_days=30, delete_after_days=None))
-        # Archived daily active_time (archive holds one SUM row per day) for a day with no live data.
-        db.add(
-            DataPointSeriesArchive(
-                id=uuid4(),
-                data_source_id=mapping.id,
-                series_type_definition_id=active_time_type.id,
-                bucket_start_at=datetime(2025, 12, 26, 0, 0, 0, tzinfo=timezone.utc),
-                aggregation_type=AggregationMethod.SUM,
-                value=Decimal("275"),
-                sample_count=1,
-            )
-        )
-        db.commit()
-
-        response = client.get(
-            f"/api/v1/users/{user.id}/summaries/activity",
-            headers=api_key_headers(ApiKeyFactory().plain_key),
-            params={"start_date": "2025-12-25T00:00:00Z", "end_date": "2025-12-27T00:00:00Z"},
-        )
-
-        assert response.status_code == 200
-        days = {d["date"]: d for d in response.json()["data"]}
-        assert "2025-12-26" in days
-        # Comes from the archived active_time row, not the step-threshold fallback.
-        assert days["2025-12-26"]["active_minutes"] == 275
 
     def test_get_activity_summary_multiple_days(self, client: TestClient, db: Session) -> None:
         """Test activity summary returns data grouped by day."""
@@ -1083,6 +1103,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -1125,14 +1146,17 @@ class TestActivitySummaryEndpoint:
 
         # Also add some step data for the same day
         steps_type = SeriesTypeDefinitionFactory.get_or_create_steps()
+        # A reading with its own id: one without, at a workout's end, is the workout's statistic and no reading.
         DataPointSeriesFactory(
             mapping=mapping,
             series_type=steps_type,
             value=Decimal("12000"),
             recorded_at=workout_end,
+            external_id="hk-steps",
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -1185,6 +1209,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -1249,6 +1274,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -1324,6 +1350,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -1366,6 +1393,7 @@ class TestActivitySummaryEndpoint:
         )
 
         api_key = ApiKeyFactory()
+        roll_up_everything(db)
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/activity",
             headers=api_key_headers(api_key.plain_key),
@@ -1537,6 +1565,8 @@ class TestBodySummaryEndpoint:
                 recorded_at=now - timedelta(days=i),
             )
 
+        # The vitals are day values: ours come from the rollup of these readings.
+        roll_up_everything(db)
         api_key = ApiKeyFactory()
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/body",
@@ -1589,6 +1619,7 @@ class TestBodySummaryEndpoint:
             recorded_at=now - timedelta(days=2),
         )
 
+        roll_up_everything(db)
         api_key = ApiKeyFactory()
         response = client.get(
             f"/api/v1/users/{user.id}/summaries/body",

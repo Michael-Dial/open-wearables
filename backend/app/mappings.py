@@ -26,6 +26,8 @@ type OneToOne[T] = T
 json_binary = Annotated[list[dict[str, Any]], mapped_column(JSONB)]
 json_object = Annotated[dict[str, Any], mapped_column(JSONB)]
 int_zero = Annotated[int, mapped_column(server_default=text("0"))]
+bool_true = Annotated[bool, mapped_column(server_default=text("true"))]
+bool_false = Annotated[bool, mapped_column(server_default=text("false"))]
 email = Annotated[str, mapped_column(String)]
 str_10 = Annotated[str, mapped_column(String(10))]
 str_16 = Annotated[str, mapped_column(String(16))]
@@ -41,6 +43,9 @@ numeric_6_3 = Annotated[Decimal, mapped_column(Numeric(6, 3))]
 numeric_10_3 = Annotated[Decimal, mapped_column(Numeric(10, 3))]
 numeric_10_2 = Annotated[Decimal, mapped_column(Numeric(10, 2))]
 numeric_15_5 = Annotated[Decimal, mapped_column(Numeric(15, 5))]
+numeric_unbounded = Annotated[Decimal, mapped_column(Numeric)]
+# Values written to the unbounded columns are rounded here: GPS keeps ~1 cm, float noise stays out of the rows.
+SERIES_VALUE_SCALE = 7
 
 # Custom foreign keys
 FKDeveloper = Annotated[UUID, mapped_column(ForeignKey("developer.id", ondelete="SET NULL"))]
@@ -64,6 +69,10 @@ FKDeviceOptional = Annotated[
 FKDataSourceOptional = Annotated[
     UUID | None,
     mapped_column(ForeignKey("data_source.id", ondelete="SET NULL"), nullable=True),
+]
+FKEventRecordRef = Annotated[
+    UUID,
+    mapped_column(ForeignKey("event_record.id", ondelete="CASCADE")),
 ]
 FKDataSource = Annotated[
     UUID,

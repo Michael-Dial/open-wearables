@@ -214,8 +214,6 @@ class WhoopWebhookHandler(BaseWebhookHandler):
                 resource_id=resource_id,
             )
 
-            self.connection_repo.update_last_synced_at(db, connection)
-
             # Everything below re-resolves the connection from (user, provider) to
             # fetch the changed resource. The user may hold several Whoop accounts,
             # and the webhook named one of them - bind it so the fetch uses that
@@ -237,6 +235,7 @@ class WhoopWebhookHandler(BaseWebhookHandler):
                     )
                     result = {"status": "ignored", "reason": f"unhandled_event_type: {notification.type}"}
 
+            self.connection_repo.update_last_synced_at(db, connection)
             result.setdefault("user_id", str(user_id))
             results.append(result)
 
@@ -313,7 +312,7 @@ class WhoopWebhookHandler(BaseWebhookHandler):
     ) -> dict[str, Any]:
         """Delete the EventRecord matching external_id.
 
-        Recovery is stored as DataPointSeries (no external_id index), so
+        Recovery is stored as SeriesSample (no external_id index), so
         recovery.deleted is logged but not actioned.
         """
         if event_type == WhoopWebhookNotificationType.RECOVERY_DELETED:

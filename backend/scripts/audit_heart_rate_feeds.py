@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Audit stored heart rate for feeds that overwrite or mix with each other. Read-only.
 
-Each heart-rate row records the feed that wrote it (data_point_series.route_id; see
+Each heart-rate row records the feed that wrote it (series_sample.route_id; see
 app/schemas/enums/sample_route.py). Before that, two feeds of one provider could share
 a data source and overwrite each other at every second they both had - a Garmin run
 came back with all-day one-minute averages on every :00/:15/:30/:45 second - and
@@ -126,7 +126,7 @@ _WORKOUT_SPANS = """
         JOIN data_source sds
           ON sds.user_id = w.user_id AND sds.provider = w.provider
          AND sds.user_connection_id IS NOT DISTINCT FROM w.user_connection_id
-        JOIN data_point_series p
+        JOIN series_sample p
           ON p.data_source_id = sds.id AND p.series_type_definition_id = :hr
          AND p.recorded_at BETWEEN w.s AND w.e AND p.route_id IN :workout_routes
     )
@@ -136,7 +136,7 @@ _WORKOUT_SPANS = """
            COUNT(*) FILTER (WHERE p.route_id IS NULL) AS untagged_rows
     FROM owned o
     JOIN w ON w.id = o.workout_id
-    JOIN data_point_series p
+    JOIN series_sample p
       ON p.data_source_id = o.data_source_id AND p.series_type_definition_id = :hr
      AND p.recorded_at BETWEEN w.s AND w.e
      AND (p.route_id IS NULL OR p.route_id NOT IN :workout_routes)
@@ -162,7 +162,7 @@ _OVERLAPS = """
 
 _UNTAGGED = """
     SELECT ds.provider, ds.device_model, ds.source, p.data_source_id, COUNT(*)
-    FROM data_point_series p
+    FROM series_sample p
     JOIN data_source ds ON ds.id = p.data_source_id
     WHERE p.series_type_definition_id = :hr AND p.route_id IS NULL
       AND p.recorded_at >= :start AND p.recorded_at < :end {user}
@@ -173,7 +173,7 @@ _UNTAGGED = """
 _SHARED = """
     SELECT ds.provider, ds.device_model, ds.source, p.data_source_id,
            ARRAY_AGG(DISTINCT p.route_id) FILTER (WHERE p.route_id IS NOT NULL)
-    FROM data_point_series p
+    FROM series_sample p
     JOIN data_source ds ON ds.id = p.data_source_id
     WHERE p.series_type_definition_id = :hr AND p.recorded_at >= :start AND p.recorded_at < :end {user}
     GROUP BY ds.provider, ds.device_model, ds.source, p.data_source_id
@@ -193,7 +193,7 @@ _GARMIN_FIT_WORKOUTS = """
 
 _STORED_WORKOUT_HR = """
     SELECT p.recorded_at, p.value
-    FROM data_point_series p
+    FROM series_sample p
     JOIN data_source ds ON ds.id = p.data_source_id
     WHERE ds.user_id = :user_id AND ds.provider = 'garmin'
       AND ds.user_connection_id IS NOT DISTINCT FROM :connection_id

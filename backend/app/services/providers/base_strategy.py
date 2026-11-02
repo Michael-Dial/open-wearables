@@ -105,7 +105,7 @@ class ProviderCapabilities:
         Currently: Polar.
     max_historical_days:
         Hard upper limit on how far back the provider allows data to be
-        fetched. ``None`` means no known limit. Garmin: 30 days.
+        fetched. ``None`` means no known limit. Garmin: 30 days, Polar: 365 days.
     live_pull_lookback:
         Trailing window every *live* pull re-fetches, whatever ``PULL_SYNC_LOOKBACK``
         says. For providers whose API is keyed by the day the data was recorded rather
@@ -240,6 +240,8 @@ class BaseProviderStrategy(ABC):
         if not self.capabilities.rest_pull:
             raise UnsupportedProviderError(self.name, "historical sync")
 
+        if self.capabilities.max_historical_days is not None:
+            days = min(days, self.capabilities.max_historical_days)
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
 

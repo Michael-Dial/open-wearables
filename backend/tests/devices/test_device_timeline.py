@@ -14,12 +14,12 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models import (
-    DataPointSeries,
     DataPointSeriesArchive,
     DataSource,
     DeviceHistory,
     EventRecord,
     HealthScore,
+    SeriesSample,
     User,
     UserConnection,
     UserConnectionDevicePeriod,
@@ -254,14 +254,14 @@ class TestIngest:
     ) -> None:
         _state(db, garmin, ("fenix 8", None), ("Venu X1", SWITCH))
 
-        DataPointSeriesRepository(DataPointSeries).bulk_create(
+        DataPointSeriesRepository(SeriesSample).bulk_create(
             db, [_hr(user, garmin, BEFORE), _hr(user, garmin, SWITCH), _hr(user, garmin, AFTER)]
         )
         db.commit()
 
         sources = _sources(db, garmin)
         per_source = {
-            model: db.query(DataPointSeries).filter_by(data_source_id=source.id).count()
+            model: db.query(SeriesSample).filter_by(data_source_id=source.id).count()
             for model, source in sources.items()
         }
         assert per_source == {"fenix 8": 1, "Venu X1": 2}
@@ -272,7 +272,7 @@ class TestIngest:
     ) -> None:
         _state(db, garmin, ("Venu X1", SWITCH))
 
-        DataPointSeriesRepository(DataPointSeries).bulk_create(db, [_hr(user, garmin, BEFORE)])
+        DataPointSeriesRepository(SeriesSample).bulk_create(db, [_hr(user, garmin, BEFORE)])
         db.commit()
 
         assert set(_sources(db, garmin)) == {None}
@@ -296,12 +296,12 @@ class TestIngest:
         right = UserConnectionFactory(user=user, provider="garmin", provider_user_id="g-right", device_label="fenix 8")
         db.commit()
 
-        DataPointSeriesRepository(DataPointSeries).bulk_create(db, [_hr(user, left, BEFORE), _hr(user, right, AFTER)])
+        DataPointSeriesRepository(SeriesSample).bulk_create(db, [_hr(user, left, BEFORE), _hr(user, right, AFTER)])
         db.commit()
 
         for account in (left, right):
             source = _sources(db, account)["fenix 8"]
-            assert db.query(DataPointSeries).filter_by(data_source_id=source.id).count() == 1
+            assert db.query(SeriesSample).filter_by(data_source_id=source.id).count() == 1
 
 
 # ── re-filing what is already stored ─────────────────────────────────────────
@@ -324,7 +324,7 @@ def worn_through_the_switch(db: Session, user: User, garmin: UserConnection) -> 
     events = EventRecordRepository(EventRecord)
     events.create(db, _sleep(user, garmin, BEFORE))
     after = events.create(db, _sleep(user, garmin, AFTER))
-    DataPointSeriesRepository(DataPointSeries).bulk_create(db, [_hr(user, garmin, BEFORE), _hr(user, garmin, AFTER)])
+    DataPointSeriesRepository(SeriesSample).bulk_create(db, [_hr(user, garmin, BEFORE), _hr(user, garmin, AFTER)])
     db.commit()
     source = _sources(db, garmin)["fenix 8"]
     HealthScoreFactory(data_source=source, user_id=user.id, event_record_id=after.id, recorded_at=AFTER)
@@ -362,7 +362,7 @@ class TestRefile:
         moved = db.query(EventRecord).filter_by(data_source_id=venu.id).one()
         assert stayed.start_datetime == BEFORE
         assert moved.start_datetime == AFTER
-        assert db.query(DataPointSeries).filter_by(data_source_id=venu.id).one().recorded_at == AFTER
+        assert db.query(SeriesSample).filter_by(data_source_id=venu.id).one().recorded_at == AFTER
         assert db.query(HealthScore).filter_by(data_source_id=venu.id).one().event_record_id == moved.id
 
         history = db.query(DeviceHistory).filter_by(action="refiled").one()
@@ -471,14 +471,14 @@ class TestRefile:
             end_datetime=AFTER + timedelta(hours=20),
         )
         hr = SeriesTypeDefinitionFactory.get_or_create_heart_rate()
-        in_workout = DataPointSeries(
+        in_workout = SeriesSample(
             id=uuid4(),
             data_source_id=shared.id,
             recorded_at=AFTER + timedelta(minutes=30),
             value=Decimal(150),
             series_type_definition_id=hr.id,
         )
-        overnight = DataPointSeries(
+        overnight = SeriesSample(
             id=uuid4(),
             data_source_id=shared.id,
             recorded_at=AFTER + timedelta(hours=14),
@@ -498,8 +498,8 @@ class TestRefile:
         db.expire_all()
         assert db.get(EventRecord, workout.id).data_source_id == shared.id
         assert db.get(EventRecord, night.id).data_source_id == venu.id
-        assert db.get(DataPointSeries, in_workout.id).data_source_id == shared.id
-        assert db.get(DataPointSeries, overnight.id).data_source_id == venu.id
+        assert db.get(SeriesSample, in_workout.id).data_source_id == shared.id
+        assert db.get(SeriesSample, overnight.id).data_source_id == venu.id
 
     def test_on_garmin_an_archived_day_of_a_named_source_stays_and_is_counted(
         self, db: Session, user: User, garmin: UserConnection

@@ -19,9 +19,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DataPointSeries, DataSource
+from app.models import DataSource, SeriesAggregate, SeriesSample
 from app.repositories.user_connection_repository import UserConnectionRepository
-from app.schemas.enums import SeriesType, get_series_type_id
+from app.schemas.enums import ComputedBy, SeriesType, get_series_type_id
 from app.services.providers.garmin.data_247 import Garmin247Data
 from app.services.providers.garmin.oauth import GarminOAuth
 from app.utils.connection_context import active_connection
@@ -79,11 +79,11 @@ WALKING = _epoch(
 
 def _rows(db: Session, user_id: UUID, series_type: SeriesType) -> dict[int, Decimal]:
     rows = db.execute(
-        select(DataPointSeries.recorded_at, DataPointSeries.value)
-        .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+        select(SeriesSample.recorded_at, SeriesSample.value)
+        .join(DataSource, DataSource.id == SeriesSample.data_source_id)
         .where(
             DataSource.user_id == user_id,
-            DataPointSeries.series_type_definition_id == get_series_type_id(series_type),
+            SeriesSample.series_type_definition_id == get_series_type_id(series_type),
         )
     ).all()
     return {int(r.recorded_at.timestamp()): r.value for r in rows}
@@ -165,14 +165,28 @@ FIRST_EPOCH = _epoch(
 
 def _rows_with_flag(db: Session, user_id: UUID, series_type: SeriesType) -> dict[int, tuple[Decimal, bool | None]]:
     rows = db.execute(
-        select(DataPointSeries.recorded_at, DataPointSeries.value, DataPointSeries.is_daily_total)
-        .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+        select(SeriesSample.recorded_at, SeriesSample.value, SeriesSample.is_daily_total)
+        .join(DataSource, DataSource.id == SeriesSample.data_source_id)
         .where(
             DataSource.user_id == user_id,
-            DataPointSeries.series_type_definition_id == get_series_type_id(series_type),
+            SeriesSample.series_type_definition_id == get_series_type_id(series_type),
         )
     ).all()
     return {int(r.recorded_at.timestamp()): (r.value, r.is_daily_total) for r in rows}
+
+
+def _day_sums(db: Session, user_id: UUID, series_type: SeriesType) -> list[Decimal]:
+    rows = (
+        db.query(SeriesAggregate.sum)
+        .join(DataSource, DataSource.id == SeriesAggregate.data_source_id)
+        .filter(
+            DataSource.user_id == user_id,
+            SeriesAggregate.series_type_definition_id == get_series_type_id(series_type),
+            SeriesAggregate.computed_by == ComputedBy.PROVIDER,
+        )
+        .all()
+    )
+    return [Decimal(value) for (value,) in rows]
 
 
 class TestDailiesAndFirstEpochAtMidnight:
@@ -196,14 +210,12 @@ class TestDailiesAndFirstEpochAtMidnight:
     def test_both_survive_in_either_order(self, garmin_247: Garmin247Data, db: Session, order: list[str]) -> None:
         user_id = self._push_both(garmin_247, db, order)
 
-        assert _rows_with_flag(db, user_id, SeriesType.steps) == {
-            DAY_START: (Decimal(9_874), True),
-            DAY_START + 1: (Decimal(7), False),
-        }
-        assert _rows_with_flag(db, user_id, SeriesType.active_energy) == {
-            DAY_START: (Decimal(512), True),
-            DAY_START + 1: (Decimal(2), False),
-        }
+        # Since the aggregate tables the day's total is a day value in series_aggregate, so the
+        # two can no longer collide; the first slot keeps its one-second shift all the same.
+        assert _rows_with_flag(db, user_id, SeriesType.steps) == {DAY_START + 1: (Decimal(7), None)}
+        assert _rows_with_flag(db, user_id, SeriesType.active_energy) == {DAY_START + 1: (Decimal(2), None)}
+        assert _day_sums(db, user_id, SeriesType.steps) == [Decimal(9_874)]
+        assert _day_sums(db, user_id, SeriesType.active_energy) == [Decimal(512)]
 
     def test_only_the_midnight_slot_moves(self, garmin_247: Garmin247Data) -> None:
         normalized = garmin_247.normalize_epochs([FIRST_EPOCH, SEDENTARY], uuid4())

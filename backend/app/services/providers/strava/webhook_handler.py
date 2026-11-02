@@ -274,8 +274,22 @@ class StravaWebhookHandler(BaseWebhookHandler):
 
         user_id: UUID = connection.user_id
 
-        self.connection_repo.update_last_synced_at(db, connection)
+        result = self._handle_activity_event(db, aspect_type, user_id, object_id, owner_id, trace_id, connection.id)
+        if aspect_type in ("create", "update") and result.get("status") != "error":
+            self.connection_repo.update_last_synced_at(db, connection)
+        return result
 
+    def _handle_activity_event(
+        self,
+        db: DbSession,
+        aspect_type: str,
+        user_id: UUID,
+        object_id: int,
+        owner_id: int,
+        trace_id: str,
+        connection_id: UUID,
+    ) -> dict[str, Any]:
+        """Apply an activity create/update/delete for a resolved user, on the account the webhook named."""
         if aspect_type == "delete":
             return self._handle_activity_delete(db, user_id, object_id, trace_id)
 
@@ -299,7 +313,7 @@ class StravaWebhookHandler(BaseWebhookHandler):
             # from (user, provider), and a participant with two Strava accounts
             # would otherwise have one account's activity pulled with the
             # other's token and filed against the wrong data source.
-            with active_connection(connection.id):
+            with active_connection(connection_id):
                 activity_data = self.workouts.get_workout_detail_from_api(db, user_id, str(object_id))
             if not activity_data:
                 log_structured(
@@ -320,7 +334,7 @@ class StravaWebhookHandler(BaseWebhookHandler):
                 }
 
             activity = StravaActivityJSON(**activity_data)
-            with active_connection(connection.id):
+            with active_connection(connection_id):
                 created_ids = self.workouts.process_push_activity(db=db, activity=activity, user_id=user_id)
 
             log_structured(

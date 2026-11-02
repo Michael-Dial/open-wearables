@@ -32,6 +32,7 @@ from app.services.sdk.sleep_service import (
     _calculate_final_metrics,
     finish_sleep,
     handle_sleep_data,
+    is_ready_to_finish,
     load_sleep_state,
     session_scope,
 )
@@ -470,9 +471,10 @@ class TestFinishSleep:
         # Total duration should include sleeping time
         assert detail.sleep_total_duration_minutes > 0
         # Deep/rem/light should all be 0 (no breakdown available)
-        assert detail.sleep_deep_minutes == 0
-        assert detail.sleep_rem_minutes == 0
-        assert detail.sleep_light_minutes == 0
+        # Upstream #1953: phases the watch did not stage are unreported, not 0 minutes
+        assert detail.sleep_deep_minutes is None
+        assert detail.sleep_rem_minutes is None
+        assert detail.sleep_light_minutes is None
         # Stages should be present
         assert detail.sleep_stages is not None
         assert len(detail.sleep_stages) == 3
@@ -1343,7 +1345,7 @@ class TestLiveNightKeepsItsAccount:
         assert db.query(EventRecord).filter(EventRecord.category == "sleep").count() == 0
 
         # What finalize_stale_sleeps does once the gap has passed, in no account scope.
-        state = load_sleep_state(str(user.id), session_scope("Apple Watch", "Watch7,12"))
+        state = load_sleep_state(str(user.id), session_scope("apple", None, "Apple Watch", "Watch7,12", connection.id))
         assert state is not None
         finish_sleep(db, str(user.id), state)
 
@@ -1354,3 +1356,160 @@ class TestLiveNightKeepsItsAccount:
             .one()
         )
         assert night[1].user_connection_id == connection.id
+
+
+def _stage(stage: SleepStageType, start: str, end: str) -> SleepStateStage:
+    return SleepStateStage(stage=stage, start_time=_dt(start), end_time=_dt(end))
+
+
+class TestFinishSleepUnreportedStages:
+    """Phases a source did not measure are saved as None; measured zeros stay 0."""
+
+    @staticmethod
+    def _finish(db: Session, stages: list[SleepStateStage]) -> EventRecordDetailCreate:
+        with (
+            patch("app.services.sdk.sleep_service.event_record_service") as mock_event_service,
+            patch("app.services.sdk.sleep_service.delete_sleep_state"),
+        ):
+            mock_event_service.create.return_value = MagicMock(id=uuid4())
+            mock_event_service.find_adjacent_sleep_record.return_value = None
+            state = SleepState(
+                uuid=str(uuid4()),
+                source_name="iPhone",
+                provider="apple",
+                start_time=stages[0].start_time,
+                end_time=stages[-1].end_time,
+                last_start_timestamp=stages[-1].start_time,
+                last_end_timestamp=stages[-1].end_time,
+                stages=stages,
+            )
+            finish_sleep(db, str(uuid4()), state)
+            return mock_event_service.create_detail.call_args[0][1]
+
+    def test_only_in_bed_leaves_all_stages_none(self, db: Session) -> None:
+        detail = self._finish(db, [_stage(SleepStageType.IN_BED, "2026-03-15T23:00:00Z", "2026-03-16T07:00:00Z")])
+
+        assert detail.sleep_total_duration_minutes == 480
+        assert detail.sleep_deep_minutes is None
+        assert detail.sleep_light_minutes is None
+        assert detail.sleep_rem_minutes is None
+        assert detail.sleep_awake_minutes is None
+
+    def test_sleeping_and_awake_keep_awake_minutes(self, db: Session) -> None:
+        detail = self._finish(
+            db,
+            [
+                _stage(SleepStageType.SLEEPING, "2026-03-15T23:00:00Z", "2026-03-16T02:00:00Z"),
+                _stage(SleepStageType.AWAKE, "2026-03-16T02:00:00Z", "2026-03-16T02:20:00Z"),
+                _stage(SleepStageType.SLEEPING, "2026-03-16T02:20:00Z", "2026-03-16T06:00:00Z"),
+            ],
+        )
+
+        assert detail.sleep_awake_minutes == 20
+        assert detail.sleep_deep_minutes is None
+        assert detail.sleep_light_minutes is None
+        assert detail.sleep_rem_minutes is None
+
+    def test_detailed_stages_without_rem_or_awake_report_zero(self, db: Session) -> None:
+        detail = self._finish(
+            db,
+            [
+                _stage(SleepStageType.LIGHT, "2026-03-15T23:00:00Z", "2026-03-16T01:00:00Z"),
+                _stage(SleepStageType.DEEP, "2026-03-16T01:00:00Z", "2026-03-16T02:00:00Z"),
+            ],
+        )
+
+        assert detail.sleep_light_minutes == 120
+        assert detail.sleep_deep_minutes == 60
+        assert detail.sleep_rem_minutes == 0
+        assert detail.sleep_awake_minutes == 0
+
+
+class TestReadyToFinish:
+    """A session closes after the end gap, and one with Apple Watch sleep also once its writer's uploads stop."""
+
+    NOW = _dt("2026-04-18T09:00:00Z")
+    WATCH = {"appId": "com.apple.health.FA11388E", "deviceType": "watch", "deviceModel": "Watch7,1"}
+    IPHONE = {"appId": "com.apple.health.81F2A6D0", "deviceType": "phone", "deviceModel": "iPhone15,2"}
+    OURA = {"appId": "com.ouraring.oura", "deviceType": "phone", "deviceModel": "iPhone15,2"}
+
+    def _state(
+        self, ended_ago: int, received_ago: int | None, watch_sleep: bool = True, now: datetime = NOW
+    ) -> SleepState:
+        end = now - timedelta(minutes=ended_ago)
+        return SleepState(
+            uuid=str(uuid4()),
+            source_name="Apple Watch",
+            source_app_id=self.WATCH["appId"],
+            provider="apple",
+            start_time=end - timedelta(hours=7),
+            end_time=end,
+            last_start_timestamp=end - timedelta(minutes=10),
+            last_end_timestamp=end,
+            last_received_at=None if received_ago is None else now - timedelta(minutes=received_ago),
+            has_apple_watch_sleep=watch_sleep,
+        )
+
+    def _payload(self, samples: list[tuple[str, str, str, dict]]) -> SyncRequest:
+        """One upload of (stage, start, end, source) samples."""
+        return SyncRequest.model_validate(
+            {
+                "provider": "apple",
+                "sdkVersion": "0.15.0",
+                "syncTimestamp": "2026-04-18T08:00:00Z",
+                "data": {
+                    "sleep": [
+                        {"id": str(uuid4()), "stage": stage, "startDate": start, "endDate": end, "source": source}
+                        for stage, start, end, source in samples
+                    ]
+                },
+            }
+        )
+
+    def _upload(self, mock_redis_func: MagicMock, samples: list[tuple[str, str, str, dict]]) -> dict[str, SleepState]:
+        """Handle one upload and return the states it saved, by Redis key (one per session scope)."""
+        mock_redis_func.return_value.get.return_value = None
+        with patch("app.services.sdk.sleep_service.finish_sleep"), patch("app.services.sdk.sleep_service.celery_app"):
+            handle_sleep_data(MagicMock(), self._payload(samples), str(uuid4()))
+        return {
+            c.args[0]: SleepState.model_validate_json(c.args[1])
+            for c in mock_redis_func.return_value.set.call_args_list
+        }
+
+    def test_any_session_closes_after_the_end_gap(self) -> None:
+        assert is_ready_to_finish(self._state(ended_ago=120, received_ago=0, watch_sleep=False), self.NOW)
+
+    def test_an_apple_watch_session_closes_after_a_quiet_period(self) -> None:
+        assert is_ready_to_finish(self._state(ended_ago=40, received_ago=15), self.NOW)
+
+    def test_an_apple_watch_session_stays_open_while_uploads_arrive(self) -> None:
+        assert not is_ready_to_finish(self._state(ended_ago=40, received_ago=5), self.NOW)
+
+    def test_a_session_without_apple_watch_sleep_waits_for_the_end_gap(self) -> None:
+        assert not is_ready_to_finish(self._state(ended_ago=40, received_ago=30, watch_sleep=False), self.NOW)
+
+    def test_a_state_without_an_upload_time_waits_for_the_end_gap(self) -> None:
+        assert not is_ready_to_finish(self._state(ended_ago=40, received_ago=None), self.NOW)
+
+    @patch("app.services.sdk.sleep_service.get_redis_client")
+    def test_the_iphone_in_bed_joins_the_watch_night_and_other_apps_stay_apart(
+        self, mock_redis_func: MagicMock
+    ) -> None:
+        """Fork scope, upstream grouping (#1876): Apple's own writers share one session; Oura has its own."""
+        saved = self._upload(
+            mock_redis_func,
+            [
+                ("inBed", "2026-04-17T23:00:00Z", "2026-04-18T07:00:00Z", self.IPHONE),
+                ("asleepCore", "2026-04-17T23:10:00Z", "2026-04-18T03:00:00Z", self.WATCH),
+                ("asleepDeep", "2026-04-18T03:00:00Z", "2026-04-18T04:00:00Z", self.WATCH),
+                ("asleepCore", "2026-04-17T23:20:00Z", "2026-04-18T06:30:00Z", self.OURA),
+            ],
+        )
+
+        assert len(saved) == 2
+        apple = next(state for state in saved.values() if state.source_app_id != self.OURA["appId"])
+        oura = next(state for state in saved.values() if state.source_app_id == self.OURA["appId"])
+        assert {stage.stage for stage in apple.stages} >= {SleepStageType.IN_BED, SleepStageType.DEEP}
+        assert apple.has_apple_watch_sleep
+        assert apple.last_received_at is not None
+        assert not oura.has_apple_watch_sleep

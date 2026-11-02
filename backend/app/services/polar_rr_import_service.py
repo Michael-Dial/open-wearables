@@ -15,7 +15,7 @@ from logging import Logger, getLogger
 from uuid import UUID, uuid4
 
 from app.database import DbSession
-from app.models import DataPointSeries
+from app.models import SeriesSample
 from app.repositories import DataPointSeriesRepository
 from app.schemas.enums import EventCategory, SampleRoute, SeriesType
 from app.schemas.model_crud.activities import TimeSeriesSampleCreate
@@ -32,7 +32,7 @@ class PolarRrImportError(ValueError):
 class PolarRrImportService:
     def __init__(self, log: Logger) -> None:
         self.logger = log
-        self.data_point_series_repo = DataPointSeriesRepository(DataPointSeries)
+        self.data_point_series_repo = DataPointSeriesRepository(SeriesSample)
 
     @staticmethod
     def parse_rr_csv(contents: bytes) -> list[RrRow]:

@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DataPointSeries
+from app.models import SeriesSample
 from app.repositories.data_point_series_repository import DataPointSeriesRepository
 from app.schemas.enums import SampleRoute, SeriesType, get_series_type_id, route_id_for
 from app.schemas.model_crud.activities import TimeSeriesQueryParams, TimeSeriesSampleCreate
@@ -48,9 +48,9 @@ def _sample(
 
 def _held(db: Session, user_id: UUID, at: datetime = T0) -> tuple[float, int | None]:
     row = db.execute(
-        select(DataPointSeries.value, DataPointSeries.route_id).where(
-            DataPointSeries.recorded_at == at,
-            DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.heart_rate),
+        select(SeriesSample.value, SeriesSample.route_id).where(
+            SeriesSample.recorded_at == at,
+            SeriesSample.series_type_definition_id == get_series_type_id(SeriesType.heart_rate),
         )
     ).one()
     return float(row.value), row.route_id
@@ -59,7 +59,7 @@ def _held(db: Session, user_id: UUID, at: datetime = T0) -> tuple[float, int | N
 class TestRoutePrecedence:
     @pytest.fixture
     def repo(self) -> DataPointSeriesRepository:
-        return DataPointSeriesRepository(DataPointSeries)
+        return DataPointSeriesRepository(SeriesSample)
 
     @pytest.mark.parametrize("all_day_first", [True, False])
     def test_a_workout_sample_keeps_its_second_whichever_arrives_first(
@@ -144,7 +144,7 @@ class TestRoutePrecedence:
         )
 
         row = db.execute(
-            select(DataPointSeries.value, DataPointSeries.is_daily_total).where(DataPointSeries.recorded_at == midnight)
+            select(SeriesSample.value, SeriesSample.is_daily_total).where(SeriesSample.recorded_at == midnight)
         ).one()
         assert (float(row.value), row.is_daily_total) == (11_204.0, True)
 

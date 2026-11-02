@@ -137,11 +137,11 @@ _MOVE_EVENTS = text("""
 """)
 
 _MOVE_POINTS = text("""
-    UPDATE data_point_series d SET data_source_id = :target
+    UPDATE series_sample d SET data_source_id = :target
     WHERE d.data_source_id = :src
       AND d.recorded_at >= :lo AND d.recorded_at < :hi
       AND NOT EXISTS (
-          SELECT 1 FROM data_point_series d2
+          SELECT 1 FROM series_sample d2
           WHERE d2.data_source_id = :target
             AND d2.series_type_definition_id = d.series_type_definition_id
             AND d2.recorded_at = d.recorded_at
@@ -152,7 +152,7 @@ _COUNT = text("""
     SELECT
       (SELECT COUNT(*) FROM event_record
          WHERE data_source_id = :src AND start_datetime >= :lo AND start_datetime < :hi),
-      (SELECT COUNT(*) FROM data_point_series
+      (SELECT COUNT(*) FROM series_sample
          WHERE data_source_id = :src AND recorded_at >= :lo AND recorded_at < :hi)
 """)
 

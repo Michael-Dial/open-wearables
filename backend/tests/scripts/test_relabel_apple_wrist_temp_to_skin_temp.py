@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.models import DataPointSeries, DataPointSeriesArchive, DataSource, SeriesTypeDefinition
+from app.models import DataPointSeriesArchive, DataSource, SeriesSample, SeriesTypeDefinition
 from app.schemas.enums.aggregation_method import AggregationMethod
 from app.schemas.enums.provider import ProviderName
 from tests.factories import DataPointSeriesFactory, DataSourceFactory
@@ -81,7 +81,7 @@ def _point(
     type_id: int = BODY_TEMP_ID,
     recorded_at: datetime = NIGHT,
     value: str = "35.12",
-) -> DataPointSeries:
+) -> SeriesSample:
     return DataPointSeriesFactory(
         data_source=source,
         series_type=_series_type(db, type_id),
@@ -105,9 +105,9 @@ def _archive_row(db: Session, source: DataSource, *, type_id: int, bucket_start_
     db.flush()
 
 
-def _type_id(db: Session, point: DataPointSeries) -> int:
+def _type_id(db: Session, point: SeriesSample) -> int:
     return db.execute(
-        text("SELECT series_type_definition_id FROM data_point_series WHERE id = :id"), {"id": point.id}
+        text("SELECT series_type_definition_id FROM series_sample WHERE id = :id"), {"id": point.id}
     ).scalar_one()
 
 
@@ -189,7 +189,7 @@ def test_dry_run_makes_no_changes_and_reports_what_it_matched(db: Session, capsy
     result = relabel_apple_wrist_temp(db, dry_run=True)
 
     assert result["series_updated"] == 2  # reported as "would update"
-    assert _type_ids(db, "data_point_series") == [BODY_TEMP_ID] * 3
+    assert _type_ids(db, "series_sample") == [BODY_TEMP_ID] * 3
     out = capsys.readouterr().out
     assert "on sources not named as an Apple Watch (review): 1" in out
     assert "Apple body_temperature rows left as they are:   1" in out
@@ -203,7 +203,7 @@ def test_idempotent_second_run_is_noop(db: Session) -> None:
 
     assert second["series_updated"] == 0
     assert second["series_deleted"] == 0
-    assert _type_ids(db, "data_point_series") == [SKIN_TEMP_ID]
+    assert _type_ids(db, "series_sample") == [SKIN_TEMP_ID]
 
 
 def test_handles_unique_conflict_with_existing_skin_temp(db: Session) -> None:
@@ -218,7 +218,7 @@ def test_handles_unique_conflict_with_existing_skin_temp(db: Session) -> None:
 
     assert result["series_deleted"] == 1
     assert result["series_updated"] == 0
-    rows = db.query(DataPointSeries).filter(DataPointSeries.data_source_id == watch.id).all()
+    rows = db.query(SeriesSample).filter(SeriesSample.data_source_id == watch.id).all()
     assert len(rows) == 1
     assert rows[0].series_type_definition_id == SKIN_TEMP_ID
 

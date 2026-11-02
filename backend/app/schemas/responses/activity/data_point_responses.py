@@ -4,9 +4,20 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.schemas.enums import SeriesType
+from app.schemas.enums import ComputedBy, SeriesType
 from app.schemas.utils import SourceMetadata
 from app.utils.dates import ZoneOffset
+
+
+class SeriesStats(BaseModel):
+    """Every statistic held for a period. The sample's value is the one its series is read by."""
+
+    avg: float | None = None
+    min: float | None = None
+    max: float | None = None
+    sum: float | None = None
+    last: float | None = None
+    count: int
 
 
 class TimeSeriesSample(BaseModel):
@@ -38,6 +49,12 @@ class TimeSeriesSample(BaseModel):
     # None on every other sample. Raw samples only.
     beat_series_id: str | None = None
     preceded_by_gap: bool | None = None
+    # Width of a sample reported over a window (a 15-minute epoch is 900); None for an instant.
+    window_seconds: int | None = None
+    # Day, week and month resolutions: the period's end, who computed it, and all its statistics.
+    period_end: datetime | None = None
+    computed_by: ComputedBy | None = None
+    stats: SeriesStats | None = None
 
 
 class ActivityAggregateResult(TypedDict):

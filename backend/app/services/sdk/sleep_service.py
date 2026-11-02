@@ -11,6 +11,7 @@ from celery import current_app as celery_app
 
 from app.config import settings
 from app.constants.celery_tasks import CeleryTask
+from app.constants.devices_map import is_apple_own_source
 from app.constants.series_types.sdk import (
     SleepPhase,
     get_apple_sleep_phase,
@@ -38,6 +39,8 @@ from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.sdk.device_resolution import extract_device_ids, extract_device_info, extract_reported_device_type
 from app.utils.connection_context import active_connection, get_active_connection_id
+from app.utils.dates import as_utc
+from app.utils.sleep_stages import measured_stages
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
@@ -60,26 +63,53 @@ _STAGE_TO_METRIC: dict[str, str] = {
 _SCOPE_SEP = "\x1f"
 
 
-def session_scope(source_name: str | None, device_model: str | None) -> str:
-    """Identify which stream of sleep a session belongs to.
+def session_scope(
+    provider: str | None,
+    source_app_id: str | None,
+    source_name: str | None,
+    device_model: str | None,
+    user_connection_id: UUID | None,
+) -> str:
+    """Identify which stream of sleep a session belongs to: one writer app on one account.
 
-    A sleep session is per device+app, not per user.  Apple Health relays every
-    sleep-writing app on the phone through one upload, so a user can have Oura, a
-    bed sensor, a strap and the watch all reporting the same night.  Scoping the
-    state by the reporting stream keeps those nights separate; without it whichever
-    record happens to arrive first claims the session and every other source's
-    stages are absorbed into it, so the night is stored under the wrong device and
-    the real recorder appears to have written nothing at all.
+    Apple Health relays every sleep-writing app on the phone through one upload, so a
+    user can have Oura, a bed sensor, a strap and the watch all reporting the same night.
+    Scoping the state by writer keeps those nights separate; without it whichever record
+    arrives first claims the session and every other source's stages are absorbed into it.
 
-    Matches the identity of a ``DataSource`` (provider is already implied by the
-    upload) so a session can never span two rows that would be stored separately.
+    Apple's own sources share one session (upstream #1876): the iPhone's in-bed sample
+    belongs to the Watch's night. Split by device model, as the fork once did, the iPhone
+    stored an in-bed-only night that read as sleep, and the Watch's night lost its time
+    in bed. A record that names no writer app (SDKs before appId) keeps the fork's split
+    by source name and device model, the only thing that tells two such streams apart.
+    The account is part of the scope (fork): two accounts' nights must never be one session.
     """
-    return f"{device_model or ''}{_SCOPE_SEP}{source_name or 'unknown'}"
+    if is_apple_own_source(source_app_id):
+        writer = "apple"
+    elif source_app_id:
+        writer = source_app_id
+    else:
+        writer = f"name:{source_name or 'unknown'}{_SCOPE_SEP}{device_model or ''}"
+    account = str(user_connection_id) if user_connection_id else ""
+    return f"{provider or ''}:{writer}{_SCOPE_SEP}{account}"
 
 
 def state_scope(state: SleepState) -> str:
     """The scope a live session belongs to, derived from the session itself."""
-    return session_scope(state.source_name, state.device_model)
+    return session_scope(
+        state.provider, state.source_app_id, state.source_name, state.device_model, state.user_connection_id
+    )
+
+
+def is_ready_to_finish(state: SleepState, now: datetime) -> bool:
+    """True after the end gap, or for a session with Apple Watch sleep once its writer's uploads go quiet."""
+    if now - as_utc(state.end_time) >= timedelta(minutes=settings.sleep_end_gap_minutes):
+        return True
+    return (
+        state.has_apple_watch_sleep
+        and state.last_received_at is not None
+        and now - as_utc(state.last_received_at) >= timedelta(minutes=settings.sleep_upload_quiet_minutes)
+    )
 
 
 def key(user_id: str, scope: str = "") -> str:
@@ -385,9 +415,9 @@ def handle_sleep_data(
             device_type = extract_reported_device_type(provider, item.source)
             source_ids = extract_device_ids(item.source)
             incoming_by_source[original_source_name or "unknown"] += 1
-            by_scope[session_scope(original_source_name, device_model)].append(
-                (item, device_model, original_source_name, device_type, source_ids)
-            )
+            by_scope[
+                session_scope(provider, source_ids[1], original_source_name, device_model, get_active_connection_id())
+            ].append((item, device_model, original_source_name, device_type, source_ids))
 
         # One session per reporting stream. A shared session would let whichever
         # source sorted first claim the night and swallow every other source's
@@ -447,6 +477,11 @@ def handle_sleep_data(
                 )
                 applied += 1
                 applied_by_source[original_source_name or "unknown"] += 1
+                # Upstream #1876's quiet-upload rule is for Apple Watch sleep. Read from the
+                # Apple-own writer and its hardware model, not the SDK's deviceType, which on
+                # the Apple route names the handset (see extract_reported_device_type).
+                if is_apple_own_source(source_app_id) and (device_model or "").startswith("Watch"):
+                    current_state.has_apple_watch_sleep = True
 
                 # Samsung's SDK sends its own sleep score on the entry (upstream #1751).
                 # A state here is already one device's stream, but a resumed state may
@@ -458,6 +493,11 @@ def handle_sleep_data(
             if not current_state:
                 continue
 
+            # The writer uploaded just now: a session with Apple Watch sleep is finished once
+            # these go quiet (is_ready_to_finish), not only after the end gap.
+            now = datetime.now(timezone.utc)
+            current_state.last_received_at = now
+
             # Persist the accumulated state once per stream, after its whole batch.
             save_sleep_state(user_id, current_state, scope)
 
@@ -466,10 +506,7 @@ def handle_sleep_data(
             # finish_sleep now merges the result with any adjacent record already in
             # the DB — so each payload extends the growing record rather than
             # creating a separate session.
-            session_end = current_state.end_time
-            if session_end.tzinfo is None:
-                session_end = session_end.replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) - session_end >= timedelta(minutes=settings.sleep_end_gap_minutes):
+            if is_ready_to_finish(current_state, now):
                 finish_sleep(db_session, user_id, current_state)
 
     finally:
@@ -634,6 +671,7 @@ def _finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> Non
         settings.sleep_end_gap_minutes,
         source=source_for_lookup,
         provider=state.provider,
+        source_app_id=state.source_app_id,
         # The upload task binds the account the batch arrived through; the record
         # written below resolves its data source from the same binding.
         user_connection_id=get_active_connection_id(),
@@ -672,6 +710,9 @@ def _finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> Non
         Decimal(str(total_sleep_seconds / time_in_bed_seconds * 100)) if time_in_bed_seconds > 0 else None
     )
 
+    # Upstream #1953: a stage the source did not measure is None, not 0 minutes.
+    has_phases, has_awake = measured_stages(cleaned_stages)
+
     sleep_record = EventRecordCreate(
         id=uuid4(),
         external_id=state.uuid,
@@ -696,10 +737,10 @@ def _finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> Non
         record_id=sleep_record.id,
         sleep_total_duration_minutes=int(total_sleep_seconds // 60),
         sleep_time_in_bed_minutes=int(time_in_bed_seconds // 60),
-        sleep_deep_minutes=int(metrics["deep_seconds"] // 60),
-        sleep_rem_minutes=int(metrics["rem_seconds"] // 60),
-        sleep_light_minutes=int(metrics["light_seconds"] // 60),
-        sleep_awake_minutes=int(metrics["awake_seconds"] // 60),
+        sleep_deep_minutes=int(metrics["deep_seconds"] // 60) if has_phases else None,
+        sleep_rem_minutes=int(metrics["rem_seconds"] // 60) if has_phases else None,
+        sleep_light_minutes=int(metrics["light_seconds"] // 60) if has_phases else None,
+        sleep_awake_minutes=int(metrics["awake_seconds"] // 60) if has_awake else None,
         sleep_efficiency_score=sleep_efficiency,
         is_nap=False,
         sleep_stages=cleaned_stages or None,

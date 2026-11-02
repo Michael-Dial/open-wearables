@@ -49,6 +49,7 @@ class PolarStrategy(BaseProviderStrategy):
             webhook_ping=True,
             webhook_registration_api=True,
             webhook_inbound_secret=True,
+            max_historical_days=365,
             # AccessLink is keyed by recording day; data lands when the watch syncs with Flow.
             live_pull_lookback=settings.polar_pull_lookback,
         )

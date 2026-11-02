@@ -63,12 +63,13 @@ def _relayed_garmin(user: User, **kwargs) -> DataSource:
 
 
 def _steps(data_source: DataSource, at: datetime, value: int) -> None:
+    # A reading, not a flagged daily total: since the aggregate tables a day value lives in
+    # series_aggregate, and a sample flagged is_daily_total is history the backfill moves there.
     DataPointSeriesFactory(
         data_source=data_source,
         series_type=SeriesTypeDefinitionFactory.get_or_create_steps(),
         recorded_at=at,
         value=Decimal(value),
-        is_daily_total=True,
     )
 
 
@@ -312,7 +313,6 @@ class TestSeriesTypeGranularity:
             series_type=SeriesTypeDefinitionFactory.get_or_create_flights_climbed(),
             recorded_at=DAY,
             value=Decimal(12),
-            is_daily_total=True,
         )
         db.commit()
 

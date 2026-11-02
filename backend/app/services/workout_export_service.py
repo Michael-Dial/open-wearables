@@ -32,7 +32,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import DbSession
-from app.models import DataPointSeries, DataSource, EventRecord, User, WorkoutDetails
+from app.models import DataSource, EventRecord, SeriesSample, User, WorkoutDetails
 from app.schemas.enums import SeriesType, get_series_type_from_id, get_series_type_id, get_series_type_unit
 from app.schemas.model_crud.activities import EventRecordQueryParams, WorkoutInclude
 from app.schemas.responses.activity import Workout
@@ -324,8 +324,8 @@ class WorkoutExportService:
     ) -> list[SeriesType]:
         """The metrics any source recorded in the window, so the relay rule can be asked per metric."""
         rows = (
-            db_session.query(DataPointSeries.series_type_definition_id)
-            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            db_session.query(SeriesSample.series_type_definition_id)
+            .join(DataSource, SeriesSample.data_source_id == DataSource.id)
             .filter(*self._sample_filters(user_id, start, end, (), exclude_types, ()))
             .distinct()
             .all()
@@ -343,24 +343,24 @@ class WorkoutExportService:
     ) -> list[Any]:
         filters: list[Any] = [
             DataSource.user_id == user_id,
-            DataPointSeries.recorded_at >= start,
-            DataPointSeries.recorded_at <= end,
+            SeriesSample.recorded_at >= start,
+            SeriesSample.recorded_at <= end,
             # A daily total stamped inside the window is not something the workout
             # recorded.
-            DataPointSeries.is_daily_total.isnot(True),
+            SeriesSample.is_daily_total.isnot(True),
         ]
         if types:
-            filters.append(DataPointSeries.series_type_definition_id.in_([get_series_type_id(t) for t in types]))
+            filters.append(SeriesSample.series_type_definition_id.in_([get_series_type_id(t) for t in types]))
         if exclude_types:
             filters.append(
-                DataPointSeries.series_type_definition_id.notin_([get_series_type_id(t) for t in exclude_types])
+                SeriesSample.series_type_definition_id.notin_([get_series_type_id(t) for t in exclude_types])
             )
         for plan in relay_plans:
             filters.extend(
                 plan.conditions(
-                    DataPointSeries.data_source_id,
-                    key_column=DataPointSeries.series_type_definition_id,
-                    timestamp_column=DataPointSeries.recorded_at,
+                    SeriesSample.data_source_id,
+                    key_column=SeriesSample.series_type_definition_id,
+                    timestamp_column=SeriesSample.recorded_at,
                 )
             )
         return filters
@@ -380,17 +380,17 @@ class WorkoutExportService:
         Taken before the samples so the wide header is known up front and the samples
         can stream through one second at a time instead of being collected first.
         """
-        second = func.date_trunc("second", DataPointSeries.recorded_at)
+        second = func.date_trunc("second", SeriesSample.recorded_at)
         rows = (
             db_session.query(
-                DataPointSeries.data_source_id,
-                DataPointSeries.series_type_definition_id,
+                SeriesSample.data_source_id,
+                SeriesSample.series_type_definition_id,
                 func.count(),
                 func.count(func.distinct(second)),
             )
-            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            .join(DataSource, SeriesSample.data_source_id == DataSource.id)
             .filter(*self._sample_filters(user_id, start, end, types, exclude_types, relay_plans))
-            .group_by(DataPointSeries.data_source_id, DataPointSeries.series_type_definition_id)
+            .group_by(SeriesSample.data_source_id, SeriesSample.series_type_definition_id)
             .all()
         )
         return [(source_id, type_id, count, count > seconds) for source_id, type_id, count, seconds in rows]
@@ -407,19 +407,19 @@ class WorkoutExportService:
     ) -> Iterator[_SampleRow]:
         query = (
             db_session.query(
-                DataPointSeries.recorded_at,
-                DataPointSeries.zone_offset,
-                DataPointSeries.series_type_definition_id,
-                DataPointSeries.value,
-                DataPointSeries.data_source_id,
-                DataPointSeries.provider_metadata,
+                SeriesSample.recorded_at,
+                SeriesSample.zone_offset,
+                SeriesSample.series_type_definition_id,
+                SeriesSample.value,
+                SeriesSample.data_source_id,
+                SeriesSample.provider_metadata,
             )
-            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            .join(DataSource, SeriesSample.data_source_id == DataSource.id)
             .filter(*self._sample_filters(user_id, start, end, types, exclude_types, relay_plans))
             .order_by(
-                DataPointSeries.recorded_at,
-                DataPointSeries.data_source_id,
-                DataPointSeries.series_type_definition_id,
+                SeriesSample.recorded_at,
+                SeriesSample.data_source_id,
+                SeriesSample.series_type_definition_id,
             )
             .yield_per(5000)
         )
