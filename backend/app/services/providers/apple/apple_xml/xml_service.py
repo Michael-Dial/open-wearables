@@ -41,6 +41,15 @@ _ENERGY_SERIES = {
 }
 
 
+# Series whose records keep their HealthKit metadata on this path. Every other record's
+# entries are dropped: most say nothing a consumer reads, and a full export is millions of
+# rows. HRV keeps its window and algorithm version; VO2max keeps HealthKit's test type
+# (maximal test, submaximal prediction or non-exercise prediction), stored verbatim and
+# not yet typed, because without it a watch's estimate and a lab result entered into
+# Health are the same row.
+METADATA_SERIES: frozenset[SeriesType] = WINDOWED_SERIES | {SeriesType.vo2_max}
+
+
 class XMLService:
     def __init__(self, source: str | Path | BinaryIO, log: Logger):
         self.xml_source = source
@@ -254,7 +263,7 @@ class XMLService:
                     document["startDate"],
                     document.get("endDate"),
                 )
-                if series_type in WINDOWED_SERIES
+                if series_type in METADATA_SERIES
                 else None
             ),
         )

@@ -168,6 +168,10 @@ class SeriesType(str, Enum):
     garmin_skin_temperature = "garmin_skin_temperature"  # Skin temp deviation from baseline
     garmin_fitness_age = "garmin_fitness_age"  # Garmin fitness age estimate
     garmin_body_battery = "garmin_body_battery"  # Garmin body battery (0-100)
+    # Garmin keeps a cycling VO2max beside the running one (userMetrics.vo2MaxCycling). Its own
+    # series, not vo2_max: both arrive on one data source for one calendar day, so as one
+    # series the second would overwrite the first, and a mean over both is neither estimate.
+    garmin_vo2_max_cycling = "garmin_vo2_max_cycling"
 
     # =========================================================================
     # WITHINGS-SPECIFIC METRICS (IDs 240-249)
@@ -379,6 +383,7 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (221, SeriesType.garmin_skin_temperature, "celsius"),  # kept for backwards compatibility
     (222, SeriesType.garmin_fitness_age, "years"),
     (223, SeriesType.garmin_body_battery, "percent"),
+    (224, SeriesType.garmin_vo2_max_cycling, "ml_kg_min"),
     # -------------------------------------------------------------------------
     # WITHINGS-SPECIFIC METRICS (IDs 240-249)
     # -------------------------------------------------------------------------

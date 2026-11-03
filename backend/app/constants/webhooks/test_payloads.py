@@ -373,6 +373,9 @@ EXAMPLE_PAYLOADS: dict[str, dict] = {
     WebhookEventType.SERIES_GARMIN_FITNESS_AGE: _ts_payload(
         WebhookEventType.SERIES_GARMIN_FITNESS_AGE, "garmin_fitness_age", "garmin", "years", 31.0
     ),
+    WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING: _ts_payload(
+        WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING, "garmin_vo2_max_cycling", "garmin", "mL/kg/min", 49.0
+    ),
     # Steps & calories
     WebhookEventType.SERIES_STEPS: _ts_payload(WebhookEventType.SERIES_STEPS, "steps", "garmin", "count", 8432.0),
     WebhookEventType.SERIES_ACTIVE_ENERGY: _ts_payload(

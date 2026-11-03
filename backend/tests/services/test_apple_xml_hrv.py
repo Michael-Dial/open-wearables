@@ -114,3 +114,18 @@ class TestHrvWindowAndMetadata:
             {"HKAlgorithmVersion": "3", "interval_seconds": 300},
             {"interval_seconds": 60},
         ]
+
+
+class TestVo2MaxMetadata:
+    """A VO2max record keeps HealthKit's test type: a watch estimate and a lab result
+    typed into Health are otherwise the same row."""
+
+    def test_the_test_type_is_kept_verbatim(self, service: XMLService) -> None:
+        record = {**_hrv_record("HKQuantityTypeIdentifierVO2Max"), "unit": "mL/min·kg", "value": "44.1"}
+
+        sample = service._create_record(record, uuid4(), [{"key": "HKVO2MaxTestType", "value": "2"}])
+
+        assert sample is not None
+        assert sample.series_type == SeriesType.vo2_max
+        # Kept as sent, with no window added: VO2max is not a windowed series.
+        assert sample.provider_metadata == {"HKVO2MaxTestType": "2"}

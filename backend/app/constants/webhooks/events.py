@@ -59,6 +59,7 @@ SERIES_TYPE_TO_GROUP_EVENT: dict[str, str] = {
     "six_minute_walk_test_distance": WebhookEventType.FITNESS_METRICS_CREATED,
     "cardiovascular_age": WebhookEventType.FITNESS_METRICS_CREATED,
     "garmin_fitness_age": WebhookEventType.FITNESS_METRICS_CREATED,
+    "garmin_vo2_max_cycling": WebhookEventType.FITNESS_METRICS_CREATED,
     # Activity Basic
     "steps": WebhookEventType.STEPS_CREATED,
     "active_energy": WebhookEventType.CALORIES_CREATED,
@@ -159,6 +160,7 @@ SERIES_TYPE_TO_GRANULAR_EVENT: dict[str, str] = {
     "six_minute_walk_test_distance": WebhookEventType.SERIES_SIX_MINUTE_WALK_TEST_DISTANCE,
     "cardiovascular_age": WebhookEventType.SERIES_CARDIOVASCULAR_AGE,
     "garmin_fitness_age": WebhookEventType.SERIES_GARMIN_FITNESS_AGE,
+    "garmin_vo2_max_cycling": WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING,
     "steps": WebhookEventType.SERIES_STEPS,
     "active_energy": WebhookEventType.SERIES_ACTIVE_ENERGY,
     "basal_energy": WebhookEventType.SERIES_BASAL_ENERGY,

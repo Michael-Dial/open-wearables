@@ -138,6 +138,7 @@ class WebhookEventType(StrEnum):
     SERIES_SIX_MINUTE_WALK_TEST_DISTANCE = "series.six_minute_walk_test_distance.created"
     SERIES_CARDIOVASCULAR_AGE = "series.cardiovascular_age.created"
     SERIES_GARMIN_FITNESS_AGE = "series.garmin_fitness_age.created"
+    SERIES_GARMIN_VO2_MAX_CYCLING = "series.garmin_vo2_max_cycling.created"
 
     # Steps & calories
     SERIES_STEPS = "series.steps.created"
@@ -288,6 +289,7 @@ EVENT_TYPE_DESCRIPTIONS: dict[WebhookEventType, str] = {
     WebhookEventType.SERIES_SIX_MINUTE_WALK_TEST_DISTANCE: "6-minute walk test distance samples were ingested.",
     WebhookEventType.SERIES_CARDIOVASCULAR_AGE: "Cardiovascular age samples were ingested.",
     WebhookEventType.SERIES_GARMIN_FITNESS_AGE: "Garmin fitness age estimates were ingested.",
+    WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING: "Garmin cycling VO2 max estimates were ingested.",
     WebhookEventType.SERIES_STEPS: "Step count samples were ingested.",
     WebhookEventType.SERIES_ACTIVE_ENERGY: (
         "Active energy (calories) samples were ingested. Not total energy - basal is a separate series and event."
@@ -407,6 +409,7 @@ EVENT_TYPE_GROUPS: dict[str, list[str]] = {
         WebhookEventType.SERIES_SIX_MINUTE_WALK_TEST_DISTANCE,
         WebhookEventType.SERIES_CARDIOVASCULAR_AGE,
         WebhookEventType.SERIES_GARMIN_FITNESS_AGE,
+        WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING,
     ],
     WebhookEventType.STEPS_CREATED: [
         WebhookEventType.SERIES_STEPS,

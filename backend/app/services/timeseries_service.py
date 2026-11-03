@@ -111,6 +111,7 @@ def _to_sample(
         route_kind=ROUTE_KIND_BY_ROUTE[route].value if route is not None else None,
         beat_series_id=_beat_series_id(provider_metadata),
         preceded_by_gap=_preceded_by_gap(provider_metadata),
+        estimate_method=_estimate_method(provider_metadata),
         window_seconds=window_seconds,
         period_end=period_end,
         computed_by=computed_by,
@@ -124,6 +125,32 @@ def _beat_series_id(provider_metadata: dict | None) -> str | None:
         return None
     value = provider_metadata.get("seriesId")
     return value if isinstance(value, str) and value else None
+
+
+# HealthKit's VO2max test type (HKMetadataKeyVO2MaxTestType, whose string value is
+# this key), as both the SDK and the Apple Health XML export carry it on a VO2max record.
+_HEALTHKIT_VO2MAX_TEST_TYPE = "HKVO2MaxTestType"
+
+
+def _estimate_method(provider_metadata: dict | None) -> str | None:
+    """The estimate a sample is, or None when nothing on it says.
+
+    A reader's own label (``estimate_method``) is returned as written. HealthKit's test
+    type is returned as ``HKVO2MaxTestType:<value>``, the value verbatim: Apple numbers
+    the maximal test, the submaximal prediction and the non-exercise prediction, the iOS
+    SDK stringifies whatever it sends, and no live payload has yet shown which values
+    phones send, so the number is not translated here.
+    """
+    if not isinstance(provider_metadata, dict):
+        return None
+    value = provider_metadata.get("estimate_method")
+    if isinstance(value, str) and value:
+        return value
+    test_type = provider_metadata.get(_HEALTHKIT_VO2MAX_TEST_TYPE)
+    if test_type is None or isinstance(test_type, (dict, list)):
+        return None
+    text = str(test_type).strip()
+    return f"{_HEALTHKIT_VO2MAX_TEST_TYPE}:{text}" if text else None
 
 
 def _preceded_by_gap(provider_metadata: dict | None) -> bool | None:
