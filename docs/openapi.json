@@ -22515,6 +22515,7 @@
           "garmin_skin_temperature",
           "garmin_fitness_age",
           "garmin_body_battery",
+          "garmin_vo2_max_cycling",
           "withings_pulse_wave_velocity",
           "withings_metabolic_age",
           "dietary_energy_consumed",
@@ -25115,6 +25116,17 @@
               }
             ],
             "title": "Preceded By Gap"
+          },
+          "estimate_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate Method"
           },
           "window_seconds": {
             "anyOf": [

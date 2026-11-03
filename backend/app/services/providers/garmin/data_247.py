@@ -1699,6 +1699,23 @@ class Garmin247Data(Base247DataTemplate):
                 )
             )
 
+        # Cycling VO2 max: a separate estimate from a separate activity, never folded into vo2_max.
+        vo2_max_cycling = raw_metrics.get("vo2MaxCycling")
+        if vo2_max_cycling:
+            samples.append(
+                TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_USER_METRICS,
+                    id=uuid4(),
+                    user_id=user_id,
+                    source=self.provider_name,
+                    recorded_at=recorded_at,
+                    value=Decimal(str(vo2_max_cycling)),
+                    series_type=SeriesType.garmin_vo2_max_cycling,
+                    external_id=summary_id,
+                    period=CalendarPeriod.of_date(recorded_at.date()),
+                )
+            )
+
         # Fitness age
         fitness_age = raw_metrics.get("fitnessAge")
         if fitness_age:
@@ -1724,7 +1741,7 @@ class Garmin247Data(Base247DataTemplate):
         user_id: UUID,
         raw_metrics: dict[str, Any],
     ) -> int:
-        """Save user metrics (VO2max, fitness age) to SeriesSample.
+        """Save user metrics (running and cycling VO2max, fitness age) to SeriesSample.
 
         Uses bulk_create with ON CONFLICT DO UPDATE for efficient upserts.
         """

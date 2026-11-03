@@ -111,6 +111,7 @@ AGGREGATION_METHOD_BY_TYPE: dict[SeriesType, AggregationMethod] = {
     SeriesType.garmin_skin_temperature: AggregationMethod.AVG,
     SeriesType.garmin_fitness_age: AggregationMethod.AVG,
     SeriesType.garmin_body_battery: AggregationMethod.AVG,
+    SeriesType.garmin_vo2_max_cycling: AggregationMethod.AVG,
     # ── Withings-specific ──
     SeriesType.withings_pulse_wave_velocity: AggregationMethod.AVG,
     SeriesType.withings_metabolic_age: AggregationMethod.AVG,

@@ -86,7 +86,12 @@ HISTORY_RULES: tuple[HistoryRule, ...] = (
     ),
     HistoryRule(
         frozenset({ProviderName.GARMIN}),
-        _own(SeriesType.vo2_max, SeriesType.garmin_fitness_age, SeriesType.skin_temperature_deviation),
+        _own(
+            SeriesType.vo2_max,
+            SeriesType.garmin_vo2_max_cycling,
+            SeriesType.garmin_fitness_age,
+            SeriesType.skin_temperature_deviation,
+        ),
         day=DayAnchor.UTC_DATE,
     ),
     HistoryRule(

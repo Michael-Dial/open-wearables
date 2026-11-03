@@ -68,6 +68,17 @@ from app.services.timeseries_service import timeseries_service
 from app.utils.dates import window_seconds
 from app.utils.sentry_helpers import log_and_capture_error
 
+# Series that more than one Google data type feeds with a different estimate. A row of
+# these records which data type wrote it, verbatim, under ``estimate_method``: Fitbit's
+# running VO2max (run-vo2-max) and the generic vo2-max are different algorithms, and once
+# both sit in vo2_max on one data source nothing else on the row tells them apart.
+LABELLED_ESTIMATES: frozenset[SeriesType] = frozenset({SeriesType.vo2_max})
+
+
+def estimate_metadata(data_type: str, series_type: SeriesType) -> dict[str, Any] | None:
+    """The ``provider_metadata`` naming the data type behind an estimate, or None."""
+    return {"estimate_method": data_type} if series_type in LABELLED_ESTIMATES else None
+
 
 class UnsupportedGranularityError(RuntimeError):
     """The configured granularity needs the windowed rollUp operation, which is disabled."""
@@ -244,6 +255,7 @@ class GoogleHealth247Data(Base247DataTemplate):
                             series_type,
                             is_daily_total,
                             window=None if is_daily_total else window_seconds,
+                            provider_metadata=estimate_metadata(metric.data_type, series_type),
                         )
                     )
         return samples
@@ -426,6 +438,7 @@ class GoogleHealth247Data(Base247DataTemplate):
                         device_model,
                         device_type,
                         width,
+                        estimate_metadata(metric.data_type, series_type),
                     )
                 )
             # Unlike the readings above, a difference of zero is a measurement: the night sat on
@@ -537,6 +550,7 @@ class GoogleHealth247Data(Base247DataTemplate):
         device_model: str | None = None,
         device_type: DeviceType | None = None,
         window: int | None = None,
+        provider_metadata: dict[str, Any] | None = None,
     ) -> TimeSeriesSampleCreate:
         return TimeSeriesSampleCreate(
             route=(SampleRoute.GOOGLE_HEALTH_DAILY if is_daily_total else SampleRoute.GOOGLE_HEALTH_SAMPLES),
@@ -558,6 +572,7 @@ class GoogleHealth247Data(Base247DataTemplate):
             external_id=(
                 f"{series_type.value}:{recorded_at.isoformat()}" if series_type is SeriesType.active_energy else None
             ),
+            provider_metadata=provider_metadata,
         )
 
     # -- unused Base247DataTemplate hooks --------------------------------------
