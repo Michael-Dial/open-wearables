@@ -19,12 +19,19 @@ from app.schemas.model_crud.activities import (
     TimeSeriesSampleCreate,
 )
 from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
+from app.schemas.providers.polar.v4 import TrainingSessionJSON
 from app.services.event_record_service import event_record_service
 from app.services.polar_rr_import_service import polar_rr_import_service
 from app.services.providers.polar.v4_data import polar_v4_data
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.timeseries_service import timeseries_service
 from app.utils.dates import offset_to_iso
+
+# Marks a workout stored from a v4 training session, so a v3 copy of it is not added.
+V4_EXTERNAL_ID_PREFIX = "v4:"
+
+# How far back a pull with no start date reads v4: the trailing window Polar data lands in.
+V4_DEFAULT_LOOKBACK = timedelta(days=3)
 
 
 class PolarWorkouts(BaseWorkoutsTemplate):
@@ -364,6 +371,8 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         # each sync, and they cluster onto few days.
         day_cache: dict[date, list[Any]] = {}
         for raw_workout, (record, detail) in zip(workouts, self._build_bundles(workouts, user_id), strict=True):
+            if self._held_by_v4(db, user_id, record):
+                continue
             created_record = event_record_service.create(db, record)
             detail_for_record = detail.model_copy(update={"record_id": created_record.id})
             event_record_service.create_detail(db, detail_for_record)
@@ -376,6 +385,173 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             db.commit()
             count += 1
 
+        return count + self._load_v4_sessions(db, user_id, kwargs.get("start_date"), kwargs.get("end_date"), day_cache)
+
+    # -------------------------------------------------------------------------
+    # Sessions only v4 lists
+    # -------------------------------------------------------------------------
+
+    def _held_by_v4(self, db: DbSession, user_id: UUID, record: EventRecordCreate) -> bool:
+        """Whether a session stored from v4 already covers this v3 exercise.
+
+        The two report one recording with slightly different bounds, so the unique
+        (source, start, end) key would not stop a second copy.
+        """
+        return any(
+            (external_id or "").startswith(V4_EXTERNAL_ID_PREFIX)
+            for external_id in self.workout_repo.overlapping_provider_workout_ids(
+                db, user_id, ProviderName.POLAR.value, record.start_datetime, record.end_datetime
+            )
+        )
+
+    @staticmethod
+    def _sync_days(start_date: Any, end_date: Any) -> tuple[date, date]:
+        """The local days a pull covers, from the sync window's UTC bounds.
+
+        A day of margin either side, since v4 dates sessions by local day; the overlap
+        check makes re-reading a day harmless.
+        """
+
+        def parse(value: Any) -> datetime | None:
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str) and value:
+                try:
+                    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+            return None
+
+        now = datetime.now(timezone.utc)
+        end = parse(end_date) or now
+        start = parse(start_date) or end - V4_DEFAULT_LOOKBACK
+        return start.date() - timedelta(days=1), end.date() + timedelta(days=1)
+
+    @staticmethod
+    def _v4_sport(sport: Any) -> str | None:
+        """v4's sport as the upper-case name v3 uses, from a string or a {name|id} object."""
+        if isinstance(sport, dict):
+            sport = sport.get("name") or sport.get("id")
+        return str(sport).upper() if sport else None
+
+    @staticmethod
+    def _v4_device(session: TrainingSessionJSON) -> str | None:
+        """The watch's name the way v3 writes it, so both land on one data source."""
+        model = session.product.model_name if session.product else None
+        if not model:
+            return None
+        return model if model.lower().startswith("polar") else f"Polar {model}"
+
+    def _normalize_v4_session(
+        self, session: TrainingSessionJSON, user_id: UUID
+    ) -> tuple[EventRecordCreate, EventRecordDetailCreate, datetime] | None:
+        """A workout from a v4 session, plus its local start for the RR lookup.
+
+        None when the session cannot be placed in time: without its UTC offset the local
+        start could be off by hours, and a wrong time is worse than a missing workout.
+        """
+        offset = session.timezone_offset_minutes
+        if offset is None and session.exercises:
+            offset = session.exercises[0].timezone_offset_minutes
+        if not session.start_time or offset is None:
+            self.logger.warning("Polar v4 session at %s has no start or UTC offset, skipped", session.start_time)
+            return None
+        local_start = self._local_start(session.start_time)
+        start_date = (local_start - timedelta(minutes=offset)).replace(tzinfo=timezone.utc)
+        if session.duration_millis:
+            end_date = start_date + timedelta(milliseconds=session.duration_millis)
+        elif session.stop_time:
+            end_date = start_date + (self._local_start(session.stop_time) - local_start)
+        else:
+            self.logger.warning("Polar v4 session at %s has no duration, skipped", session.start_time)
+            return None
+        if end_date <= start_date:
+            return None
+
+        session_id = (session.identifier or {}).get("id")
+        device = self._v4_device(session)
+        workout_id = uuid4()
+        record = EventRecordCreate(
+            category=EventCategory.WORKOUT,
+            type=get_unified_workout_type(self._v4_sport(session.sport) or "OTHER").value,
+            source_name=device or "Polar",
+            device_model=device,
+            duration_seconds=int((end_date - start_date).total_seconds()),
+            start_datetime=start_date,
+            end_datetime=end_date,
+            zone_offset=offset_to_iso(offset * 60),
+            id=workout_id,
+            external_id=f"{V4_EXTERNAL_ID_PREFIX}{session_id or session.start_time}"[:100],
+            source="polar",
+            provider_device_id=session.device_id,
+            user_id=user_id,
+        )
+        detail = EventRecordDetailCreate(
+            record_id=workout_id,
+            heart_rate_max=int(session.hr_max) if session.hr_max is not None else None,
+            heart_rate_avg=Decimal(str(session.hr_avg)) if session.hr_avg is not None else None,
+            energy_burned=Decimal(str(session.calories)) if session.calories is not None else None,
+            distance=Decimal(str(session.distance_meters)) if session.distance_meters is not None else None,
+        )
+        return record, detail, local_start
+
+    def _load_v4_sessions(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        start_date: Any,
+        end_date: Any,
+        day_cache: dict[date, list[Any]],
+    ) -> int:
+        """Store the sessions v4 lists that no Polar workout covers yet.
+
+        v3 lists only the last 30 days, and only what reached Flow after the account was
+        registered with this app, so everything a participant recorded before connecting
+        never arrives through it. v4 lists sessions by date, so a pull or a historical
+        backfill picks those up here. Anything v3 already stored is left alone.
+        """
+        if not polar_v4_data.is_connected(db, user_id):
+            return 0
+        first, last = self._sync_days(start_date, end_date)
+        try:
+            sessions = polar_v4_data.list_training_sessions(db, user_id, first, last)
+        except Exception as exc:  # noqa: BLE001 - v4 adds to v3, it never fails the sync
+            self.logger.warning("Polar v4 training session list failed for user %s: %s", user_id, exc)
+            return 0
+
+        count = 0
+        for session in sessions:
+            built = self._normalize_v4_session(session, user_id)
+            if built is None:
+                continue
+            record, detail, local_start = built
+            if self.workout_repo.overlapping_provider_workout_ids(
+                db, user_id, ProviderName.POLAR.value, record.start_datetime, record.end_datetime
+            ):
+                continue
+            created = event_record_service.create(db, record)
+            event_record_service.create_detail(db, detail.model_copy(update={"record_id": created.id}))
+            try:
+                rows = polar_v4_data.rr_rows_for_session(db, user_id, local_start, day_cache)
+            except Exception as exc:  # noqa: BLE001 - the workout stands without its beats
+                self.logger.warning("Polar v4 RR lookup failed for session %s: %s", record.external_id, exc)
+                rows = None
+            if rows:
+                self._save_rr_samples(
+                    db,
+                    polar_rr_import_service.build_creators(
+                        rows,
+                        user_id=user_id,
+                        start_datetime=record.start_datetime,
+                        source=ProviderName.POLAR.value,
+                        device_model=record.device_model,
+                        zone_offset=record.zone_offset,
+                    ),
+                )
+            db.commit()
+            count += 1
+        if count:
+            self.logger.info("Polar v4: stored %d sessions v3 did not list for user %s", count, user_id)
         return count
 
     def fetch_and_save_exercise(self, db: DbSession, user_id: UUID, path: str) -> int:

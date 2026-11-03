@@ -8,6 +8,8 @@ no equivalent for, and v4 supplies the two things v3 cannot:
   Every v4 beat carries its own ``durationMillis``, offline ones included, so the clock is
   exact — which is the whole point when the series is the ECG criterion in a validation study.
 * **24/7 pulse-to-pulse intervals**, with per-beat quality flags.
+* **Sessions v3 never lists.** v3 shows only the last 30 days, and only what reached Flow
+  after the account was registered with this app; v4 lists training sessions by date.
 
 Both are stored against the user's ordinary Polar source, so a v4 read is invisible to
 anything downstream except that the data is better. Everything here degrades to a no-op
@@ -44,6 +46,10 @@ from app.utils.dates import offset_to_iso
 # session. The two APIs report the same recording from different stores, so a few seconds
 # of skew is normal; minutes would mean a different session.
 SESSION_MATCH_TOLERANCE = timedelta(seconds=120)
+
+# Days per training-session list request. v4 takes a range only when no features are
+# asked for; a month keeps each response small and well inside its limit.
+TRAINING_SESSION_LIST_SPAN = timedelta(days=27)
 
 # How far from a PPI day's local midnight a stored Polar record may start and still lend
 # that day its UTC offset. Wide enough to reach the usual workout-a-few-times-a-week
@@ -132,6 +138,33 @@ class PolarV4Data:
             return []
         parsed = ListTrainingSessionsResponseJSON(**raw)
         return parsed.training_sessions or []
+
+    def list_training_sessions(
+        self, db: DbSession, user_id: UUID, first: date, last: date
+    ) -> list[TrainingSessionJSON]:
+        """Session summaries for local days ``first`` through ``last``, without samples.
+
+        Without features v4 accepts a range, so this walks it in chunks rather than a
+        request per day. The keys of the first session are logged because its summary
+        fields are not modelled from Polar's published schema.
+        """
+        sessions: list[TrainingSessionJSON] = []
+        chunk_start = first
+        while chunk_start <= last:
+            chunk_end = min(chunk_start + TRAINING_SESSION_LIST_SPAN, last)
+            raw = self._get(
+                db,
+                user_id,
+                "/v4/data/training-sessions/list",
+                {"from": chunk_start.isoformat(), "to": (chunk_end + timedelta(days=1)).isoformat()},
+            )
+            if raw:
+                listed = raw.get("trainingSessions") or []
+                if listed and not sessions:
+                    self.logger.info("Polar v4 training session keys: %s", sorted(listed[0]))
+                sessions.extend(ListTrainingSessionsResponseJSON(**raw).training_sessions or [])
+            chunk_start = chunk_end + timedelta(days=1)
+        return sessions
 
     @staticmethod
     def _session_start(session: TrainingSessionJSON) -> datetime | None:

@@ -244,6 +244,34 @@ class EventRecordRepository(
             query = query.filter(self.model.external_id.is_distinct_from(creator.external_id))
         return db_session.query(query.exists()).scalar() or False
 
+    def overlapping_provider_workout_ids(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[str | None]:
+        """External ids of the user's *provider* workouts overlapping [start, end).
+
+        Across every source of the provider, unlike ``overlapping_workout_on_same_source``:
+        two feeds of one provider can name the same watch differently and so land one
+        session on two sources.
+        """
+        rows = (
+            db_session.query(self.model.external_id)
+            .join(DataSource, self.model.data_source_id == DataSource.id)
+            .filter(
+                DataSource.user_id == user_id,
+                DataSource.provider == provider,
+                self.model.category == EventCategory.WORKOUT,
+                self.model.start_datetime < end,
+                self.model.end_datetime > start,
+            )
+            .all()
+        )
+        return [row.external_id for row in rows]
+
     def account_for(self, db_session: DbSession, creator: EventRecordCreate) -> UUID | None:
         """The account ``_build_creation`` will file *creator* under, without creating anything.
 

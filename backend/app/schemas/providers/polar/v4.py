@@ -1,8 +1,10 @@
 """Response models for Polar AccessLink v4 (``/v4/data``).
 
-Only the slices Open Wearables reads are modelled: training-session RR samples and
-pulse-to-pulse interval samples. v4 is camelCase throughout, unlike v3's kebab-case.
+Only the slices Open Wearables reads are modelled: training-session summaries and RR
+samples, and pulse-to-pulse interval samples. v4 is camelCase throughout, unlike v3's kebab-case.
 """
+
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,6 +42,19 @@ class ProductReferenceJSON(V4Model):
 
 
 class TrainingSessionJSON(V4Model):
+    """One training session.
+
+    The summary fields (identifier, sport, distance, calories, heart rate) are named as a
+    third-party v4 client reads them, not from Polar's published schema, so every one is
+    optional and a misnamed field only leaves a metric empty.
+    """
+
+    identifier: dict[str, Any] | None = None
+    sport: Any = None
+    distance_meters: float | None = Field(None, alias="distanceMeters")
+    calories: float | None = None
+    hr_avg: float | None = Field(None, alias="hrAvg")
+    hr_max: float | None = Field(None, alias="hrMax")
     start_time: str | None = Field(None, alias="startTime")
     stop_time: str | None = Field(None, alias="stopTime")
     duration_millis: int | None = Field(None, alias="durationMillis")
