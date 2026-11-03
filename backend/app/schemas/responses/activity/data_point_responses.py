@@ -49,11 +49,11 @@ class TimeSeriesSample(BaseModel):
     # None on every other sample. Raw samples only.
     beat_series_id: str | None = None
     preceded_by_gap: bool | None = None
-    # Which estimate a fitness value is, verbatim as its reader recorded it under
-    # provider_metadata["estimate_method"] (Google: the data type, "run-vo2-max" or
-    # "vo2-max"). None = not stated, never a default: one device can publish two VO2max
-    # algorithms into one series, and a comparison that pools them compares neither.
-    # Raw samples only.
+    # Which estimate a fitness value is, verbatim: a reader's own label (Google: the data
+    # type, "run-vo2-max" or "vo2-max"), or HealthKit's test type from an Apple record,
+    # SDK or XML alike, as "HKVO2MaxTestType:<value>". None = not stated, never a default:
+    # one device can publish two VO2max algorithms into one series, and a comparison that
+    # pools them compares neither. Raw samples only.
     estimate_method: str | None = None
     # Width of a sample reported over a window (a 15-minute epoch is 900); None for an instant.
     window_seconds: int | None = None

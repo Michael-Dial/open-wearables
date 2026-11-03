@@ -15,7 +15,11 @@ AT = datetime(2026, 10, 30, 7, tzinfo=timezone.utc)
     ("metadata", "expected"),
     [
         ({"estimate_method": "run-vo2-max"}, "run-vo2-max"),
-        ({"HKVO2MaxTestType": "2"}, None),  # stored raw, not typed yet
+        ({"HKVO2MaxTestType": "2"}, "HKVO2MaxTestType:2"),
+        ({"HKVO2MaxTestType": 3}, "HKVO2MaxTestType:3"),
+        ({"HKVO2MaxTestType": " "}, None),
+        # A reader's own label wins over the HealthKit key.
+        ({"estimate_method": "run-vo2-max", "HKVO2MaxTestType": "2"}, "run-vo2-max"),
         ({"estimate_method": ""}, None),
         ({"estimate_method": 3}, None),
         (None, None),
