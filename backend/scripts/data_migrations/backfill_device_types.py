@@ -70,7 +70,7 @@ def backfill_device_types(db: Session, *, dry_run: bool) -> Counter[str]:
             new_type = DeviceType.TABLET.value
         # Fork: the classifier already reads the writer's name over a handset model, and a
         # row always keeps a value, so UNKNOWN leaves the stored type alone rather than NULL.
-        if is_host_model(ds.source_app_id, ds.device_model) and resolved is not DeviceType.UNKNOWN:
+        if is_host_model(provider, ds.source_app_id, ds.device_model) and resolved is not DeviceType.UNKNOWN:
             new_type = resolved.value
         if new_type == ds.device_type:
             continue

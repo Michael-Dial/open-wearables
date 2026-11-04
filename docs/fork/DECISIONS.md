@@ -1222,8 +1222,8 @@ then tell the watch's own data from an app's.
   3. Matching (`DataSourceRepository._match`) follows upstream's order within one account, and
      stamps the ids onto a row written before they were known, so history stays on one source.
      Upstream's host-model rewrite - replacing a relaying iPhone's model with the producing
-     device's and merging the two - is left out: a stored model is a capture with a recorded
-     origin, and the device registry is where a relay and its producer are tied together.
+     device's and merging the two - was left out here at first, and adopted with upstream #1882
+     (2026-11-04): see "A relaying iPhone's code is not a third-party writer's model".
   4. The merge script matches within one account; never merges sources attributed to two
      different registry devices; drops an event only when its copies cannot be two units (one
      provider device id, one registry device and one non-null model at most); carries
@@ -1339,6 +1339,12 @@ then tell the watch's own data from an app's.
   the write: steps and kcal summed, the mean heart rate weighted by `activeTimeInSeconds`.
   The rows have to arrive in one push to meet; a slot whose activity types Garmin pushes
   separately still ends up with the last push's rows only (not yet seen in a live payload).
+  Upstream fixed the same collision in #1913 (2026-11-04). Its robustness is taken into the
+  fork's version: a malformed epoch is skipped and reported once rather than failing the push, a
+  repeated (slot, activity type) counts once with the later row winning, the slot's window and
+  ids follow its latest epoch, and a non-numeric steps or kcal value is left out of the sum. The
+  fork's time-weighted heart rate and midnight stamp stay; upstream appends each activity type's
+  mean as its own row at one key, so the last one wins.
 
 ## A Garmin day's first epoch is stamped clear of the dailies' totals
 
@@ -1565,3 +1571,43 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
 - **Why**: Upstream #1870 keys Polar nights `sleep-<date>`; the fork's nights already
   carry `<date>`. Taking upstream's form would leave every stored night unmatched and
   re-append it on each re-read. `dedupe_polar_sleep.py` writes the bare date too.
+
+## A relaying iPhone's code is not a third-party writer's model
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile (keep the account in every key, `_relayed_host_model`'s label
+  exception and the fork's version of `clear_relayed_host_models.py`)
+- **Why**: iOS SDKs before open_wearables_ios_sdk #73 report `productType` as every record's
+  model, which for Oura, Garmin Connect or Polar Flow is the iPhone that ran the app. Upstream
+  #1882 drops that code at ingest, merges the writer's rows across it and clears stored ones
+  at startup. The fork had kept the code as a provider capture (see "Stable data source
+  identity is per account"); adopted now, because the code says nothing about the unit and
+  the fixed iOS SDK otherwise opens a second source for every third-party writer. Changes
+  to upstream's version:
+  1. Matching (`_match`) treats a stored host code as no model on the writer's single row,
+     and an id-less legacy row keyed by the code is stamped (`_relayed_legacy_row`), both
+     within one account. `_learn_model` replaces the code with the producing device's model,
+     or clears it, and never learns a host code. A model a label put there is never touched.
+  2. The startup cleanup keys rows by `provider_device_id` (upstream's `device_id`; the fork's
+     is the registry link and plays no part), groups a writer per account, clears
+     `device_model_origin` with the model (`ck_data_source_device_model_origin`; upstream's
+     script fails that constraint on every boot), and types with the fork's classifier, so a
+     declared sensor still wins and an unknown resolution keeps the stored type.
+  3. Type: the SDK's reported type was already ignored on the Apple route
+     (`extract_reported_device_type`), so upstream's change to drop it is not needed.
+  Registry: a source already attributed keeps its device. A new relayed source from an older
+  SDK no longer has a model for detection to group on, so it stays unattributed until a
+  person links it (the over-split direction).
+
+## SDK sync status and Garmin body battery are per user, not per account
+
+- **Area**: backend
+- **Status**: known gap
+- **On conflict**: take upstream
+- **Why**: Upstream #2030's `/sdk/users/{id}/sync/status` reads every historical run of (user,
+  provider), so with two phones on one SDK provider the second is told the first one's export
+  finished. No fork SDK calls it yet; scope it to the connection before one does. Garmin body
+  battery scores (#2011) carry no data source, so two Garmin accounts on one user share a day's
+  row and the higher peak wins; this predates the change.
+

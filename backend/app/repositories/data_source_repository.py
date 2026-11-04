@@ -87,6 +87,21 @@ def _is_newer_version(candidate: str, current: str | None) -> bool:
     return old is None or new > old
 
 
+def _relayed_host_model(row: DataSource) -> bool:
+    """The row's model is the relaying iPhone's code a provider (not a label) put on a third-party writer's row."""
+    # Cheap checks first: only a writer-keyed row with a model can carry a host code
+    if row.device_model is None or not row.source_app_id:
+        return False
+    if row.device_model_origin == DeviceModelOrigin.LABEL.value:
+        return False
+    return is_host_model(getattr(row.provider, "value", row.provider), row.source_app_id, row.device_model)
+
+
+def _model_unknown(row: DataSource) -> bool:
+    """No model, or the relaying iPhone's code a provider (not a label) put on a third-party writer's row."""
+    return row.device_model is None or _relayed_host_model(row)
+
+
 class DataSourceIdentity(NamedTuple):
     """What a data source is matched on within one account.
 
@@ -296,10 +311,14 @@ class DataSourceRepository(
            that sends ids on some records only (Samsung step counts) keeps one source.
         2. The identity's own tier.
         3. A writer's only row when the model is missing on one side, so a writer's
-           records with and without a model converge. Missing means None here, not an
-           Apple host code as upstream also counts it - see above.
+           records with and without a model converge. A stored Apple host code (the
+           relaying iPhone an older iOS SDK reported for a third-party writer, #1882)
+           counts as missing on the stored side; incoming host codes are dropped at
+           ingest. The stored code is left as it is here - clear_relayed_host_models
+           clears it, and _learn_model replaces it with the producing device's model.
         4. A row written before the ids were known: the app-id row for an identity that
-           now also carries a device id, else the model + source row. The caller stamps
+           now also carries a device id, else the model + source row, else (#1882) the
+           model + source row keyed by the relaying iPhone's code. The caller stamps
            the ids onto it, so a device's history stays on the source it started on.
         """
         if not identity.keyed and identity.device_model:
@@ -322,14 +341,36 @@ class DataSourceRepository(
                 and r.provider_device_id is None
                 and r.source_app_id == identity.source_app_id
             ]
-            if len(writer_rows) == 1 and (identity.device_model is None or writer_rows[0].device_model is None):
+            if len(writer_rows) == 1 and (identity.device_model is None or _model_unknown(writer_rows[0])):
                 return writer_rows[0]
         app_row = identity._replace(provider_device_id=None)
         if identity.provider_device_id and identity.source_app_id and (found := cls._find(rows, app_row)):
             return found
         if identity.keyed:
-            return cls._find(rows, identity.legacy())
+            return cls._find(rows, identity.legacy()) or cls._relayed_legacy_row(rows, identity)
         return None
+
+    @staticmethod
+    def _relayed_legacy_row(rows: Sequence[DataSource], identity: DataSourceIdentity) -> DataSource | None:
+        """A third-party writer's id-less row keyed by the relaying iPhone's code (upstream #1882).
+
+        Written before the ids arrived, by an iOS SDK that reported the host as the model; the
+        record that matches it now carries the producing device's model, or none.
+        """
+        if identity.provider_device_id or not identity.source_app_id:
+            return None
+        return next(
+            (
+                r
+                for r in rows
+                if r.user_id == identity.user_id
+                and r.provider_device_id is None
+                and r.source_app_id is None
+                and (r.source or "") == (identity.source or "")
+                and is_host_model(r.provider, identity.source_app_id, r.device_model)
+            ),
+            None,
+        )
 
     @staticmethod
     def _learn_model(row: DataSource, device_model: str | None) -> bool:
@@ -338,10 +379,23 @@ class DataSourceRepository(
         Polar sleep arrives before the exercise that names the watch; a writer's first
         records may carry no model. Only for keyed rows, and only from a model the
         provider sent: a label describes the account, not this unit.
+
+        A stored Apple host code (upstream #1882: the relaying iPhone an older iOS SDK
+        reported for a third-party writer) is not a model of this unit: it is replaced by
+        the producing device's model, or cleared when the record carries none, as
+        clear_relayed_host_models does for rows that do not sync again.
         """
-        if row.device_model is not None or device_model is None:
-            return False
         if not (row.provider_device_id or row.source_app_id):
+            return False
+        if device_model is None:
+            if not _relayed_host_model(row):
+                return False
+            object.__setattr__(row, "device_model", None)
+            object.__setattr__(row, "device_model_origin", None)
+            return True
+        if not _model_unknown(row):
+            return False
+        if is_host_model(getattr(row.provider, "value", row.provider), row.source_app_id, device_model):
             return False
         object.__setattr__(row, "device_model", device_model)
         object.__setattr__(row, "device_model_origin", DeviceModelOrigin.PROVIDER.value)
@@ -589,9 +643,11 @@ class DataSourceRepository(
             existing = self._adoptable_orphan(db_session, user_id, provider, device_model, source, user_connection_id)
 
         if existing:
+            # Before the model is learned: a host code it replaces still decides the type below.
+            relayed_host = _relayed_host_model(existing)
             updated = self._stamp_ids(existing, identity, device_manufacturer)
             # Stamped first, so a legacy row that just gained its ids can learn a model too.
-            if device_model_origin is DeviceModelOrigin.PROVIDER:
+            if device_model_origin is not DeviceModelOrigin.LABEL:
                 updated |= self._learn_model(existing, device_model)
             if user_connection_id and existing.user_connection_id is None:
                 object.__setattr__(existing, "user_connection_id", user_connection_id)
@@ -615,7 +671,7 @@ class DataSourceRepository(
             # relayed it got its stored type from that host, so it is re-resolved outright
             # rather than left to the SDK upgrade-only rule, which would keep an Oura row
             # typed "phone" forever. A resolution of UNKNOWN still never erases a type.
-            if is_host_model(existing.source_app_id, existing.device_model) and resolved is not DeviceType.UNKNOWN:
+            if relayed_host and resolved is not DeviceType.UNKNOWN:
                 device_type = resolved.value
             else:
                 device_type = self.next_device_type(provider, existing.device_type, resolved)
@@ -1056,6 +1112,8 @@ class DataSourceRepository(
         # collide on an identical (device_model, source) - or an identical device id.
         rows = self._account_rows(db_session, provider, user_ids, user_connection_id)
         matched: dict[tuple, DataSource] = {}
+        # Rows typed from a relaying host's code, captured before the code is replaced or cleared
+        relayed_host = {r.id for r in rows if _relayed_host_model(r)}
         changed = False
         for requested, stored in stored_by_requested.items():
             row = self._match(rows, stored)
@@ -1073,18 +1131,19 @@ class DataSourceRepository(
             if requested in reported_types:
                 reported_by_row.setdefault(row.id, reported_types[requested])
         for row in {r.id: r for r in matched.values()}.values():
-            device_type = self.next_device_type(
-                provider,
-                row.device_type,
-                self._infer_device_type(
-                    row.device_model,
-                    row.original_source_name,
-                    row.source,
-                    _declared_sensor(row.user_id),
-                    provider=provider,
-                    reported_type=reported_by_row.get(row.id),
-                ),
+            resolved = self._infer_device_type(
+                row.device_model,
+                row.original_source_name,
+                row.source,
+                _declared_sensor(row.user_id),
+                provider=provider,
+                reported_type=reported_by_row.get(row.id),
             )
+            # As the single path: a type that came from a relaying host is re-resolved outright
+            if row.id in relayed_host and resolved is not DeviceType.UNKNOWN:
+                device_type = resolved.value
+            else:
+                device_type = self.next_device_type(provider, row.device_type, resolved)
             if device_type != row.device_type:
                 object.__setattr__(row, "device_type", device_type)
                 changed = True

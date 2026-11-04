@@ -409,7 +409,7 @@ def handle_sleep_data(
                 continue
             seen.add(key_tuple)
 
-            device_model, _software_version, original_source_name = extract_device_info(item.source)
+            device_model, _software_version, original_source_name = extract_device_info(item.source, provider)
             # Only routes whose deviceType is the platform's own classification report
             # one; on the Apple route it is the SDK's guess and comes back None.
             device_type = extract_reported_device_type(provider, item.source)

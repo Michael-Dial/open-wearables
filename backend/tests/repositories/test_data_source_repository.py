@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.models import DataSource
 from app.repositories.data_source_repository import DataSourceIdentity, DataSourceRepository
 from app.schemas.enums import DeviceType, ProviderName
-from tests.factories import UserConnectionFactory, UserFactory
+from tests.factories import DataSourceFactory, UserConnectionFactory, UserFactory
 
 # Realistic Apple HealthKit source bundle id: "com.apple.health." + a UUID.
 APPLE_HEALTH_SOURCE = "com.apple.health.ED447642-08FD-4E45-AF20-633C02C83170"
@@ -507,11 +507,10 @@ class TestStableIdentity:
 
         assert len({charge.id, watch.id, unknown.id}) == 3
 
-    def test_a_relaying_hosts_model_is_kept_not_replaced(self, db: Session) -> None:
-        """Fork: upstream replaces an Apple host code with the producing device's model and
-        merges the two. Here a stored model is the provider's capture, so the relayed
-        stream keeps its own source; the device registry is where the two are tied to
-        one unit."""
+    def test_a_relaying_hosts_model_is_replaced_by_the_producing_device(self, db: Session) -> None:
+        """Upstream #1882, adopted here: an Apple host code on a third-party writer's row is
+        the iPhone that relayed it, not a capture of the unit, so the producing device's
+        model replaces it and the writer keeps one source."""
         user = UserFactory()
         repo = DataSourceRepository(DataSource)
         ids = {
@@ -524,8 +523,89 @@ class TestStableIdentity:
         relayed = repo.ensure_data_source(db, **ids, device_model="iPhone16,1")
         produced = repo.ensure_data_source(db, **ids, device_model="Oura Ring Gen3")
 
-        assert relayed.id != produced.id
-        assert relayed.device_model == "iPhone16,1"
+        assert relayed.id == produced.id
+        assert (produced.device_model, produced.device_model_origin) == ("Oura Ring Gen3", "provider")
+
+    def test_a_labelled_host_model_is_kept(self, db: Session) -> None:
+        """A model a label put there is a person's statement, not the relaying host's code."""
+        user = UserFactory()
+        repo = DataSourceRepository(DataSource)
+        labelled = DataSourceFactory(
+            user=user,
+            provider=ProviderName.APPLE,
+            device_model="iPhone16,1",
+            device_model_origin="label",
+            source="Oura",
+            source_app_id="com.ouraring.oura",
+        )
+
+        produced = repo.ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.APPLE,
+            source="Oura",
+            source_app_id="com.ouraring.oura",
+            device_model="Oura Ring Gen3",
+        )
+
+        assert produced.id != labelled.id
+        assert labelled.device_model == "iPhone16,1"
+
+    def test_host_model_is_cleared_when_the_writer_reports_no_model(self, db: Session) -> None:
+        user = UserFactory()
+        repo = DataSourceRepository(DataSource)
+        ids = {
+            "user_id": user.id,
+            "provider": ProviderName.APPLE,
+            "source": "Oura",
+            "source_app_id": "com.ouraring.oura",
+        }
+
+        relayed = repo.ensure_data_source(db, **ids, device_model="iPhone16,1", reported_type=DeviceType.PHONE)
+        assert relayed.device_type == DeviceType.RING
+        unknown = repo.ensure_data_source(db, **ids)
+        old_client = repo.ensure_data_source(db, **ids, device_model="iPhone16,1", reported_type=DeviceType.PHONE)
+
+        assert relayed.id == unknown.id == old_client.id
+        assert unknown.device_model is None
+        assert unknown.device_type == DeviceType.RING
+
+    def test_legacy_relayed_row_is_stamped_by_a_record_without_the_host_model(self, db: Session) -> None:
+        user = UserFactory()
+        repo = DataSourceRepository(DataSource)
+        legacy = repo.ensure_data_source(
+            db, user_id=user.id, provider=ProviderName.APPLE, device_model="iPhone16,1", source="Oura"
+        )
+        iphone = repo.ensure_data_source(
+            db, user_id=user.id, provider=ProviderName.APPLE, device_model="iPhone16,1", source="Bart's iPhone"
+        )
+
+        stamped = repo.ensure_data_source(
+            db, user_id=user.id, provider=ProviderName.APPLE, source="Oura", source_app_id="com.ouraring.oura"
+        )
+
+        assert stamped.id == legacy.id != iphone.id
+        assert stamped.source_app_id == "com.ouraring.oura"
+        assert stamped.device_model is None
+        assert stamped.device_type == DeviceType.RING
+        assert iphone.device_model == "iPhone16,1"
+
+    def test_apple_prefixed_models_outside_healthkit_stay_separate(self, db: Session) -> None:
+        """Health Connect reports the producing device, so two "Watch ..." models of one app are two devices."""
+        user = UserFactory()
+        repo = DataSourceRepository(DataSource)
+        ids = {
+            "user_id": user.id,
+            "provider": ProviderName.HEALTH_CONNECT,
+            "source": "Huawei Health",
+            "source_app_id": "com.huawei.health",
+        }
+
+        gt3 = repo.ensure_data_source(db, **ids, device_model="Watch GT 3")
+        gt4 = repo.ensure_data_source(db, **ids, device_model="Watch GT 4")
+
+        assert gt3.id != gt4.id
+        assert (gt3.device_model, gt4.device_model) == ("Watch GT 3", "Watch GT 4")
 
     def test_apple_own_source_keeps_product_type(self, db: Session) -> None:
         user = UserFactory()
