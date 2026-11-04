@@ -19785,6 +19785,19 @@
               "+01:00",
               "-05:30"
             ]
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance",
+            "description": "The batch this write belongs to (`sleep-hub-history-2026-11`), stored on every record or row it writes as `provider_metadata.provenance`. It names where a backfilled measurement came from, and lets a whole import be found and withdrawn later without touching what the instrument sent live."
           }
         },
         "type": "object",
@@ -19885,7 +19898,17 @@
           "totals_scored": {
             "type": "boolean",
             "title": "Totals Scored",
-            "description": "True when every stage label was one of OW's words, so the record's stage minutes, total sleep and efficiency are filled. False when any label was foreign (N1/N2/N3): the totals are then null rather than figures derived from a fold this store refuses to make."
+            "description": "True when the record's stage minutes, total sleep and efficiency are filled: every stage label was one of OW's words, or the totals were stated. False when any label was foreign (N1/N2/N3): the totals are then null rather than figures derived from a fold this store refuses to make."
+          },
+          "totals_source": {
+            "type": "string",
+            "enum": [
+              "stages",
+              "stated"
+            ],
+            "title": "Totals Source",
+            "description": "Whether the totals were computed from the stages or stated in `totals`.",
+            "default": "stages"
           }
         },
         "type": "object",
@@ -19957,9 +19980,19 @@
               "$ref": "#/components/schemas/ManualSleepStageIn"
             },
             "type": "array",
-            "minItems": 1,
             "title": "Stages",
-            "description": "The scored intervals, in any order."
+            "description": "The scored intervals, in any order. Exactly one of `stages` and `totals` is given."
+          },
+          "totals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualSleepTotals"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The night's totals as the instrument stated them, when it published no timeline. Requires `sleep_start` and `sleep_end`. Stored as stated, with no stages: OW never synthesises a hypnogram from totals."
           },
           "sleep_start": {
             "anyOf": [
@@ -20017,14 +20050,90 @@
             ],
             "title": "External Id",
             "description": "The importer's own id for this night. Re-importing with the same id replaces the record. Default: derived from the device label and the record's start."
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance",
+            "description": "The batch this write belongs to (`sleep-hub-history-2026-11`), stored on every record or row it writes as `provider_metadata.provenance`. It names where a backfilled measurement came from, and lets a whole import be found and withdrawn later without touching what the instrument sent live."
           }
         },
         "type": "object",
         "required": [
-          "device_label",
-          "stages"
+          "device_label"
         ],
         "title": "ManualSleepStagesImport"
+      },
+      "ManualSleepTotals": {
+        "properties": {
+          "total_sleep_minutes": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Sleep Minutes",
+            "description": "Total sleep time as the instrument stated it."
+          },
+          "deep_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deep Minutes"
+          },
+          "light_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Light Minutes"
+          },
+          "rem_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rem Minutes"
+          },
+          "awake_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Awake Minutes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_sleep_minutes"
+        ],
+        "title": "ManualSleepTotals",
+        "description": "A night's totals as the instrument stated them, for an instrument that published no stage timeline."
       },
       "Meal": {
         "properties": {

@@ -10,12 +10,12 @@ is stored as it was said, and that sending the same night twice stores it once.
 
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import User
+from app.models import EventRecord, SeriesSample, User
 from app.schemas.enums import ProviderName
 from app.services.provider_settings_service import listed_providers
 from app.services.providers.factory import ProviderFactory
@@ -220,6 +220,103 @@ class TestSleepStages:
             assert response.status_code == 400, body
         assert _sleep_sessions(client, user, api_key_header) == []
 
+    def test_totals_an_instrument_stated_are_stored_as_stated_with_no_timeline(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        result = _import_sleep(
+            client,
+            user,
+            api_key_header,
+            stages=[],
+            totals={"total_sleep_minutes": 420, "deep_minutes": 90, "rem_minutes": 100},
+            sleep_start=_iso(0),
+            sleep_end=_iso(480),
+        )
+
+        assert (result["totals_scored"], result["totals_source"], result["stage_count"]) == (True, "stated", 0)
+        [session] = _sleep_sessions(client, user, api_key_header)
+        assert session["sleep_duration_seconds"] == 420 * 60
+        assert session["time_in_bed_seconds"] == 480 * 60
+        assert session["efficiency_percent"] == 87.5
+        # A total says how much and never when: no hypnogram is made up from it.
+        assert not session["sleep_stage_intervals"]
+        assert session["stages"]["deep_minutes"] == 90
+        assert session["stages"]["rem_minutes"] == 100
+        # Not stated is not zero.
+        assert session["stages"]["light_minutes"] is None
+        assert session["stages"]["awake_minutes"] is None
+
+    def test_stated_totals_are_refused_when_they_do_not_fit_the_night(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        window = {"sleep_start": _iso(0), "sleep_end": _iso(480)}
+        bad = [
+            # Both, or neither.
+            {"device_label": PSG, "stages": OUR_WORDS, "totals": {"total_sleep_minutes": 400}, **window},
+            {"device_label": PSG, **window},
+            # Totals need the window they were stated over.
+            {"device_label": PSG, "totals": {"total_sleep_minutes": 400}},
+            {"device_label": PSG, "totals": {"total_sleep_minutes": 400}, "sleep_start": _iso(0)},
+            # More sleep than night, or more stage than sleep.
+            {"device_label": PSG, "totals": {"total_sleep_minutes": 481}, **window},
+            {
+                "device_label": PSG,
+                "totals": {"total_sleep_minutes": 300, "deep_minutes": 200, "rem_minutes": 102},
+                **window,
+            },
+            {"device_label": PSG, "totals": {"total_sleep_minutes": -1}, **window},
+        ]
+        for body in bad:
+            response = client.post(
+                f"/api/v1/users/{user.id}/import/manual/sleep-stages", headers=api_key_header, json=body
+            )
+            assert response.status_code == 400, body
+        assert _sleep_sessions(client, user, api_key_header) == []
+
+    def test_a_provenance_tag_is_stored_on_the_record_and_follows_a_replacement(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        first = _import_sleep(client, user, api_key_header, external_id="night-1", provenance="history-a")
+        record = db.get(EventRecord, UUID(first["record_id"]))
+        assert record is not None
+        assert record.provider_metadata == {"provenance": "history-a"}
+
+        again = _import_sleep(
+            client,
+            user,
+            api_key_header,
+            external_id="night-1",
+            provenance="history-b",
+            stages=[],
+            totals={"total_sleep_minutes": 400},
+            sleep_start=_iso(0),
+            sleep_end=_iso(480),
+        )
+        assert again["record_id"] == first["record_id"]
+        db.expire_all()
+        record = db.get(EventRecord, UUID(first["record_id"]))
+        assert record is not None
+        assert record.provider_metadata == {"provenance": "history-b", "totals": "stated"}
+
+    def test_without_a_tag_nothing_is_stored(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        result = _import_sleep(client, user, api_key_header)
+        record = db.get(EventRecord, UUID(result["record_id"]))
+        assert record is not None
+        assert record.provider_metadata is None
+
+    def test_a_provenance_tag_is_a_slug(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        for tag in ["", "Upper", "has space", "-leading", "x" * 65]:
+            response = client.post(
+                f"/api/v1/users/{user.id}/import/manual/sleep-stages",
+                headers=api_key_header,
+                json={"device_label": PSG, "stages": OUR_WORDS, "provenance": tag},
+            )
+            assert response.status_code == 400, tag
+
     def test_an_unknown_user_is_a_404(self, client: TestClient, db: Session, api_key_header: dict[str, str]) -> None:
         response = client.post(
             f"/api/v1/users/{uuid4()}/import/manual/sleep-stages",
@@ -304,6 +401,63 @@ class TestSeries:
             (49.5, 300, "window"),
             (50.5, 300, "window"),
         ]
+
+    def test_a_provenance_tag_is_stored_on_every_row_beside_the_window(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        _import_series(
+            client,
+            user,
+            api_key_header,
+            series_type="heart_rate_variability_rmssd",
+            samples=_samples(2, step_seconds=300, first=48.5),
+            interval_seconds=300,
+            provenance="history-a",
+        )
+        _import_series(
+            client, user, api_key_header, series_type="heart_rate", samples=_samples(2), provenance="history-a"
+        )
+
+        rows = db.query(SeriesSample).all()
+        assert len(rows) == 4
+        metadata = sorted((r.provider_metadata for r in rows), key=lambda m: len(m))
+        assert (
+            metadata == [{"provenance": "history-a"}] * 2 + [{"interval_seconds": 300, "provenance": "history-a"}] * 2
+        )
+        rmssd = _timeseries(client, user, api_key_header, "heart_rate_variability_rmssd")
+        assert [r["interval_seconds"] for r in rmssd] == [300, 300]
+
+    def test_a_nightly_figure_sent_under_the_label_reads_back_on_the_night(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        # A reference night's own figures (Kubios's RMSSD and mean HR over the whole recording)
+        # go in as one sample each, inside the night, under the instrument's label; the sleep
+        # summary averages same-source samples over the record, so they read back on it.
+        _import_sleep(client, user, api_key_header, device_label=KUBIOS)
+        midnight = [{"recorded_at": _iso(240), "value": 61.5}]
+        _import_series(
+            client,
+            user,
+            api_key_header,
+            device_label=KUBIOS,
+            series_type="heart_rate_variability_rmssd",
+            samples=midnight,
+        )
+        _import_series(
+            client,
+            user,
+            api_key_header,
+            device_label=KUBIOS,
+            series_type="heart_rate",
+            samples=[{"recorded_at": _iso(240), "value": 52}],
+        )
+
+        response = client.get(f"/api/v1/users/{user.id}/summaries/sleep", headers=api_key_header, params=SLEEP_WINDOW)
+        assert response.status_code == 200, response.text
+        [night] = response.json()["data"]
+        assert night["source"]["device"] == KUBIOS
+        assert night["avg_hrv_rmssd_ms"] == 61.5
+        assert night["avg_heart_rate_bpm"] == 52
 
     def test_sending_the_same_rows_twice_stores_them_once_and_a_correction_replaces(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
