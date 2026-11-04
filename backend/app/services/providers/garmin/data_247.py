@@ -51,8 +51,9 @@ from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.raw_payload_storage import store_fit_file
 from app.utils.connection_context import get_active_connection_id
-from app.utils.conversion import seconds_to_minutes, sum_optional
+from app.utils.conversion import seconds_to_minutes, sum_optional, to_decimal
 from app.utils.dates import offset_to_iso
+from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
 # Series types to skip when parsing FIT files — already present from activityDetails.
@@ -717,61 +718,52 @@ class Garmin247Data(Base247DataTemplate):
         Returns:
             Dict with keys like 'heart_rate', 'steps', etc.
         """
-        slots: dict[int, list[dict[str, Any]]] = {}
-        for epoch in raw_epochs:
-            start_ts = epoch.get("startTimeInSeconds", 0)
-            if start_ts:
-                slots.setdefault(start_ts, []).append(epoch)
-
         heart_rate_samples: list[dict[str, Any]] = []
         step_samples: list[dict[str, Any]] = []
         energy_samples: list[dict[str, Any]] = []
 
-        for start_ts, rows in slots.items():
-            recorded_at = self._from_epoch_seconds(start_ts)
-            zone_offset = offset_to_iso(rows[0].get("startTimeOffsetInSeconds"))
-
-            # Garmin epoch summaryId is "{devicePrefix}-{hex(startTimeInSeconds)}-{activityTypeCode}".
-            # Strip only the activityType suffix → "{devicePrefix}-{hex(start)}", a stable
-            # per-slot id shared by every activity in the slot, so intraday rows carry a real,
-            # deterministic external_id. Require >=2 dashes before stripping so a malformed
-            # 2-part id can't collapse to the bare device prefix (which would collide across slots).
-            summary_id = rows[0].get("summaryId")
-            slot_external_id = (
-                summary_id.rpartition("-")[0] if summary_id and summary_id.count("-") >= 2 else summary_id
+        # start_ts -> the slot's metadata and its epochs by activity type
+        slots: dict[int, dict[str, Any]] = {}
+        skipped: list[tuple[Any, Exception]] = []
+        for epoch in raw_epochs:
+            try:
+                self._collect_epoch(epoch, slots)
+            except Exception as e:
+                skipped.append((epoch.get("summaryId") if isinstance(epoch, dict) else None, e))
+        if skipped:
+            log_and_capture_error(
+                skipped[0][1],
+                self.logger,
+                "Skipped malformed Garmin epochs",
+                extra={
+                    "provider": "garmin",
+                    "user_id": str(user_id),
+                    "skipped": len(skipped),
+                    "summary_ids": [summary_id for summary_id, _ in skipped[:5]],
+                },
             )
-            window_seconds = epoch.get("durationInSeconds") or None
 
-            slot = {
-                "timestamp": recorded_at.isoformat(),
-                "zone_offset": zone_offset,
-                "external_id": slot_external_id,
-                "window_seconds": window_seconds,
-            }
+        for start_ts, slot_data in slots.items():
+            rows = list(slot_data.pop("epochs").values())
+            offset_seconds = slot_data.pop("offset_seconds")
+            slot = slot_data
             # The day's first slot starts on the dailies' own instant (local midnight), and
             # the key has no is_daily_total: its steps and kcal are stamped a second later
             # so neither replaces the day's totals nor is replaced by them.
-            offset_seconds = rows[0].get("startTimeOffsetInSeconds") or 0
             summed = (
-                {**slot, "timestamp": (recorded_at + timedelta(seconds=1)).isoformat()}
+                {**slot, "timestamp": (self._from_epoch_seconds(start_ts) + timedelta(seconds=1)).isoformat()}
                 if (start_ts + offset_seconds) % 86_400 == 0
                 else slot
             )
 
-            # Heart rate
             mean_hr = self._slot_mean_heart_rate(rows)
             if mean_hr:
                 heart_rate_samples.append({**slot, "value": mean_hr})
 
-            # Steps
-            steps = [row["steps"] for row in rows if row.get("steps") is not None]
-            if steps:
-                step_samples.append({**summed, "value": sum(steps)})
-
-            # Active calories
-            calories = [row["activeKilocalories"] for row in rows if row.get("activeKilocalories") is not None]
-            if calories:
-                energy_samples.append({**summed, "value": sum(calories)})
+            for samples, field in ((step_samples, "steps"), (energy_samples, "activeKilocalories")):
+                values = [value for row in rows if (value := to_decimal(row.get(field))) is not None]
+                if values:
+                    samples.append({**summed, "value": sum(values)})
 
         return {
             "heart_rate": heart_rate_samples,
@@ -779,20 +771,59 @@ class Garmin247Data(Base247DataTemplate):
             "energy": energy_samples,
         }
 
+    def _collect_epoch(self, epoch: dict[str, Any], slots: dict[int, dict[str, Any]]) -> None:
+        """Add one epoch to its slot. Raises on a malformed epoch.
+
+        A slot's metadata follows its latest epoch, and a repeated (slot, activity type)
+        replaces the earlier one (upstream #1913).
+        """
+        start_ts = epoch.get("startTimeInSeconds", 0)
+        if not start_ts:
+            return
+
+        recorded_at = self._from_epoch_seconds(start_ts)
+        zone_offset = offset_to_iso(epoch.get("startTimeOffsetInSeconds"))
+        offset_seconds = int(epoch.get("startTimeOffsetInSeconds") or 0)
+
+        # Garmin epoch summaryId is "{devicePrefix}-{hex(startTimeInSeconds)}-{activityTypeCode}".
+        # Strip only the activityType suffix → "{devicePrefix}-{hex(start)}", a stable
+        # per-slot id shared by every activity in the slot, so intraday rows carry a real,
+        # deterministic external_id. Require >=2 dashes before stripping so a malformed
+        # 2-part id can't collapse to the bare device prefix (which would collide across slots).
+        summary_id = epoch.get("summaryId")
+        slot_external_id = summary_id.rpartition("-")[0] if summary_id and summary_id.count("-") >= 2 else summary_id
+        window_seconds = epoch.get("durationInSeconds") or None
+
+        slot = slots.setdefault(start_ts, {"epochs": {}})
+        slot.update(
+            timestamp=recorded_at.isoformat(),
+            zone_offset=zone_offset,
+            external_id=slot_external_id,
+            window_seconds=window_seconds,
+            offset_seconds=offset_seconds,
+        )
+        slot["epochs"][epoch.get("activityType")] = epoch
+
     @staticmethod
     def _slot_mean_heart_rate(rows: list[dict[str, Any]]) -> float | int | None:
         """A slot's mean heart rate across its activity-type rows.
 
         Each row's mean covers the time spent in that type, so the rows are weighted by
-        ``activeTimeInSeconds``; a plain mean when any row lacks it.
+        ``activeTimeInSeconds``; a plain mean when any row lacks it. A non-numeric mean is left out.
         """
-        rated = [row for row in rows if row.get("meanHeartRateInBeatsPerMinute")]
+        rated = [
+            row
+            for row in rows
+            if isinstance(row.get("meanHeartRateInBeatsPerMinute"), int | float)
+            and not isinstance(row.get("meanHeartRateInBeatsPerMinute"), bool)
+            and row["meanHeartRateInBeatsPerMinute"]
+        ]
         if not rated:
             return None
         if len(rated) == 1:
             return rated[0]["meanHeartRateInBeatsPerMinute"]
         weights = [row.get("activeTimeInSeconds") or 0 for row in rated]
-        if not all(weights):
+        if not all(isinstance(w, int | float) and w for w in weights):
             weights = [1] * len(rated)
         total = sum(row["meanHeartRateInBeatsPerMinute"] * w for row, w in zip(rated, weights, strict=True))
         return round(total / sum(weights), 3)
@@ -2150,6 +2181,7 @@ class Garmin247Data(Base247DataTemplate):
         # Each activity's span and its heart_rate samples: the span is cleared of other
         # heart_rate rows just before those samples are written.
         activity_hr: list[tuple[tuple[datetime, datetime], list[TimeSeriesSampleCreate]]] = []
+        body_battery_peaks: list[HealthScoreCreate] = []
         epoch_items: list[dict[str, Any]] = []
 
         for item in items:
@@ -2172,7 +2204,7 @@ class Garmin247Data(Base247DataTemplate):
                     case "stressDetails":
                         all_samples.extend(self._build_stress_samples(user_id, item))
                         if score := self._normalize_body_battery_health_score(user_id, item):
-                            all_health_scores.append(score)
+                            body_battery_peaks.append(score)
                     case "allDayRespiration":
                         all_samples.extend(self._build_respiration_samples(user_id, item))
                     case "pulseox":
@@ -2413,6 +2445,10 @@ class Garmin247Data(Base247DataTemplate):
 
         if all_health_scores:
             count += health_score_service.bulk_create(db, all_health_scores)
+            db.commit()
+        if body_battery_peaks:
+            # A day may already hold a lower peak from an earlier push
+            count += health_score_service.bulk_create_keeping_highest(db, body_battery_peaks)
             db.commit()
 
         return count

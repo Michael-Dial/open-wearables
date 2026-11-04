@@ -51,7 +51,7 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
         for source in sources:
             if source is None:
                 continue
-            device_model, _software_version, original_source_name = extract_device_info(source)
+            device_model, _software_version, original_source_name = extract_device_info(source, provider)
             # The identity a data source is keyed by. ensure_data_source stores
             # `source = original_source_name` on the Apple path, so this matches how
             # the row was written rather than re-deriving a different key.
