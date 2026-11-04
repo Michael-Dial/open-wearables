@@ -18,7 +18,8 @@ devices under test the way it tells any two sources apart.
 
 What the import does **not** do is interpret. A stage label is stored as the
 instrument said it, totals are computed only when every label was already one of
-OW's words, and a value is never folded, rounded or inferred on the way in.
+OW's words (or stored as the instrument stated them), and a value is never folded,
+rounded or inferred on the way in.
 
 ## Which connection the records land on
 
@@ -64,9 +65,15 @@ POST /api/v1/users/{user_id}/import/manual/sleep-stages
 <ParamField body="device_label" type="string" required>
   The instrument. Becomes the data source's `device_model` and `source`.
 </ParamField>
-<ParamField body="stages" type="array" required>
+<ParamField body="stages" type="array">
   The scored intervals, in any order. Each has `stage` (the instrument's own label),
   `start_time` and `end_time` (ISO 8601 **with an offset**; a naive time is refused).
+  Give exactly one of `stages` and `totals`.
+</ParamField>
+<ParamField body="totals" type="object">
+  The night's totals as the instrument stated them, for an instrument that published
+  no timeline (a typed-in sleep diary, an export that has only sums). See
+  [Totals without a timeline](#totals-without-a-timeline).
 </ParamField>
 <ParamField body="sleep_start / sleep_end" type="datetime">
   The record's window (lights off / lights on). Default: the first stage's start and
@@ -81,6 +88,9 @@ POST /api/v1/users/{user_id}/import/manual/sleep-stages
   for a file sent twice.
 </ParamField>
 <ParamField body="connection_id" type="uuid">See above.</ParamField>
+<ParamField body="provenance" type="string">
+  A tag for the batch this write belongs to. See [Provenance](#provenance).
+</ParamField>
 
 One sleep record is written exactly as a night relayed through Apple Health is
 stored: `event_record` plus `sleep_details.sleep_stages`, through the same
@@ -118,6 +128,27 @@ clipped, as the Apple path does), and the response says `"totals_scored": true`.
 any label was foreign, every total is **null** — not zero — and `totals_scored` is
 false. `time_in_bed_seconds` is the record's span either way. Derive what you need
 from the intervals.
+
+### Totals without a timeline
+
+```json
+{
+  "device_label": "Sleep diary",
+  "totals": { "total_sleep_minutes": 420, "deep_minutes": 90, "rem_minutes": 100 },
+  "sleep_start": "2026-10-05T22:00:00-04:00",
+  "sleep_end": "2026-10-06T06:00:00-04:00"
+}
+```
+
+`total_sleep_minutes` is required; `deep_minutes`, `light_minutes`, `rem_minutes` and
+`awake_minutes` are optional, and one not given is stored as **null**, not zero.
+`sleep_start` and `sleep_end` are required, since there are no stages to take the
+window from. Efficiency is total sleep over the window. The record has **no stage
+intervals**: a total says how much and never when, and no hypnogram is made up from
+it. The response says `"totals_scored": true, "totals_source": "stated"` (a timeline
+gives `"stages"`). Refused with a 400: both `stages` and `totals`, neither, totals
+without the window, more total sleep than the window holds, or deep + light + rem more
+than one minute over the total.
 
 ### Re-import and merging
 
@@ -177,10 +208,31 @@ Read them back from `/timeseries?types=heart_rate_variability_rmssd&resolution=r
 the bulk export; each row says `route: "manual.windows"`, `interval_seconds: 300` and
 `source.provider: "manual"`.
 
+## Provenance
+
+Both endpoints take an optional **`provenance`**: a lowercase slug of up to 64
+characters (`a-z`, `0-9`, `.`, `_`, `:`, `-`, starting with a letter or digit), such as
+`sleep-hub-history-2026-11`. It is stored on every record or row the request writes,
+as `provider_metadata.provenance`, beside a series' `interval_seconds` and a stated
+night's `"totals": "stated"`. It is not read back through the API; it is there so a
+backfill can be found, audited and withdrawn in the database as one batch without
+touching what the same instrument sent live. A night re-imported with the same
+`external_id` takes the new tag. Omitted, nothing is stored.
+
+## Nightly figures for a reference night
+
+A reference that reports one figure for the whole night (Kubios's RMSSD, SDNN and mean
+HR over the recording) is sent as one sample per series, `recorded_at` inside the
+night, under the **same `device_label`** as the night's sleep record. The sleep
+summary (`/summaries/sleep`) averages a data source's samples over its own sleep
+record, so the night reads back with `avg_hrv_rmssd_ms`, `avg_hrv_sdnn_ms`,
+`avg_heart_rate_bpm`, `resting_heart_rate_bpm` and `avg_respiratory_rate` filled from
+the reference. Send only one value per series per night, or the summary is their mean.
+
 ## Errors
 
 | Status | When |
 | --- | --- |
-| 400 | A stage ends before it starts, an empty stage list, `sleep_end` before `sleep_start`, a naive timestamp, an unknown `series_type`, an empty label. Nothing is written. |
+| 400 | A stage ends before it starts, neither or both of `stages` and `totals`, totals that do not fit the window, `sleep_end` before `sleep_start`, a naive timestamp, an unknown `series_type`, an empty label, a `provenance` that is not a slug. Nothing is written. |
 | 401 | No API key or developer token. |
 | 404 | The user does not exist, or `connection_id` is not a `manual` connection of this user. |

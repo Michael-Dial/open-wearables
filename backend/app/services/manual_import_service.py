@@ -67,6 +67,14 @@ def _offset_of(moment: datetime) -> str | None:
     return offset_to_iso(int(offset.total_seconds())) if offset is not None else None
 
 
+def _metadata(provenance: str | None, **stated: object) -> dict[str, object] | None:
+    """`provider_metadata` for a manual write: the importer's batch tag and what it stated, or NULL."""
+    metadata = {key: value for key, value in stated.items() if value is not None}
+    if provenance is not None:
+        metadata["provenance"] = provenance
+    return metadata or None
+
+
 def _clipped_seconds(stages: list[SleepStage]) -> dict[SleepStageType, float]:
     """Seconds per stage over a sorted timeline, overlaps clipped to the earlier interval."""
     seconds: dict[SleepStageType, float] = {}
@@ -132,6 +140,7 @@ class ManualImportService:
         end = payload.sleep_end or max(s.end_time for s in stages)
         if end <= start:
             raise ValueError("the record ends before it starts")
+        in_bed_minutes = int((end - start).total_seconds() // 60)
 
         stored = [
             SleepStage(
@@ -139,24 +148,45 @@ class ManualImportService:
             )
             for s in stages
         ]
-        every_label_is_ours = all(s.stage is not SleepStageType.UNKNOWN for s in stored)
-        in_bed_minutes = int((end - start).total_seconds() // 60)
+        stated = payload.totals
+        if stated is not None:
+            # As the instrument stated them; a stage it did not state stays null, never zero.
+            totals_scored = True
+            asleep_minutes: int | None = stated.total_sleep_minutes
+            deep, light, rem, awake = (
+                stated.deep_minutes,
+                stated.light_minutes,
+                stated.rem_minutes,
+                stated.awake_minutes,
+            )
+            efficiency = (
+                Decimal(str(round(stated.total_sleep_minutes / in_bed_minutes * 100, 2))) if in_bed_minutes else None
+            )
+        else:
+            # Totals only from a timeline that is entirely in OW's words. A foreign label
+            # leaves every total null: a figure summed over a fold this store did not make
+            # would be a synthesised measurement, and null is not zero.
+            totals_scored = all(s.stage is not SleepStageType.UNKNOWN for s in stored)
+            seconds = _clipped_seconds(stored) if totals_scored else None
 
-        # Totals only from a timeline that is entirely in OW's words. A foreign label
-        # leaves every total null: a figure summed over a fold this store did not make
-        # would be a synthesised measurement, and null is not zero.
-        seconds = _clipped_seconds(stored) if every_label_is_ours else None
+            def minutes(stage: SleepStageType) -> int | None:
+                return int(seconds.get(stage, 0.0) // 60) if seconds is not None else None
 
-        def minutes(stage: SleepStageType) -> int | None:
-            return int(seconds.get(stage, 0.0) // 60) if seconds is not None else None
+            asleep_seconds = sum(seconds.get(stage, 0.0) for stage in _ASLEEP) if seconds is not None else None
+            asleep_minutes = int(asleep_seconds // 60) if asleep_seconds is not None else None
+            deep, light, rem, awake = (
+                minutes(SleepStageType.DEEP),
+                minutes(SleepStageType.LIGHT),
+                minutes(SleepStageType.REM),
+                minutes(SleepStageType.AWAKE),
+            )
+            efficiency = (
+                Decimal(str(round(asleep_seconds / (in_bed_minutes * 60) * 100, 2)))
+                if asleep_seconds is not None and in_bed_minutes
+                else None
+            )
 
-        asleep_seconds = sum(seconds.get(stage, 0.0) for stage in _ASLEEP) if seconds is not None else None
-        efficiency = (
-            Decimal(str(round(asleep_seconds / (in_bed_minutes * 60) * 100, 2)))
-            if asleep_seconds is not None and in_bed_minutes
-            else None
-        )
-
+        metadata = _metadata(payload.provenance, totals="stated" if stated is not None else None)
         external_id = payload.external_id or f"manual:{label}:{start.isoformat()}"
         record = EventRecordCreate(
             id=uuid4(),
@@ -173,22 +203,28 @@ class ManualImportService:
             end_datetime=end,
             duration_seconds=int((end - start).total_seconds()),
             zone_offset=payload.zone_offset or _offset_of(start),
+            provider_metadata=metadata,
         )
         detail = EventRecordDetailCreate(
             record_id=record.id,
             sleep_time_in_bed_minutes=in_bed_minutes,
-            sleep_total_duration_minutes=int(asleep_seconds // 60) if asleep_seconds is not None else None,
-            sleep_deep_minutes=minutes(SleepStageType.DEEP),
-            sleep_rem_minutes=minutes(SleepStageType.REM),
-            sleep_light_minutes=minutes(SleepStageType.LIGHT),
-            sleep_awake_minutes=minutes(SleepStageType.AWAKE),
+            sleep_total_duration_minutes=asleep_minutes,
+            sleep_deep_minutes=deep,
+            sleep_rem_minutes=rem,
+            sleep_light_minutes=light,
+            sleep_awake_minutes=awake,
             sleep_efficiency_score=efficiency,
             is_nap=False,
-            sleep_stages=stored,
+            sleep_stages=stored or None,
         )
         result = event_record_service.create_or_merge_sleep(
             db_session, user_id, record, detail, settings.sleep_end_gap_minutes
         )
+        # A replaced or merged record keeps the row it already had, metadata included;
+        # this write's tags go on it so the record says what last wrote it.
+        if metadata is not None and result.provider_metadata != {**(result.provider_metadata or {}), **metadata}:
+            result.provider_metadata = {**(result.provider_metadata or {}), **metadata}
+            db_session.commit()
         log_structured(
             self.logger,
             "info",
@@ -199,7 +235,9 @@ class ManualImportService:
             connection_id=str(connection.id),
             record_id=str(result.id),
             stage_count=len(stored),
-            totals_scored=every_label_is_ours,
+            totals_scored=totals_scored,
+            totals_source="stated" if stated is not None else "stages",
+            provenance=payload.provenance,
             replaced=result.id != record.id,
         )
         return ManualSleepImportResult(
@@ -211,7 +249,8 @@ class ManualImportService:
             end_time=result.end_datetime,
             stage_count=len(stored),
             replaced=result.id != record.id,
-            totals_scored=every_label_is_ours,
+            totals_scored=totals_scored,
+            totals_source="stated" if stated is not None else "stages",
         )
 
     def import_series(
@@ -228,7 +267,7 @@ class ManualImportService:
         connection = self.resolve_connection(db_session, user_id, payload.connection_id)
         label = payload.device_label.strip()
         route = SampleRoute.MANUAL_WINDOWS if payload.interval_seconds else SampleRoute.MANUAL_SAMPLES
-        metadata = {"interval_seconds": payload.interval_seconds} if payload.interval_seconds else None
+        metadata = _metadata(payload.provenance, interval_seconds=payload.interval_seconds)
         creators = [
             TimeSeriesSampleCreate(
                 route=route,
@@ -260,6 +299,7 @@ class ManualImportService:
             received=len(creators),
             inserted=counts.inserted,
             updated=counts.updated,
+            provenance=payload.provenance,
         )
         return ManualSeriesImportResult(
             connection_id=connection.id,

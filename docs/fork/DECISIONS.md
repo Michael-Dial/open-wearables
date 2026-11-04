@@ -1611,3 +1611,30 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   battery scores (#2011) carry no data source, so two Garmin accounts on one user share a day's
   row and the higher peak wins; this predates the change.
 
+## Manual import: a provenance tag, and sleep totals without a timeline
+
+- **Area**: backend, docs
+- **Status**: active
+- **On conflict**: keep ours (fork-only files: `app/schemas/manual_import.py`,
+  `app/services/manual_import_service.py`; no upstream file changes).
+- **Why**: the Sleep Validation Hub's history (2022-04 onward) is being imported into
+  OW so the HPC Validation Hub reads every night from one store. Two things the
+  manual import could not say:
+
+  A **provenance tag**. A backfilled night is otherwise indistinguishable from one
+  the instrument sent live, so a bad batch could not be withdrawn without guessing.
+  The optional `provenance` slug goes into the existing `provider_metadata` JSON on
+  every record and row a request writes (no migration). A same-`external_id`
+  replacement keeps the row it had, so the service writes the tag onto the returned
+  record itself rather than relying on the merge path to carry it.
+
+  **Totals without stages.** Several of the hub's instruments (typed-in sleep
+  references, CSV workbooks, totals-only device exports) published sums and no
+  timeline. Requiring a stage list would have forced a synthesised hypnogram, which
+  is exactly what the hub forbids. `totals` stores what was stated: a stage not stated
+  is null, the record has no intervals, and `provider_metadata.totals = "stated"`
+  says where the figures came from. `totals_source` on the result is additive.
+
+  Whole-night reference figures (Kubios RMSSD, SDNN, mean HR) needed no change: a
+  sample under the same label inside the night is averaged onto it by the sleep
+  summary, which a test now pins.

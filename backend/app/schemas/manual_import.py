@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
@@ -19,6 +19,17 @@ DeviceLabel = Annotated[
             'The instrument, as a person names it ("PSG - Compumedics Grael", "Polar H10 via Kubios", '
             '"Muse S"). Becomes the data source\'s device_model and source, so two instruments are two '
             "sources and a night from one never merges with the same night from the other."
+        ),
+    ),
+]
+Provenance = Annotated[
+    str | None,
+    Field(
+        pattern=r"^[a-z0-9][a-z0-9._:-]{0,63}$",
+        description=(
+            "The batch this write belongs to (`sleep-hub-history-2026-11`), stored on every record or row it "
+            "writes as `provider_metadata.provenance`. It names where a backfilled measurement came from, and "
+            "lets a whole import be found and withdrawn later without touching what the instrument sent live."
         ),
     ),
 ]
@@ -54,10 +65,39 @@ class ManualSleepStageIn(BaseModel):
         return self
 
 
+class ManualSleepTotals(BaseModel):
+    """A night's totals as the instrument stated them, for an instrument that published no stage timeline."""
+
+    total_sleep_minutes: int = Field(ge=0, description="Total sleep time as the instrument stated it.")
+    deep_minutes: int | None = Field(None, ge=0)
+    light_minutes: int | None = Field(None, ge=0)
+    rem_minutes: int | None = Field(None, ge=0)
+    awake_minutes: int | None = Field(None, ge=0)
+
+    @model_validator(mode="after")
+    def _stages_fit_in_total(self) -> "ManualSleepTotals":
+        stated = [m for m in (self.deep_minutes, self.light_minutes, self.rem_minutes) if m is not None]
+        # One minute of slack: instruments round each stage separately.
+        if sum(stated) > self.total_sleep_minutes + 1:
+            raise ValueError("deep + light + rem minutes exceed total_sleep_minutes")
+        return self
+
+
 class ManualSleepStagesImport(BaseModel):
     connection_id: ConnectionId = None
     device_label: DeviceLabel
-    stages: list[ManualSleepStageIn] = Field(min_length=1, description="The scored intervals, in any order.")
+    stages: list[ManualSleepStageIn] = Field(
+        default_factory=list,
+        description="The scored intervals, in any order. Exactly one of `stages` and `totals` is given.",
+    )
+    totals: ManualSleepTotals | None = Field(
+        None,
+        description=(
+            "The night's totals as the instrument stated them, when it published no timeline. Requires "
+            "`sleep_start` and `sleep_end`. Stored as stated, with no stages: OW never synthesises a "
+            "hypnogram from totals."
+        ),
+    )
     sleep_start: AwareDatetime | None = Field(
         None, description="Start of the record (lights off). Default: the first stage's start."
     )
@@ -75,11 +115,20 @@ class ManualSleepStagesImport(BaseModel):
             "Default: derived from the device label and the record's start."
         ),
     )
+    provenance: Provenance = None
 
     @model_validator(mode="after")
     def _window_is_ordered(self) -> "ManualSleepStagesImport":
+        if bool(self.stages) == (self.totals is not None):
+            raise ValueError("give exactly one of stages and totals")
         if self.sleep_start is not None and self.sleep_end is not None and self.sleep_end <= self.sleep_start:
             raise ValueError("sleep_end must be after sleep_start")
+        if self.totals is not None:
+            if self.sleep_start is None or self.sleep_end is None:
+                raise ValueError("totals need sleep_start and sleep_end")
+            in_bed_minutes = (self.sleep_end - self.sleep_start).total_seconds() / 60
+            if self.totals.total_sleep_minutes > in_bed_minutes:
+                raise ValueError("total_sleep_minutes exceeds the time between sleep_start and sleep_end")
         return self
 
 
@@ -94,10 +143,13 @@ class ManualSleepImportResult(BaseModel):
     replaced: bool = Field(description="True when a record with this external_id already existed and was replaced.")
     totals_scored: bool = Field(
         description=(
-            "True when every stage label was one of OW's words, so the record's stage minutes, total sleep "
-            "and efficiency are filled. False when any label was foreign (N1/N2/N3): the totals are then "
-            "null rather than figures derived from a fold this store refuses to make."
+            "True when the record's stage minutes, total sleep and efficiency are filled: every stage label "
+            "was one of OW's words, or the totals were stated. False when any label was foreign (N1/N2/N3): "
+            "the totals are then null rather than figures derived from a fold this store refuses to make."
         ),
+    )
+    totals_source: Literal["stages", "stated"] = Field(
+        "stages", description="Whether the totals were computed from the stages or stated in `totals`."
     )
 
 
@@ -123,6 +175,7 @@ class ManualSeriesImport(BaseModel):
     zone_offset: ZoneOffset = Field(
         None, description="The local offset to stamp on every row, `+HH:MM`. Default: each sample's own offset."
     )
+    provenance: Provenance = None
 
 
 class ManualSeriesImportResult(BaseModel):
