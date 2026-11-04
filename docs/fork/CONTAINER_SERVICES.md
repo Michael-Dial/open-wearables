@@ -127,6 +127,103 @@ A ConfigMap or Secret change doesn't reach running pods (`envFrom` is read at st
 proxy's `local.conf` is a `subPath` mount). Delete the affected pods in the GUI after the
 merge request lands.
 
+## Moving the homelab instance's data
+
+The homelab instance (Proxmox CT 103, Portainer, containers `*__open-wearables`) holds
+every account and measurement collected so far. It moves to Container Services once,
+by dump and restore, **before** anything else is written to Container Services: the
+restore replaces the target database, so anything already there is lost, and an import
+into an instance that is later overwritten has to be redone. Database ids (users,
+connections, data sources) survive the move, so every pointer the two hubs hold into
+OW stays valid; only the base URL and the API key change.
+
+Svix is not deployed on Container Services, so only the `open-wearables` database
+moves, not `svix`. `MASTER_KEY` decrypts env-file values, not database columns, so
+nothing in the dump depends on it.
+
+### Before the day
+
+1. **Same schema or newer.** Container Services must run a platform tag at or after
+   the code homelab runs, so its migrations only move forward. Compare:
+   `docker exec postgres__open-wearables psql -U open-wearables -d open-wearables -tAc "select version_num from alembic_version"`
+   with the newest `Running upgrade … -> <rev>` line in the `ow-api` pod's logs. If
+   homelab is ahead, ship a newer tag to Container Services first.
+2. **Postgres version.** Ask Container Services which major version the managed
+   database runs. Homelab is 18. A custom-format dump restores only with a `pg_restore`
+   of the same or a newer major version, and a dump from 18 into an older server can
+   fail on settings that version doesn't know.
+3. **Who restores.** We have no route to the managed database and no RBAC to start a
+   pod, and the platform image has no `pg_restore`. Ask Container Services (consulting
+   hours) to restore the file into `open-wearables`, and agree how the file reaches
+   them; it holds identifiable health data, so use an OSU-approved transfer, not a
+   public link. Restore flags: `pg_restore --clean --if-exists --no-owner
+   --no-privileges --role=<app user> -d open-wearables`.
+4. **Vendor app credentials.** A stored connection's refresh token works only with the
+   vendor app (client id and secret) that issued it. Every `*_CLIENT_ID` and
+   `*_CLIENT_SECRET` in `ow-backend-env` must be homelab's, for every provider with a
+   live connection, or those connections fail at their next refresh and need a
+   re-login.
+5. **`SECRET_KEY` stays new.** It signs dashboard sessions and SDK tokens and derives
+   the default Suunto, Strava, Oura and Google webhook secrets. Container Services'
+   own key means: everyone signs in to the dashboard again, the hubs mint new SDK
+   tokens (they do on demand), and the derived webhook secrets are entered at each
+   vendor with the new URL (step 9), which has to happen anyway.
+
+### On the day
+
+1. **Merge request: stop Container Services.** `replicas: 0` on `ow-api`, `ow-worker`
+   and `ow-beat`, so nothing writes while the database is replaced and no beat runs
+   against a half-restored schema.
+2. **Stop every homelab writer**, leaving the database up:
+   `docker stop celery-beat__open-wearables celery-worker__open-wearables flower__open-wearables backend__open-wearables svix-server__open-wearables`.
+   From here on homelab must never run its worker or beat again: two instances
+   refreshing the same OAuth tokens invalidate each other's (most vendors rotate the
+   refresh token on use). Change their restart policy to `no` in Portainer so a
+   reboot or Watchtower doesn't start them.
+3. **Count what is there:**
+   ```
+   docker exec postgres__open-wearables psql -U open-wearables -d open-wearables -c "
+   select 'user', count(*) from \"user\" union all
+   select 'user_connection', count(*) from user_connection union all
+   select 'data_source', count(*) from data_source union all
+   select 'event_record', count(*) from event_record union all
+   select 'sleep_details', count(*) from sleep_details union all
+   select 'series_sample', count(*) from series_sample union all
+   select 'api_key', count(*) from api_key"
+   ```
+   Keep the output; step 7 compares against it.
+4. **Dump:**
+   ```
+   docker exec postgres__open-wearables pg_dump -U open-wearables -d open-wearables \
+     -Fc --no-owner --no-privileges -f /tmp/ow-homelab.dump
+   docker cp postgres__open-wearables:/tmp/ow-homelab.dump /root/ow-homelab.dump
+   docker exec postgres__open-wearables rm /tmp/ow-homelab.dump
+   sha256sum /root/ow-homelab.dump && ls -lh /root/ow-homelab.dump
+   ```
+   Send the file and its checksum to Container Services; they restore it (above).
+5. **Merge request: start Container Services** (replicas back to 1). `ow-api` runs any
+   migrations newer than homelab's on start; watch its log for them.
+6. **API keys come with the data.** Keys are stored as hashes, so homelab's keys now
+   work against Container Services and the keys made there before the restore do not.
+   Update every client that holds one: the Validation Hub's `ow_instances` row, the
+   Sleep Validation Hub's Open Wearables instance (base URL and key; its user links
+   keep working, since the user ids are the same), and any task-environment network
+   secret for `openwearables-api.webtest.osu.edu`.
+7. **Verify.** The same counts, through the API or by Container Services on the
+   database, must match step 3 exactly. Spot-check one participant's recent nights on
+   `/users/{id}/events/sleep` against homelab's.
+8. **Phones.** Every app that relays through the SDK (Apple Health, Health Connect,
+   the participant app) must point at `https://openwearables-api.webtest.osu.edu`.
+   Data a phone cannot deliver it retries, but only until the app is updated.
+9. **Vendors.** For each provider with live connections, add
+   `https://openwearables-api.webtest.osu.edu` OAuth redirect URIs and move webhook
+   subscriptions there (Polar's re-registration saves a new signature secret to
+   `provider_settings` by itself). Then run one sync per provider from the dashboard
+   and confirm new data lands.
+10. **Keep homelab's database** stopped but intact until the hubs have run on
+    Container Services for a while; it is the rollback. Delete `/root/ow-homelab.dump`
+    once Container Services confirms the restore.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
