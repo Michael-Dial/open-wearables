@@ -89,6 +89,38 @@ class TestListAndGet:
     def test_authentication_is_required(self, client: TestClient, user: User) -> None:
         assert client.get(f"/api/v1/users/{user.id}/devices").status_code == 401
 
+    @pytest.mark.parametrize(
+        "path",
+        ["devices", "devices/source-activity", "devices-history", "device-link-proposals"],
+    )
+    def test_reads_accept_an_api_key(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str], path: str
+    ) -> None:
+        """A client that reads a user's series must be able to read which unit produced them.
+
+        The hub reads the registry with its instance API key. When these took a dashboard
+        login only, every read answered 401 while the same key read /users and every
+        series route, so the registry looked like a rejected key.
+        """
+        _ensure(db, user, ProviderName.GARMIN, "fenix 8", "garmin")
+        assert client.get(f"/api/v1/users/{user.id}/{path}", headers=api_key_header).status_code == 200
+
+    def test_one_device_reads_with_an_api_key(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        source = _ensure(db, user, ProviderName.GARMIN, "fenix 8", "garmin")
+        response = client.get(f"/api/v1/users/{user.id}/devices/{source.device_id}", headers=api_key_header)
+        assert response.status_code == 200
+
+    def test_writes_refuse_an_api_key(self, client: TestClient, user: User, api_key_header: dict[str, str]) -> None:
+        """Every write records a developer in the audit trail; an API key names no person."""
+        response = client.post(
+            f"/api/v1/users/{user.id}/devices",
+            json={"device_type": "watch", "brand_display": "Garmin", "model_display": "fenix 8"},
+            headers=api_key_header,
+        )
+        assert response.status_code == 401
+
 
 class TestEditing:
     def test_creating_by_hand_marks_the_label_manual(

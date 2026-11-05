@@ -13158,6 +13158,22 @@
               "title": "Include Retired"
             },
             "description": "Include devices that are no longer worn."
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
           }
         ],
         "responses": {
@@ -13282,6 +13298,22 @@
               "title": "Days"
             },
             "description": "How far back to count. Clamped; the counts are aggregates over the largest tables."
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
           }
         ],
         "responses": {
@@ -13344,6 +13376,22 @@
               "title": "Device Id"
             },
             "description": "Device ID"
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
           }
         ],
         "responses": {
@@ -13882,6 +13930,22 @@
               "title": "Limit"
             },
             "description": "Max entries, newest first."
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
           }
         ],
         "responses": {
@@ -13933,6 +13997,22 @@
               "title": "User Id"
             },
             "description": "User ID"
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
           }
         ],
         "responses": {
