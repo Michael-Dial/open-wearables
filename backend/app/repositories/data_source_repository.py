@@ -13,6 +13,7 @@ from app.constants.devices_map import (
     HANDSET_DEVICE_TYPES,
     infer_device_type_from_model,
     infer_device_type_from_source_name,
+    is_accessory_writer,
     is_host_model,
     reconcile_device_type,
 )
@@ -342,7 +343,13 @@ class DataSourceRepository(
                 and r.provider_device_id is None
                 and r.source_app_id == identity.source_app_id
             ]
-            if len(writer_rows) == 1 and (identity.device_model is None or _model_unknown(writer_rows[0])):
+            # Not for a writer that relays many accessories: its records with and without
+            # a model may be two units, and joining them files one under the other.
+            if (
+                len(writer_rows) == 1
+                and not is_accessory_writer(identity.source_app_id)
+                and (identity.device_model is None or _model_unknown(writer_rows[0]))
+            ):
                 return writer_rows[0]
         app_row = identity._replace(provider_device_id=None)
         if identity.provider_device_id and identity.source_app_id and (found := cls._find(rows, app_row)):
@@ -359,6 +366,10 @@ class DataSourceRepository(
         record that matches it now carries the producing device's model, or none.
         """
         if identity.provider_device_id or not identity.source_app_id:
+            return None
+        # An accessory writer's host-keyed row holds whatever accessory it relayed with
+        # no model; a record naming one is not known to be that accessory.
+        if identity.device_model is not None and is_accessory_writer(identity.source_app_id):
             return None
         return next(
             (
@@ -397,6 +408,10 @@ class DataSourceRepository(
         if not _model_unknown(row):
             return False
         if is_host_model(getattr(row.provider, "value", row.provider), row.source_app_id, device_model):
+            return False
+        # A writer relaying many accessories: what it wrote without a model is not
+        # known to be the accessory that now names itself (see is_accessory_writer).
+        if is_accessory_writer(row.source_app_id):
             return False
         object.__setattr__(row, "device_model", device_model)
         object.__setattr__(row, "device_model_origin", DeviceModelOrigin.PROVIDER.value)
@@ -648,8 +663,8 @@ class DataSourceRepository(
             relayed_host = _relayed_host_model(existing)
             updated = self._stamp_ids(existing, identity, device_manufacturer)
             # Stamped first, so a legacy row that just gained its ids can learn a model too.
-            if device_model_origin is not DeviceModelOrigin.LABEL:
-                updated |= self._learn_model(existing, device_model)
+            learned = device_model_origin is not DeviceModelOrigin.LABEL and self._learn_model(existing, device_model)
+            updated |= learned
             if user_connection_id and existing.user_connection_id is None:
                 object.__setattr__(existing, "user_connection_id", user_connection_id)
                 updated = True
@@ -672,10 +687,12 @@ class DataSourceRepository(
             # relayed it got its stored type from that host, so it is re-resolved outright
             # rather than left to the SDK upgrade-only rule, which would keep an Oura row
             # typed "phone" forever. A resolution of UNKNOWN still never erases a type.
-            if relayed_host and resolved is not DeviceType.UNKNOWN:
+            # Likewise a row that just learned its model: the stored type was resolved
+            # without one (or from the host's), and the model is the better evidence.
+            if (relayed_host or learned) and resolved is not DeviceType.UNKNOWN:
                 device_type = resolved.value
             else:
-                device_type = self.next_device_type(provider, existing.device_type, resolved)
+                device_type = self.next_device_type(provider, existing.device_type, resolved, existing.device_model)
             if device_type != existing.device_type:
                 object.__setattr__(existing, "device_type", device_type)
                 updated = True
@@ -1012,7 +1029,12 @@ class DataSourceRepository(
         return True
 
     @staticmethod
-    def next_device_type(provider: ProviderName, current: str | None, resolved: DeviceType) -> str:
+    def next_device_type(
+        provider: ProviderName,
+        current: str | None,
+        resolved: DeviceType,
+        device_model: str | None = None,
+    ) -> str:
         """The type an existing row should carry after a sync resolved ``resolved``.
 
         Cloud rows take the inferred type (upstream #1721), so a better mapping reaches
@@ -1022,6 +1044,13 @@ class DataSourceRepository(
         included, because consumers key off device_type to tell wearables from relays
         and NULL sends them back to guessing; and a sync that resolves UNKNOWN never
         erases a type already known - it carried no signal, it did not contradict one.
+
+        One more fork rule, for SDK rows stuck on a handset type: when the row's own
+        ``device_model`` names something that is not a handset (``AirPods Pro``), the
+        handset type was inherited from the phone that carried the data - an iOS SDK
+        that reported the phone as the model, before the row learned the real one -
+        and the model wins. A model that itself names a handset never triggers it, so
+        a phone's own row is untouched.
         """
         unset = (None, DeviceType.UNKNOWN.value)
         if resolved is DeviceType.UNKNOWN:
@@ -1029,6 +1058,13 @@ class DataSourceRepository(
         if provider.value not in SDK_PROVIDERS:
             return resolved.value
         if current in (*unset, DeviceType.OTHER.value):
+            return resolved.value
+        if (
+            current in {t.value for t in HANDSET_DEVICE_TYPES}
+            and resolved not in HANDSET_DEVICE_TYPES
+            and infer_device_type_from_model(device_model)
+            not in (*HANDSET_DEVICE_TYPES, DeviceType.UNKNOWN, DeviceType.OTHER)
+        ):
             return resolved.value
         return current
 
@@ -1121,7 +1157,10 @@ class DataSourceRepository(
             if row is not None:
                 matched[requested] = row
                 changed |= self._stamp_ids(row, stored, manufacturers.get(requested))
-                changed |= self._learn_model(row, _provider_model(requested))
+                if self._learn_model(row, _provider_model(requested)):
+                    # Typed without a model until now: re-resolved outright below.
+                    relayed_host.add(row.id)
+                    changed = True
                 changed |= self._follow_writer_name(row, stored)
 
         # Re-resolve the type of what already exists, as the single path does. The
@@ -1144,7 +1183,7 @@ class DataSourceRepository(
             if row.id in relayed_host and resolved is not DeviceType.UNKNOWN:
                 device_type = resolved.value
             else:
-                device_type = self.next_device_type(provider, row.device_type, resolved)
+                device_type = self.next_device_type(provider, row.device_type, resolved, row.device_model)
             if device_type != row.device_type:
                 object.__setattr__(row, "device_type", device_type)
                 changed = True

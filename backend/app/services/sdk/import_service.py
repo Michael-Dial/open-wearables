@@ -746,15 +746,23 @@ class ImportService:
         would put a classification inside the identity of the row it classifies.
         """
         from app.services.devices.sdk_identities import record_sdk_identities
+        from app.services.devices.source_observations import record_sdk_observations
 
         data = request.data
-        sources = [
-            record.source
+        records = [
+            record
             for collection in (data.workouts or [], data.records or [], data.sleep or [])
             for record in collection
             if record.source is not None
         ]
-        record_sdk_identities(db_session, user_id, request.provider, sources)
+        record_sdk_identities(db_session, user_id, request.provider, [record.source for record in records])
+        # Everything else the source carried, dated by the records that carried it.
+        record_sdk_observations(
+            db_session,
+            user_id,
+            request.provider,
+            ((record.source, record.startDate, record.endDate) for record in records),
+        )
 
     def import_data_from_request(
         self,

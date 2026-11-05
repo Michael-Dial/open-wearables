@@ -11020,6 +11020,39 @@
                                       ],
                                       "title": "Devicesoftwareversion"
                                     },
+                                    "deviceFirmwareVersion": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Devicefirmwareversion"
+                                    },
+                                    "deviceLocalIdentifier": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Devicelocalidentifier"
+                                    },
+                                    "deviceUdiDeviceIdentifier": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Deviceudideviceidentifier"
+                                    },
                                     "recordingMethod": {
                                       "anyOf": [
                                         {
@@ -11357,6 +11390,39 @@
                                         }
                                       ],
                                       "title": "Devicesoftwareversion"
+                                    },
+                                    "deviceFirmwareVersion": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Devicefirmwareversion"
+                                    },
+                                    "deviceLocalIdentifier": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Devicelocalidentifier"
+                                    },
+                                    "deviceUdiDeviceIdentifier": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Deviceudideviceidentifier"
                                     },
                                     "recordingMethod": {
                                       "anyOf": [
@@ -11794,6 +11860,39 @@
                                         }
                                       ],
                                       "title": "Devicesoftwareversion"
+                                    },
+                                    "deviceFirmwareVersion": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Devicefirmwareversion"
+                                    },
+                                    "deviceLocalIdentifier": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Devicelocalidentifier"
+                                    },
+                                    "deviceUdiDeviceIdentifier": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "title": "Deviceudideviceidentifier"
                                     },
                                     "recordingMethod": {
                                       "anyOf": [
@@ -16356,6 +16455,131 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/devices/source-observations": {
+      "get": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "What platforms reported about the hardware and software behind each data source",
+        "description": "Each distinct description of a source's hardware and software, dated by the records that carried it.\n\nHealthKit and Health Connect attach to every record the writing app and its version,\nthe OS it ran on, and - where the writer passes one - the device: its name,\nmanufacturer, model and hardware, firmware and software versions. A data source\nkeeps only what identifies it; this keeps the rest, one row per combination, so a\nfirmware or app update partway through a study is visible beside the data it\naffects. Unattributed sources are included. Values are verbatim and null means the\nplatform did not say.",
+        "operationId": "source_observations_api_v1_users__user_id__devices_source_observations_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "data_source_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this data source.",
+              "title": "Data Source Id"
+            },
+            "description": "Only this data source."
+          },
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the data sources attributed to this device.",
+              "title": "Device Id"
+            },
+            "description": "Only the data sources attributed to this device."
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceObservationListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblem"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/devices/{device_id}": {
       "get": {
         "tags": [
@@ -20878,6 +21102,54 @@
               }
             ],
             "title": "Original Source Name"
+          },
+          "source_app_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source App Id",
+            "examples": [
+              "com.apple.heartratecoordinatord"
+            ]
+          },
+          "provider_device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Device Id"
+          },
+          "device_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Manufacturer"
+          },
+          "software_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Software Version",
+            "description": "Latest software or OS version reported. The dated history is under source-observations."
           },
           "user_connection_id": {
             "anyOf": [
@@ -28473,6 +28745,285 @@
         ],
         "title": "SourceMetadata",
         "description": "Attribution for a sample or record.\n\n``provider`` is the integration the data arrived through (apple, garmin, ...).\n``source`` is the writer inside that integration - a third-party app name for\nHealthKit/Health Connect data (\"Connect\", \"Zepp Life\"), or the provider key\nitself for native API integrations."
+      },
+      "SourceObservationListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SourceObservationResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "SourceObservationListResponse"
+      },
+      "SourceObservationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Name",
+            "description": "HKSource.name: the writing app's or device's display name."
+          },
+          "source_bundle_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Bundle Id",
+            "description": "Writer's bundle or package id.",
+            "examples": [
+              "com.apple.heartratecoordinatord"
+            ]
+          },
+          "source_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Version",
+            "description": "Version of the writing app (HKSourceRevision.version)."
+          },
+          "source_product_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Product Type",
+            "description": "Hardware the writing app ran on (HKSourceRevision.productType).",
+            "examples": [
+              "iPhone18,1"
+            ]
+          },
+          "source_os_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Os Version",
+            "description": "OS version the writing app ran on.",
+            "examples": [
+              "26.1.0"
+            ]
+          },
+          "device_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Name",
+            "description": "HKDevice.name.",
+            "examples": [
+              "Michael's AirPods Pro"
+            ]
+          },
+          "device_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Manufacturer",
+            "examples": [
+              "Apple Inc."
+            ]
+          },
+          "device_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Model",
+            "description": "HKDevice.model, verbatim.",
+            "examples": [
+              "AirPods Pro"
+            ]
+          },
+          "device_hardware_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Hardware Version"
+          },
+          "device_firmware_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Firmware Version"
+          },
+          "device_software_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Software Version"
+          },
+          "device_local_identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Local Identifier",
+            "description": "HKDevice.localIdentifier. Scoped to one HealthKit store and not stable across a restore or re-pair: evidence, never an identity."
+          },
+          "device_udi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Udi",
+            "description": "HKDevice.udiDeviceIdentifier, for regulated devices."
+          },
+          "device_type_reported": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Type Reported",
+            "description": "Device type the platform or SDK declared."
+          },
+          "recording_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Method"
+          },
+          "first_recorded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Recorded At",
+            "description": "Earliest record time that carried this description."
+          },
+          "last_recorded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Recorded At",
+            "description": "Latest record time that carried this description."
+          },
+          "first_received_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Received At"
+          },
+          "last_received_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Received At"
+          },
+          "records_reported": {
+            "type": "integer",
+            "title": "Records Reported",
+            "description": "Records that carried it, summed over syncs. A record pushed twice counts twice."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "data_source_id",
+          "first_received_at",
+          "last_received_at",
+          "records_reported"
+        ],
+        "title": "SourceObservationResponse",
+        "description": "One distinct description of a data source's hardware and software, and when it held.\n\nEvery field is what the platform sent, verbatim; null means it sent nothing for that\nfield, never that the value was empty. A firmware or app update shows as a new row\nwhose recorded span starts where the previous one's ends."
       },
       "StorageEstimate": {
         "properties": {

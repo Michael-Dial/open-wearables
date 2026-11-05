@@ -44,6 +44,7 @@ provider-issued `strong` identity can tell them apart.
 | `device_identity` | One identity claim per ingest route. A device accumulates several. |
 | `device_history` | Append-only record of every attribution change. |
 | `device_link_proposal` | Cross-route candidates, scored, with their evidence. |
+| `data_source_observation` | Every distinct description a platform gave of a source's hardware and software, dated. Provenance only; groups nothing. |
 
 `data_source.device_id` is a nullable FK, `ON DELETE SET NULL`. Deleting a device
 never deletes ingested data.
@@ -125,6 +126,82 @@ produce.
 Existing rows are regrouped by
 `backend/scripts/data_migrations/split_host_relayed_devices.py`, which previews by
 default and writes with `--apply`.
+
+## The writer is the bundle id, not the display name
+
+On HealthKit, `data_source.source` is the source's *display name*. Two writers can
+share one, and one writer's changes when a person renames their phone. Where the row
+stores the writer's bundle or package id (`source_app_id`), that id is the writer for
+every grouping key and claim (`identity.data_source_writer_id`); the name is used only
+for rows that never carried an id (Apple Health XML imports, early iOS SDKs).
+
+A relayed device grouped before this change holds a key built from the name
+(`Oura||iPhone18,1`). Detection finds it through that key when the bundle key
+(`com.ouraring.oura||iPhone18,1`) is new, and adds the bundle key to it, so the writer's
+next source joins the device it already has.
+
+## Apple's Bluetooth accessory services
+
+Two of Apple's own services write into HealthKit for an external accessory rather than
+for the phone:
+
+| Writer | What it writes for |
+|---|---|
+| `com.apple.heartratecoordinatord` | AirPods Pro heart rate |
+| `com.apple.BTLEServer` | a Bluetooth LE heart-rate sensor paired to the phone |
+
+HealthKit names both sources **"Bluetooth Device"**, whatever accessory is behind them.
+The accessory's own name and model are on `HKDevice` (`deviceName` / `deviceModel` in
+the SDK payload). Observed in SDK payloads; Apple documents neither bundle id.
+
+One service serves every accessory of its kind, so its id names no unit. The rules
+(`is_accessory_writer` in `app/constants/devices_map/device_types.py`):
+
+- **The writer is never claimed.** Two accessories would hold one `healthkit_bundle`
+  claim, and a shared claim raises a link proposal between unrelated hardware - which is
+  how an AirPods Pro and a chest strap came to be proposed as one device.
+- **The accessory's model groups it**, as any model string does on its own route.
+- **A record without a model never joins one with a model**, in either direction, and a
+  phone-keyed legacy row never absorbs a named accessory. "No model" means "accessory
+  unknown", not "the accessory we saw last".
+- **A host model on its row names the phone**, as on a third-party relay: the service is
+  Apple's code, but it is not the phone writing about itself.
+- **The source is named after the accessory** (`HKDevice.name`, e.g. "Michael's AirPods
+  Pro") when the row is keyed by the app id, so the list does not show a column of
+  "Bluetooth Device" rows and the type is inferred from the accessory's name.
+
+A data-source row typed `phone` whose own model names something else (`AirPods Pro`)
+took the phone's type from the iOS SDK that once reported the phone as the model. The
+next sync re-types it from the model; the registry device created from it keeps its type
+until a person edits it.
+
+## What the platform said: source observations
+
+A data source keeps what identifies it. Everything else HealthKit and Health Connect
+attach to a record - the writing app's version, the OS it ran on, and the device's name,
+manufacturer, model, and hardware, firmware and software versions - changes during a
+study without changing which stream it is. A firmware update that changes an optical
+sensor's processing, or an app update that changes how a night is scored, is invisible
+once only the latest value is kept.
+
+`data_source_observation` keeps each distinct combination per data source:
+
+- **Dated by the records that carried it** (`first_recorded_at`, `last_recorded_at`, the
+  records' own times), so a late history sync widens the span correctly. An update shows
+  as a new row whose span starts where the previous one ends.
+- **Verbatim.** A null column means the platform did not say; it never means empty.
+- **`records_reported`** sums the records that carried it over every sync. A record
+  pushed twice counts twice: it says how much evidence there is, not how many samples.
+- **`device_local_identifier`** is `HKDevice.localIdentifier`, scoped to one HealthKit
+  store and not stable across a restore or a re-pair. It is recorded as evidence and
+  never used as an identity.
+
+The SDK payload accepts `deviceFirmwareVersion`, `deviceLocalIdentifier` and
+`deviceUdiDeviceIdentifier` ahead of the iOS SDK sending them, so they are recorded from
+the first sync that does.
+
+Read them with `GET /users/{user_id}/devices/source-observations`, optionally filtered by
+`data_source_id` or `device_id`.
 
 ## A detach has to survive the next sync
 
@@ -416,6 +493,8 @@ The writes take a dashboard login only: each one records a developer in
 | `POST` | `/devices/{id}/merge` | Absorb another device |
 | `POST` | `/devices/{id}/split` | Move sources onto a new device |
 | `GET` | `/devices-history` | The audit trail |
+| `GET` | `/devices/source-activity` | What each data source reported recently |
+| `GET` | `/devices/source-observations` | What platforms reported about each source's hardware and software, dated |
 | `GET` | `/device-link-proposals` | Pending cross-route suggestions |
 | `POST` | `/device-link-proposals/refresh` | Re-score |
 | `POST` | `/device-link-proposals/{id}/decide` | Accept (merges) or reject (permanent) |

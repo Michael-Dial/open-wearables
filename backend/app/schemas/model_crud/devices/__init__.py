@@ -20,6 +20,7 @@ from .device import (
     LinkProposalListResponse,
     LinkProposalResponse,
 )
+from .observation import SourceObservationListResponse, SourceObservationResponse
 
 __all__ = [
     "ActivityBucket",
@@ -40,4 +41,6 @@ __all__ = [
     "LinkProposalResponse",
     "SourceActivityListResponse",
     "SourceActivityResponse",
+    "SourceObservationListResponse",
+    "SourceObservationResponse",
 ]

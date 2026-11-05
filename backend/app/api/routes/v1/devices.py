@@ -30,6 +30,7 @@ from app.schemas.model_crud.devices import (
     LinkProposalDecision,
     LinkProposalListResponse,
     LinkProposalResponse,
+    SourceObservationListResponse,
 )
 from app.schemas.model_crud.devices.activity import (
     DEFAULT_WINDOW_DAYS,
@@ -112,6 +113,31 @@ def source_activity(
     same question.
     """
     return source_activity_service.get_user_source_activity(db, user_id, days=days)
+
+
+@router.get(
+    # Ahead of /devices/{device_id}, for the same reason as source-activity.
+    "/users/{user_id}/devices/source-observations",
+    summary="What platforms reported about the hardware and software behind each data source",
+)
+def source_observations(
+    db: DbSession,
+    _api_key: ApiKeyDep,
+    user_id: Annotated[UUID, Path(description="User ID")],
+    data_source_id: Annotated[UUID | None, Query(description="Only this data source.")] = None,
+    device_id: Annotated[UUID | None, Query(description="Only the data sources attributed to this device.")] = None,
+) -> SourceObservationListResponse:
+    """Each distinct description of a source's hardware and software, dated by the records that carried it.
+
+    HealthKit and Health Connect attach to every record the writing app and its version,
+    the OS it ran on, and - where the writer passes one - the device: its name,
+    manufacturer, model and hardware, firmware and software versions. A data source
+    keeps only what identifies it; this keeps the rest, one row per combination, so a
+    firmware or app update partway through a study is visible beside the data it
+    affects. Unattributed sources are included. Values are verbatim and null means the
+    platform did not say.
+    """
+    return device_service.list_source_observations(db, user_id, data_source_id=data_source_id, device_id=device_id)
 
 
 @router.get("/users/{user_id}/devices/{device_id}", summary="Get one device")

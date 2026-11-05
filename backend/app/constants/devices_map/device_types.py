@@ -63,6 +63,32 @@ def is_apple_own_source(source_app_id: str | None) -> bool:
     return source_app_id is not None and source_app_id.startswith(APPLE_SOURCE_APP_PREFIX)
 
 
+# Apple system services that write into HealthKit on behalf of an external Bluetooth
+# accessory (fork). Observed in SDK payloads, not documented by Apple:
+# com.apple.heartratecoordinatord writes AirPods Pro heart rate, com.apple.BTLEServer
+# writes a Bluetooth LE heart-rate sensor paired to the phone. HealthKit names both
+# sources "Bluetooth Device", whatever accessory is behind them.
+#
+# A writer like this is neither the phone writing about itself nor one third-party app:
+# it serves every accessory of its kind, so its id names no unit. Two consequences, both
+# toward over-splitting: the writer id is never claimed (two accessories would hold the
+# same claim and raise a link proposal between unrelated hardware), and a record that
+# names no accessory model never joins one that does (identity of the accessory unknown
+# is not the same as "the accessory we saw last").
+APPLE_ACCESSORY_WRITERS: frozenset[str] = frozenset({"com.apple.heartratecoordinatord", "com.apple.BTLEServer"})
+# The display name HealthKit gives those sources, for rows that arrived without the id
+# (Apple Health XML exports, iOS SDKs that sent no appId). Compared casefolded.
+APPLE_ACCESSORY_WRITER_NAMES: frozenset[str] = frozenset({"bluetooth device"})
+
+
+def is_accessory_writer(writer: str | None) -> bool:
+    """A writer that relays many external accessories, so its id or name identifies none of them."""
+    if not writer:
+        return False
+    cleaned = writer.strip()
+    return cleaned in APPLE_ACCESSORY_WRITERS or cleaned.casefold() in APPLE_ACCESSORY_WRITER_NAMES
+
+
 def is_host_model(provider: str | None, source_app_id: str | None, device_model: str | None) -> bool:
     """Apple hardware code on a third-party HealthKit writer's row: the iPhone/Watch that relayed it, not the producer.
 

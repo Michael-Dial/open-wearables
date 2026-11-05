@@ -33,6 +33,7 @@ from app.constants.devices_map import (
     DEVICE_NAMES,
     HANDSET_DEVICE_TYPES,
     infer_device_type_from_source_name,
+    is_accessory_writer,
     reconcile_device_type,
 )
 from app.database import DbSession
@@ -49,6 +50,8 @@ from app.schemas.enums import (
 from app.services.devices.identity import (
     IdentityClaim,
     claims_from_data_source,
+    data_source_writer_id,
+    grouping_claim,
     legacy_declared_sensor_claims,
     relaying_host_model,
 )
@@ -123,6 +126,7 @@ class DeviceDetectionService:
                 data_source.source,
                 account_scope,
                 declared_sensor,
+                source_app_id=data_source.source_app_id,
             )
         )
         if extra_claims:
@@ -216,7 +220,12 @@ class DeviceDetectionService:
         provider = getattr(data_source.provider, "value", data_source.provider)
         account_scope, declared_sensor = self._account_context(db_session, data_source)
         claims = claims_from_data_source(
-            provider, data_source.device_model, data_source.source, account_scope, declared_sensor
+            provider,
+            data_source.device_model,
+            data_source.source,
+            account_scope,
+            declared_sensor,
+            source_app_id=data_source.source_app_id,
         )
         target: Device | None = None
         if not declared_sensor and current is not None:
@@ -399,7 +408,7 @@ class DeviceDetectionService:
         # a third-party app relaying through HealthKit or Health Connect reports the
         # host that ran it. Every app on that host reports the same string, so grouping
         # on it pools unrelated brands into one device.
-        writer = declared_sensor or data_source.source
+        writer = declared_sensor or data_source_writer_id(provider, data_source.source, data_source.source_app_id)
         host_model = relaying_host_model(provider, data_source.device_model, writer, bool(declared_sensor))
 
         # 2. Within-route match on the grouping key: the provider's own model string,
@@ -413,6 +422,8 @@ class DeviceDetectionService:
         if group_claim is not None:
             found = self.repo.find_by_claim(db_session, user_id, group_claim)
             if found is not None:
+                return found, conflicts
+            if (found := self._find_by_writer_name(db_session, user_id, provider, data_source, writer)) is not None:
                 return found, conflicts
 
         # A declared sensor's device may predate its current key; see
@@ -463,6 +474,35 @@ class DeviceDetectionService:
                 detected=True,
             )
         return device, conflicts
+
+    def _find_by_writer_name(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        data_source: DataSource,
+        writer: str | None,
+    ) -> Device | None:
+        """The device a relayed writer was grouped under when its key used the display name.
+
+        Grouping keys on a relay route were built from ``data_source.source`` - on
+        HealthKit the source's display name - before the writer's bundle id was
+        preferred (see identity.data_source_writer_id). A device created under the old
+        key is found through it, and the caller adds the new key to it, so the next new
+        source from that writer joins the device it already has instead of opening a
+        second one beside it.
+
+        Not for an accessory writer: the old key there ("Bluetooth Device||iPhone18,1")
+        pooled every accessory relayed through the phone, which is the grouping this
+        change exists to stop.
+        """
+        name = data_source.source
+        if not name or not writer or name == writer or is_accessory_writer(name) or is_accessory_writer(writer):
+            return None
+        legacy = grouping_claim(provider, name, data_source.device_model)
+        if legacy is None or legacy.kind is not DeviceIdentityKind.AGGREGATOR_WRITER_MODEL:
+            return None
+        return self.repo.find_by_claim(db_session, user_id, legacy)
 
     def _create_relayed(
         self,
