@@ -7,7 +7,7 @@ from uuid import UUID, uuid4, uuid5
 
 from app.config import settings
 from app.database import DbSession
-from app.models import DataSource, EventRecord, SeriesSample
+from app.models import DataSource, EventRecord, HealthScore, SeriesSample
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_point_series_repository import WriteCounts
 from app.repositories.data_source_repository import DataSourceRepository
@@ -846,6 +846,43 @@ class Whoop247Data(Base247DataTemplate):
         )
         return response if isinstance(response, dict) else {}
 
+    def _with_account_source(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        health_score: HealthScoreCreate,
+        sleep: EventRecord | None,
+    ) -> HealthScoreCreate:
+        """The recovery score, filed under the data source of the account it came through.
+
+        Without one, every Whoop account's recovery reads back as the same anonymous
+        source: two straps on one participant land in one column, and whichever is
+        read second hides the other. The sleep it was scored on names the source when
+        it is synced; otherwise it is the account's own Whoop source, resolved the way
+        the recovery samples resolve theirs.
+        """
+        if sleep is not None and sleep.data_source_id is not None:
+            data_source_id = sleep.data_source_id
+        else:
+            data_source_id = self.data_source_repo.ensure_data_source(
+                db,
+                user_id=user_id,
+                provider=ProviderName.WHOOP,
+                source=self.provider_name,
+                recorded_at=health_score.recorded_at,
+            ).id
+        # The same score stored before scores carried a source: it would sit beside this one as an
+        # anonymous column, because a missing source never conflicts with a real one. Same instant,
+        # same provider, so it is this score, not another account's.
+        db.query(HealthScore).filter(
+            HealthScore.user_id == user_id,
+            HealthScore.provider == ProviderName.WHOOP,
+            HealthScore.category == HealthScoreCategory.RECOVERY,
+            HealthScore.recorded_at == health_score.recorded_at,
+            HealthScore.data_source_id.is_(None),
+        ).delete(synchronize_session=False)
+        return health_score.model_copy(update={"data_source_id": data_source_id})
+
     def load_single_recovery(
         self,
         db: DbSession,
@@ -862,7 +899,7 @@ class Whoop247Data(Base247DataTemplate):
                 return WriteCounts(0, 0)
             count = self.save_recovery_data(db, user_id, normalized)
             if health_score:
-                health_score_service.create(db, health_score)
+                health_score_service.create(db, self._with_account_source(db, user_id, health_score, None))
             return count
         except Exception as e:
             logger.warning(
@@ -911,11 +948,10 @@ class Whoop247Data(Base247DataTemplate):
 
         for normalized, health_score in scored:
             try:
-                total_count += self.save_recovery_data(
-                    db, user_id, normalized, sleeps.get(str(normalized.get("sleep_id")))
-                )
+                sleep = sleeps.get(str(normalized.get("sleep_id")))
+                total_count += self.save_recovery_data(db, user_id, normalized, sleep)
                 if health_score:
-                    health_scores.append(health_score)
+                    health_scores.append(self._with_account_source(db, user_id, health_score, sleep))
             except Exception as e:
                 db.rollback()
                 logger.warning(
