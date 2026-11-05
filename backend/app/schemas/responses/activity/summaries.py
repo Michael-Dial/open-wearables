@@ -1,8 +1,10 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from app.algorithms.config_algorithms import sleep_config
+from app.schemas.enums.computed_by import ComputedBy
 from app.schemas.utils import SourceMetadata
 
 
@@ -87,6 +89,51 @@ class SleepSessionSummary(BaseModel):
     is_nap: bool = Field(False, description="True if this session is a nap rather than main sleep")
 
 
+class NightVitalProviderValue(BaseModel):
+    """The provider's own figure for the night."""
+
+    value: float
+    scope: Literal["sleep", "day"] = Field(
+        ...,
+        description=(
+            "'sleep': the provider's figure sent with this sleep. 'day': the provider's daily figure for the day "
+            "the sleep ended in (e.g. Google's daily HRV, Garmin's lastNightAvg, Oura's daily SpO2)."
+        ),
+    )
+
+
+class NightVitalOwnValue(BaseModel):
+    """Open Wearables' mean of the samples the sleep's own device recorded inside the sleep."""
+
+    value: float
+    sample_count: int = Field(..., description="How many samples the mean is over", example=93)
+
+
+class NightVital(BaseModel):
+    """Where a night's vital came from, with both candidates side by side (fork)."""
+
+    computed_by: ComputedBy = Field(
+        ...,
+        description=(
+            "Which of the two the summary's headline field carries: 'provider' when the provider published its "
+            "own figure for the night, 'open_wearables' when Open Wearables had to compute it from samples."
+        ),
+    )
+    provider: NightVitalProviderValue | None = None
+    open_wearables: NightVitalOwnValue | None = None
+
+
+class SleepVitalsProvenance(BaseModel):
+    """One entry per vital of a sleep summary, keyed by the field it explains; null when that field is null."""
+
+    avg_heart_rate_bpm: NightVital | None = None
+    resting_heart_rate_bpm: NightVital | None = None
+    avg_hrv_sdnn_ms: NightVital | None = None
+    avg_hrv_rmssd_ms: NightVital | None = None
+    avg_respiratory_rate: NightVital | None = None
+    avg_spo2_percent: NightVital | None = None
+
+
 class SleepSummary(BaseModel):
     date: date
     source: SourceMetadata
@@ -136,6 +183,14 @@ class SleepSummary(BaseModel):
     avg_hrv_rmssd_ms: float | None = Field(None, description="Average HRV (RMSSD) during sleep")
     avg_respiratory_rate: float | None = None
     avg_spo2_percent: float | None = None
+    vitals_provenance: SleepVitalsProvenance | None = Field(
+        None,
+        description=(
+            "Where each vital above came from. The provider's own nightly figure is reported when it published "
+            "one; otherwise Open Wearables' mean of the device's samples inside the sleep. Both are given, the "
+            "computed one with its sample count."
+        ),
+    )
 
 
 class BloodPressure(BaseModel):

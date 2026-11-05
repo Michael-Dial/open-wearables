@@ -1757,3 +1757,21 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   everyone out, invalidates SDK tokens and makes the Fernet-encrypted `provider_credential` secrets
   unreadable, so check the deployed key's length before rolling this image out.
 
+
+## A night's vitals say whose number they are; the provider's nightly figure first
+
+- **Area**: backend, frontend-react
+- **Status**: active
+- **On conflict**: keep ours (`_sleep_physiology` / `_NIGHT_FROM_SAMPLES` in `event_record_repository.py`,
+  `vitals_provenance` on `SleepSummary`, `readVital` in `compare-section.tsx`)
+- **Why**: A sleep summary's vitals were one coalesce: the provider's figure sent with the sleep, else OW's
+  mean of the device's samples inside the sleep, else the provider's day value. On 2026-11-05 a Pixel
+  Watch's Google Health sync delivered only the last eleven 5-minute HRV windows of the night, so the
+  summary reported their mean, 82 ms, over Google's own nightly HRV of 61 ms, and nothing in the
+  response showed which kind of number it was. Now both are read apart. The headline is the provider's
+  figure for the sleep, then its day value for the series whose day value is a nightly figure (HRV,
+  SpO2, respiratory rate, resting HR), then OW's mean; heart rate keeps OW's mean ahead of the day value,
+  because a provider's heart_rate day value (Google's daily rollUp) is a 24-hour mean.
+  `vitals_provenance` names which one each field carries (`computed_by`) and gives both, OW's with its
+  sample count. Consumers reading `avg_hrv_rmssd_ms` through OW (the validation hubs) now get the
+  vendor's nightly figure where the vendor publishes one, which is what a validation scores.

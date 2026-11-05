@@ -24650,6 +24650,85 @@
         ],
         "title": "MultipartSignResponse"
       },
+      "NightVital": {
+        "properties": {
+          "computed_by": {
+            "$ref": "#/components/schemas/ComputedBy",
+            "description": "Which of the two the summary's headline field carries: 'provider' when the provider published its own figure for the night, 'open_wearables' when Open Wearables had to compute it from samples."
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NightVitalProviderValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "open_wearables": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NightVitalOwnValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "computed_by"
+        ],
+        "title": "NightVital",
+        "description": "Where a night's vital came from, with both candidates side by side (fork)."
+      },
+      "NightVitalOwnValue": {
+        "properties": {
+          "value": {
+            "type": "number",
+            "title": "Value"
+          },
+          "sample_count": {
+            "type": "integer",
+            "title": "Sample Count",
+            "description": "How many samples the mean is over",
+            "example": 93
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "sample_count"
+        ],
+        "title": "NightVitalOwnValue",
+        "description": "Open Wearables' mean of the samples the sleep's own device recorded inside the sleep."
+      },
+      "NightVitalProviderValue": {
+        "properties": {
+          "value": {
+            "type": "number",
+            "title": "Value"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "sleep",
+              "day"
+            ],
+            "title": "Scope",
+            "description": "'sleep': the provider's figure sent with this sleep. 'day': the provider's daily figure for the day the sleep ended in (e.g. Google's daily HRV, Garmin's lastNightAvg, Oura's daily SpO2)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "scope"
+        ],
+        "title": "NightVitalProviderValue",
+        "description": "The provider's own figure for the night."
+      },
       "NutrientValue": {
         "properties": {
           "value": {
@@ -27861,6 +27940,17 @@
               }
             ],
             "title": "Avg Spo2 Percent"
+          },
+          "vitals_provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SleepVitalsProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where each vital above came from. The provider's own nightly figure is reported when it published one; otherwise Open Wearables' mean of the device's samples inside the sleep. Both are given, the computed one with its sample count."
           }
         },
         "type": "object",
@@ -27919,6 +28009,73 @@
         ],
         "title": "SleepTotals",
         "description": "Sleep sessions matching a filter, added up in the database rather than paged."
+      },
+      "SleepVitalsProvenance": {
+        "properties": {
+          "avg_heart_rate_bpm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NightVital"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resting_heart_rate_bpm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NightVital"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "avg_hrv_sdnn_ms": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NightVital"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "avg_hrv_rmssd_ms": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NightVital"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "avg_respiratory_rate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NightVital"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "avg_spo2_percent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NightVital"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "SleepVitalsProvenance",
+        "description": "One entry per vital of a sleep summary, keyed by the field it explains; null when that field is null."
       },
       "SourceActivityListResponse": {
         "properties": {
