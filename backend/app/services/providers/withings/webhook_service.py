@@ -18,7 +18,6 @@ from uuid import UUID
 from celery import current_app as celery_app
 from pydantic import BaseModel, ValidationError
 
-from app.config import settings
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession, SessionLocal
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
@@ -32,6 +31,7 @@ from app.services.providers.withings.handlers.applis import SUBSCRIBED_APPLIS
 from app.services.providers.withings.handlers.rpc_client import withings_request
 from app.utils.exceptions import ProviderAuthRejectedError, ReauthRequiredError
 from app.utils.structured_logging import get_logger
+from app.utils.webhook_callback import provider_webhook_url
 
 logger = get_logger(__name__)
 
@@ -53,7 +53,7 @@ def _callback_url() -> str | None:
     if token is None or not token.get_secret_value():
         return None
     query = urlencode({"token": token.get_secret_value()})
-    return f"{settings.api_base_url}{settings.api_v1}/providers/withings/webhooks?{query}"
+    return f"{provider_webhook_url('withings')}?{query}"
 
 
 def _urls_match(left: str, right: str) -> bool:

@@ -72,7 +72,7 @@ from app.services.raw_payload_storage import store_raw_payload
 from app.services.timeseries_service import timeseries_service
 from app.utils.connection_context import get_active_connection_id
 from app.utils.conversion import seconds_to_minutes, sum_optional
-from app.utils.dates import offset_to_iso
+from app.utils.dates import offset_of, offset_to_iso
 from app.utils.exceptions import ProviderError
 from app.utils.structured_logging import get_logger
 
@@ -310,6 +310,7 @@ class Polar247Data(Base247DataTemplate):
                 duration_seconds=duration_seconds,
                 start_datetime=start_dt,
                 end_datetime=end_dt,
+                zone_offset=offset_of(start_dt),
                 provider=ProviderName.POLAR,
                 user_id=user_id,
             )
@@ -705,25 +706,22 @@ class Polar247Data(Base247DataTemplate):
         user_id: UUID,
         sleep_starts: dict[str, datetime] | None = None,
     ) -> NightlyRechargeNormalized:
-        """The night's recovery score, and its breathing rate as one sample per night.
+        """The night's score, its HRV and breathing averages as day values, and its breathing rate per window.
 
-        Breathing rate is a four-hour average from early sleep (upstream #1722), so it is
-        one sample, placed at the night's sleep start with the offset Polar stated for
-        that night - the same anchor normalize_nightly_recharge_hrv uses. A night with no
-        sleep record to anchor on gets no sample (it still gets its score): a bare date
-        read as UTC midnight is up to a day off for anyone west of Greenwich and lands
-        the value outside the night it describes.
+        HRV and breathing rate averages are Polar's four-hour figures from early sleep (upstream #1722, #2058).
+        They are stored as the night's day values (``period`` = the night's date): what a day read returns
+        for Polar, Polar's own nightly figure, not a sample at a time of day it does not describe.
 
-        Fork divergence: upstream also writes the night's four-hour HRV average as a
-        heart_rate_variability_rmssd sample. Here that series carries Polar's 5-minute
-        RMSSD windows instead (normalize_nightly_recharge_hrv), and mixing a nightly mean
-        into the same series would weight every per-night statistic toward it. The
-        average is kept where it already was: the score's ``heart_rate_variability_avg``
-        component.
+        Breathing rate per window (``breathing_samples``, keyed "HH:MM" local clock time) is placed on the
+        night with ``_recharge_times``, anchored on the night's sleep start and its offset - the same anchor
+        normalize_nightly_recharge_hrv uses. A night with no sleep record to anchor on gets no windows (it
+        still gets its score and day values): a bare date read as UTC midnight is up to a day off for anyone
+        west of Greenwich and lands the windows outside the night they describe.
 
-        Samples are emitted only for records processed by future syncs; existing database rows
-        are not updated. Historical records not processed again by a sync require a separate
-        backfill or replay to populate their time-series samples.
+        Fork divergence: upstream also writes HRV windows here. The fork's only RMSSD window writer is
+        normalize_nightly_recharge_hrv, so they are not written twice.
+
+        sleep_starts maps the night's date to its sleep start, whose offset places Polar's local HH:MM keys.
         """
         sleep_starts = sleep_starts or {}
         scores: list[HealthScoreCreate] = []
@@ -738,20 +736,41 @@ class Polar247Data(Base247DataTemplate):
             recorded_at = datetime.fromisoformat(parsed.date).replace(tzinfo=timezone.utc)
             sleep_start = sleep_starts.get(parsed.date)
             utc_offset = sleep_start.utcoffset() if sleep_start is not None else None
-            if parsed.breathing_rate_avg is not None and sleep_start is not None and utc_offset is not None:
-                samples.append(
-                    TimeSeriesSampleCreate(
-                        route=SampleRoute.POLAR_NIGHTLY_RECHARGE,
-                        id=uuid4(),
-                        user_id=user_id,
-                        provider=ProviderName.POLAR,
-                        source=ProviderName.POLAR,
-                        recorded_at=sleep_start.astimezone(timezone.utc),
-                        zone_offset=offset_to_iso(int(utc_offset.total_seconds())),
-                        value=parsed.breathing_rate_avg,
-                        series_type=SeriesType.respiratory_rate,
+            if parsed.breathing_samples and sleep_start is not None and utc_offset is not None:
+                for window_start, value in self._recharge_times(parsed.breathing_samples, sleep_start):
+                    if value is None or value <= 0:
+                        continue
+                    samples.append(
+                        TimeSeriesSampleCreate(
+                            route=SampleRoute.POLAR_NIGHTLY_RECHARGE,
+                            id=uuid4(),
+                            user_id=user_id,
+                            provider=ProviderName.POLAR,
+                            source=ProviderName.POLAR,
+                            recorded_at=window_start,
+                            zone_offset=offset_to_iso(int(utc_offset.total_seconds())),
+                            value=Decimal(str(value)),
+                            series_type=SeriesType.respiratory_rate,
+                        )
                     )
-                )
+            for value, series_type in (
+                (parsed.heart_rate_variability_avg, SeriesType.heart_rate_variability_rmssd),
+                (parsed.breathing_rate_avg, SeriesType.respiratory_rate),
+            ):
+                if value is not None:
+                    samples.append(
+                        TimeSeriesSampleCreate(
+                            route=SampleRoute.POLAR_NIGHTLY_RECHARGE,
+                            id=uuid4(),
+                            user_id=user_id,
+                            provider=ProviderName.POLAR,
+                            source=ProviderName.POLAR,
+                            recorded_at=recorded_at,
+                            value=value,
+                            series_type=series_type,
+                            period=CalendarPeriod.of_date(recorded_at.date()),
+                        )
+                    )
             # Polar withholds the status until it has three nights to compare against.
             if parsed.nightly_recharge_status is None:
                 continue
@@ -840,20 +859,17 @@ class Polar247Data(Base247DataTemplate):
     def _recharge_times(self, items: dict[str, Any], sleep_start: datetime) -> list[tuple[datetime, Any]]:
         """Place "HH:MM" keys on the night that starts at `sleep_start`.
 
-        `_hhmm_to_datetimes` starts on the anchor's calendar date, which is wrong for a
-        night that begins just before midnight while its first window falls just after
-        it. A first key more than twelve hours earlier on the clock than the sleep start
-        belongs to the next day.
+        `_hhmm_to_datetimes` starts on the anchor's calendar date, which is a day off when the
+        night crosses midnight between the sleep start and the first key: a night starting at
+        23:10 whose first window is 00:05, or (upstream #2058) a sleep start at 00:00:59 whose
+        first window is 23:59 the evening before. The first key is moved to the day nearest the
+        sleep start, and the rest follow it.
         """
-        if not items:
+        entries = self._hhmm_to_datetimes(items, sleep_start)
+        if not entries:
             return []
-        first = self._parse_time_key(next(iter(items)))
-        anchor = sleep_start
-        start_clock = sleep_start.hour * 3600 + sleep_start.minute * 60 + sleep_start.second
-        first_clock = first.hour * 3600 + first.minute * 60 + first.second
-        if start_clock - first_clock > 12 * 3600:
-            anchor = sleep_start + timedelta(days=1)
-        return self._hhmm_to_datetimes(items, anchor)
+        shift = timedelta(days=round((sleep_start - entries[0][0]) / timedelta(days=1)))
+        return [(at + shift, value) for at, value in entries]
 
     # -------------------------------------------------------------------------
     # SleepWise — Alertness: GET /v3/users/sleepwise/alertness
@@ -1339,7 +1355,7 @@ class Polar247Data(Base247DataTemplate):
         The sleep records are read only when a night has samples to anchor.
         """
         raw_items = self.get_nightly_recharge_data(db, user_id, start_time, end_time)
-        needs_anchor = any(item.get("hrv_samples") or item.get("breathing_rate_avg") is not None for item in raw_items)
+        needs_anchor = any(item.get("hrv_samples") or item.get("breathing_samples") for item in raw_items)
         sleep_starts = self._sleep_starts(sleep_items(), user_id) if needs_anchor else {}
         scores, samples = self.normalize_nightly_recharge(raw_items, user_id, sleep_starts)
         self._save_scores(db, scores)

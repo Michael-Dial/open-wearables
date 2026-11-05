@@ -821,19 +821,29 @@ Template:
   Upstream's plumbing is kept (records carry `device_type` through to the data source), fed
   by the fork's route-filtered extractor.
 
-## Polar Nightly Recharge: RMSSD stays 5-minute windows; breathing rate sits at sleep start
+## Polar Nightly Recharge: 5-minute windows from the fork's writer, nightly averages as day values
 
 - **Area**: backend
 - **Status**: active
-- **On conflict**: reconcile (keep `normalize_nightly_recharge_hrv` as the only RMSSD writer)
+- **On conflict**: reconcile (keep `normalize_nightly_recharge_hrv` as the only RMSSD window writer, and
+  `_recharge_times` with the night's own sleep start as the only anchor)
 - **Why**: both sides added Nightly Recharge time series. The fork writes Polar's 5-minute
-  RMSSD windows at their true times, anchored on the night's sleep record. Upstream (#1722)
-  writes the night's four-hour HRV mean as one RMSSD sample at UTC midnight of the date.
-  Both in one series would mix a nightly mean with 5-minute windows and weight every
-  per-night statistic toward the mean, at a time of day the mean does not describe. The
-  mean stays where it already was, on the recovery score's components. Upstream's breathing
-  rate is kept, placed at the night's sleep start with that night's offset; a night with no
-  sleep record to anchor on gets its score and no samples.
+  RMSSD windows at their true times, anchored on the night's sleep record. Upstream #2058
+  (2026-11-05) adds the same windows for HRV and breathing rate, and stores the four-hour HRV
+  and breathing averages as the night's day values (period rows in the aggregate table).
+  Taken: the day values (Polar's own nightly figure, which a day read now returns, matching
+  the fork's preference for the provider's nightly figure) and the per-window breathing rate.
+  The HRV windows stay with the fork's writer, so they are not written twice. Breathing windows
+  are placed with `_recharge_times` on the night's sleep start; a night with no sleep record to
+  anchor on gets its score and day values, no windows. The single breathing-rate sample the fork
+  used to write at sleep start is dropped: the average is now the day value, and a mean in the
+  window series would weight per-night statistics toward it. Upstream's `_stored_sleep_starts`
+  is not carried: it looks nights up by `sleep-<date>`, and fork nights carry the bare date (the
+  sync fetches the window's sleep records itself). Rows stored before keep the old single
+  breathing sample at sleep start until Polar re-sends the night.
+  `_recharge_times` takes upstream's rule for the night's first key: it is moved to the day nearest
+  the sleep start, which covers a first window just before a midnight sleep start as well as the
+  fork's case of a 23:xx start with a 00:xx first window.
 
 ## Upstream's totals and page-scoped activity apply the fork's read rules
 
@@ -1809,3 +1819,15 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   Existing devices are not rewritten: attribution stays write-once. The live AirPods case is
   repaired by a person accepting the pending "AirPods Pro / Bluetooth Device" proposal and setting
   the type. See `docs/dev-guides/device-registry.mdx`.
+
+## Strava webhooks carry a callback token derived from SECRET_KEY (upstream #2044)
+
+- **Area**: backend, deployment
+- **Status**: active
+- **On conflict**: take upstream (the fork's `provider_credentials` lookups for the Strava verify token
+  and the Withings token stay; both fall back to the environment, which upstream now derives)
+- **Why**: the callback URL gains a secret path segment and the token-less URL is refused.
+  `register_strava_token_callback.py` re-registers the subscription once at startup while Strava
+  is in webhook mode. After a new `SECRET_KEY` or `API_BASE_URL`, re-register by hand with
+  `POST /api/v1/providers/strava/webhooks/subscriptions`.
+
