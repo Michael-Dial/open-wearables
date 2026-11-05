@@ -399,7 +399,10 @@ all of them. Garmin sends no model with sleep, which makes this the common case.
 
 ## API
 
-All under `/api/v1/users/{user_id}`, developer-authenticated.
+All under `/api/v1/users/{user_id}`. The reads (`GET`) take an API key
+(`X-Open-Wearables-API-Key`) or a dashboard login, like every other per-user read.
+The writes take a dashboard login only: each one records a developer in
+`device_history`, and an API key names no person.
 
 | Method | Path | Purpose |
 |---|---|---|

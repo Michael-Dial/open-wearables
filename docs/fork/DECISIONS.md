@@ -57,6 +57,11 @@ Template:
   `docs/dev-guides/device-registry.mdx`.
   `data_source` itself changes only by gaining a nullable `device_id` FK, so an
   upstream change to that table should merge cleanly.
+  Reads take an API key or a dashboard login (`ApiKeyDep`), as every per-user read
+  does; writes take a dashboard login only (`DeveloperDep`), because each records a
+  developer in `device_history`. The reads were dashboard-only at first, which made
+  every API-key client (the HPC Validation Hub's Devices page) see a 401 from a key
+  that read every other route.
 - **Upstreamable?** Probably not as a whole — it is opinionated toward research use,
   where knowing *which unit* produced a sample is the point. The per-route identity
   model could be.

@@ -3,6 +3,11 @@
 The registry auto-detects conservatively and deliberately leaves the ambiguous cases
 alone, so hand editing is not a fallback here - it is how the ambiguous cases get
 resolved. Every mutation is recorded with who made it and why.
+
+Reads take an API key or a dashboard login, like every other per-user read: a client
+that reads a user's series has to be able to read which unit produced them. Writes take
+a dashboard login only, because the audit trail records a developer against each one
+and an API key names no person.
 """
 
 from logging import getLogger
@@ -33,7 +38,7 @@ from app.schemas.model_crud.devices.activity import (
     MIN_WINDOW_DAYS,
     SourceActivityListResponse,
 )
-from app.services import DeveloperDep
+from app.services import ApiKeyDep, DeveloperDep
 from app.services.device_service import DeviceService
 from app.services.source_activity_service import SourceActivityService
 
@@ -50,7 +55,7 @@ def _actor(developer: Developer) -> str:
 @router.get("/users/{user_id}/devices", summary="List a user's devices")
 def list_devices(
     db: DbSession,
-    _developer: DeveloperDep,
+    _api_key: ApiKeyDep,
     user_id: Annotated[UUID, Path(description="User ID")],
     include_retired: Annotated[bool, Query(description="Include devices that are no longer worn.")] = True,
 ) -> DeviceListResponse:
@@ -84,7 +89,7 @@ def create_device(
 )
 def source_activity(
     db: DbSession,
-    _developer: DeveloperDep,
+    _api_key: ApiKeyDep,
     user_id: Annotated[UUID, Path(description="User ID")],
     days: Annotated[
         int,
@@ -112,7 +117,7 @@ def source_activity(
 @router.get("/users/{user_id}/devices/{device_id}", summary="Get one device")
 def get_device(
     db: DbSession,
-    _developer: DeveloperDep,
+    _api_key: ApiKeyDep,
     user_id: Annotated[UUID, Path(description="User ID")],
     device_id: Annotated[UUID, Path(description="Device ID")],
 ) -> DeviceResponse:
@@ -238,7 +243,7 @@ def split_device(
 @router.get("/users/{user_id}/devices-history", summary="Device attribution history")
 def get_device_history(
     db: DbSession,
-    _developer: DeveloperDep,
+    _api_key: ApiKeyDep,
     user_id: Annotated[UUID, Path(description="User ID")],
     device_id: Annotated[UUID | None, Query(description="Only this device's entries.")] = None,
     data_source_id: Annotated[UUID | None, Query(description="Only this data source's entries.")] = None,
@@ -256,7 +261,7 @@ def get_device_history(
 @router.get("/users/{user_id}/device-link-proposals", summary="Pending cross-route link proposals")
 def list_link_proposals(
     db: DbSession,
-    _developer: DeveloperDep,
+    _api_key: ApiKeyDep,
     user_id: Annotated[UUID, Path(description="User ID")],
 ) -> LinkProposalListResponse:
     """Pairs of devices that may be one unit seen by different ingest routes.
