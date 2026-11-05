@@ -29,6 +29,7 @@ from app.schemas.responses.incoming_webhooks import (
     WebhookOperationResult,
     WebhookSubscriptionStatus,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.google_health.metrics import METRICS
 from app.services.providers.templates.base_webhook_service import BaseWebhookService
 from app.utils.structured_logging import log_structured
@@ -83,9 +84,10 @@ GOOGLE_WEBHOOK_DATA_TYPES = [
 
 
 def _subscribers_url() -> str:
-    if not settings.google_project_id:
+    project = provider_credentials.text("google_project_id")
+    if not project:
         raise ValueError("GOOGLE_PROJECT_ID is not configured; cannot manage Health API subscribers")
-    return f"{GOOGLE_HEALTH_API_BASE}{SUBSCRIBERS_ENDPOINT.format(project=settings.google_project_id)}"
+    return f"{GOOGLE_HEALTH_API_BASE}{SUBSCRIBERS_ENDPOINT.format(project=project)}"
 
 
 def _error_result(subscription_id: str, action: str, error: httpx.HTTPError) -> WebhookOperationResult:
@@ -113,9 +115,10 @@ class GoogleWebhookService(BaseWebhookService):
         """Register (or refresh) the project's Health API subscriber for our callback."""
         if not callback_url:
             raise ValueError("callback_url is required to register webhook subscriptions")
-        if not settings.google_project_id:
+        if not provider_credentials.text("google_project_id"):
             raise ValueError("GOOGLE_PROJECT_ID is not configured; cannot register Health API subscribers")
-        if not settings.google_webhook_secret:
+        webhook_secret = provider_credentials.secret_value("google_webhook_secret")
+        if not webhook_secret:
             raise ValueError("google webhook secret is not configured")
 
         # secret is the literal Authorization header value Google echoes back on every
@@ -126,7 +129,7 @@ class GoogleWebhookService(BaseWebhookService):
                 {"dataTypes": GOOGLE_WEBHOOK_DATA_TYPES, "subscriptionCreatePolicy": "AUTOMATIC"},
             ],
             "endpointAuthorization": {
-                "secret": f"Bearer {settings.google_webhook_secret.get_secret_value()}",
+                "secret": f"Bearer {webhook_secret}",
             },
         }
         url = _subscribers_url()

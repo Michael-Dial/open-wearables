@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useUpdateProviderLiveSyncMode } from '@/hooks/api/use-oauth-providers';
 import { Timer, Zap } from 'lucide-react';
+import { ProviderCredentialsDialog } from './provider-credentials-dialog';
 
 interface ProviderItemProps {
   provider: Provider;
@@ -63,9 +64,15 @@ export function ProviderItem({
                   Disabled
                 </span>
               )}
+              {provider.has_cloud_api &&
+                provider.credentials_configured === false && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-500/15 text-amber-300">
+                    Needs app credentials
+                  </span>
+                )}
             </div>
 
-            <div className="mt-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               {provider.live_sync_configurable ? (
                 /* Segmented control for configurable providers */
                 <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-card border border-border/60">
@@ -110,6 +117,9 @@ export function ProviderItem({
                     </span>
                   )}
                 </div>
+              )}
+              {provider.has_cloud_api && (
+                <ProviderCredentialsDialog provider={provider} />
               )}
             </div>
           </div>

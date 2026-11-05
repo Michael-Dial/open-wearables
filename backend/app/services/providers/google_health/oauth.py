@@ -4,7 +4,6 @@ from urllib.parse import urlencode
 
 import httpx
 
-from app.config import settings
 from app.constants.google_health_endpoints import IDENTITY_ENDPOINT
 from app.schemas.auth import AuthenticationMethod
 from app.schemas.enums import ProviderName
@@ -13,6 +12,7 @@ from app.schemas.model_crud.credentials import (
     ProviderCredentials,
     ProviderEndpoints,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.utils.structured_logging import log_structured
 
@@ -45,10 +45,10 @@ class GoogleOAuth(BaseOAuthTemplate):
     def credentials(self) -> ProviderCredentials:
         """OAuth credentials from environment variables."""
         return ProviderCredentials(
-            client_id=settings.google_client_id or "",
-            client_secret=(settings.google_client_secret.get_secret_value() if settings.google_client_secret else ""),
-            redirect_uri=settings.oauth_redirect_uri(ProviderName.GOOGLE_HEALTH),
-            default_scope=settings.google_default_scope,
+            client_id=provider_credentials.text("google_client_id") or "",
+            client_secret=provider_credentials.secret_value("google_client_secret"),
+            redirect_uri=provider_credentials.redirect_uri(ProviderName.GOOGLE_HEALTH),
+            default_scope=provider_credentials.scope("google_default_scope"),
         )
 
     def _build_auth_url(self, state: str) -> tuple[str, dict[str, Any] | None]:

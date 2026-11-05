@@ -136,6 +136,8 @@ export const queryKeys = {
         'list',
         { cloudOnly, enabledOnly },
       ] as const,
+    credentials: (provider: string) =>
+      [...queryKeys.oauthProviders.all, 'credentials', provider] as const,
   },
 
   priorities: {

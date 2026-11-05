@@ -1,6 +1,5 @@
 import httpx
 
-from app.config import settings
 from app.schemas.auth import (
     AuthenticationMethod,
 )
@@ -10,6 +9,7 @@ from app.schemas.model_crud.credentials import (
     ProviderCredentials,
     ProviderEndpoints,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 
 
@@ -28,10 +28,10 @@ class StravaOAuth(BaseOAuthTemplate):
     def credentials(self) -> ProviderCredentials:
         """OAuth credentials from environment variables."""
         return ProviderCredentials(
-            client_id=settings.strava_client_id or "",
-            client_secret=(settings.strava_client_secret.get_secret_value() if settings.strava_client_secret else ""),
-            redirect_uri=settings.oauth_redirect_uri(ProviderName.STRAVA),
-            default_scope=settings.strava_default_scope,
+            client_id=provider_credentials.text("strava_client_id") or "",
+            client_secret=provider_credentials.secret_value("strava_client_secret"),
+            redirect_uri=provider_credentials.redirect_uri(ProviderName.STRAVA),
+            default_scope=provider_credentials.scope("strava_default_scope"),
         )
 
     # OAuth configuration

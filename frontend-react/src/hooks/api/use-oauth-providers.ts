@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { oauthService } from '@/lib/api/services/oauth.service';
 import type { OAuthProvidersUpdate } from '@/lib/api/services/oauth.service';
+import type { ProviderAppSettingsUpdate } from '@/lib/api/types';
 import { queryKeys } from '@/lib/query/keys';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/lib/errors/handler';
@@ -73,6 +74,36 @@ export function useUpdateProviderLiveSyncMode(provider: string) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.oauthProviders.all });
+    },
+  });
+}
+
+// App registration settings of one provider (client ID, secret, redirect URI, ...)
+export function useProviderCredentials(provider: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.oauthProviders.credentials(provider),
+    queryFn: () => oauthService.getProviderCredentials(provider),
+    enabled,
+  });
+}
+
+// Save app registration settings; refreshes the provider list's "configured" flag too
+export function useUpdateProviderCredentials(provider: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (update: ProviderAppSettingsUpdate) =>
+      oauthService.updateProviderCredentials(provider, update),
+    onSuccess: (data) => {
+      queryClient.setQueryData(
+        queryKeys.oauthProviders.credentials(provider),
+        data
+      );
+      queryClient.invalidateQueries({ queryKey: queryKeys.oauthProviders.all });
+      toast.success(`${data.name} app settings saved`);
+    },
+    onError: (error) => {
+      toast.error(`Failed to save app settings: ${getErrorMessage(error)}`);
     },
   });
 }

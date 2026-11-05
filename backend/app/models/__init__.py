@@ -20,6 +20,7 @@ from .invitation import Invitation
 from .meal_details import MealDetails
 from .menstrual_cycle_details import MenstrualCycleDetails
 from .personal_record import PersonalRecord
+from .provider_credential import ProviderCredential
 from .provider_priority import ProviderPriority
 from .provider_setting import ProviderSetting
 from .refresh_token import RefreshToken
@@ -60,6 +61,7 @@ __all__ = [
     "DeviceLinkProposal",
     "DeviceTypePriority",
     "Invitation",
+    "ProviderCredential",
     "ProviderPriority",
     "ProviderSetting",
     "RefreshToken",

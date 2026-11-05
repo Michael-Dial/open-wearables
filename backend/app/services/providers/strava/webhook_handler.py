@@ -48,6 +48,7 @@ from app.repositories import UserConnectionRepository
 from app.schemas.providers.strava import ActivityJSON as StravaActivityJSON
 from app.schemas.providers.strava import StravaWebhookEvent
 from app.services.event_record_service import event_record_service
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.strava.workouts import StravaWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.raw_payload_storage import store_raw_payload
@@ -151,9 +152,7 @@ class StravaWebhookHandler(BaseWebhookHandler):
         if hub_mode != "subscribe":
             raise HTTPException(status_code=400, detail="Invalid hub.mode")
 
-        expected_token = (
-            settings.strava_webhook_verify_token.get_secret_value() if settings.strava_webhook_verify_token else None
-        )
+        expected_token = provider_credentials.secret_value("strava_webhook_verify_token")
         if not expected_token or not hub_verify_token or not self._verify_token(expected_token, hub_verify_token):
             log_structured(
                 logger,

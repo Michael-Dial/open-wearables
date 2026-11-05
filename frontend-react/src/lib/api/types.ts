@@ -329,8 +329,49 @@ export interface Provider {
   icon_url: string;
   live_sync_mode: 'pull' | 'webhook' | null;
   live_sync_configurable: boolean;
+  /** Whether a client ID and secret are in use. Always true for SDK-only providers. */
+  credentials_configured?: boolean;
   /** Grants connecting this provider also asks for, e.g. ['polar_v4'] on Polar. */
   add_on_grants?: string[];
+}
+
+/** Where a provider app setting's value comes from. */
+export type CredentialSource =
+  'dashboard' | 'environment' | 'derived' | 'default' | 'unset';
+
+/** One field of a provider's app registration. Never carries a secret. */
+export interface ProviderAppField {
+  key: string;
+  label: string;
+  kind: 'text' | 'secret' | 'url' | 'scope';
+  description: string | null;
+  /** Environment variable the field falls back to, or null if it has none. */
+  env_var: string | null;
+  source: CredentialSource;
+  is_set: boolean;
+  /** Value in use; always null for secrets. */
+  value: string | null;
+  /** Secrets only: the last characters of the value in use. */
+  hint: string | null;
+  /** Where the value would come from with nothing saved in the dashboard. */
+  fallback_source: CredentialSource;
+  /** That fallback value; always null for secrets. */
+  fallback_value: string | null;
+  updated_at: string | null;
+  /** Saved in the dashboard but undecryptable (SECRET_KEY changed); ignored. */
+  unreadable: boolean;
+}
+
+export interface ProviderAppSettings {
+  provider: string;
+  name: string;
+  credentials_configured: boolean;
+  fields: ProviderAppField[];
+}
+
+/** A string saves the field; null removes the dashboard value. */
+export interface ProviderAppSettingsUpdate {
+  values: Record<string, string | null>;
 }
 
 export type WearableProvider =

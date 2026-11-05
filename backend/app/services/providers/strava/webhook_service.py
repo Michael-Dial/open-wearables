@@ -16,12 +16,12 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from app.config import settings
 from app.schemas.responses.incoming_webhooks import (
     StravaWebhookSubscription,
     WebhookOperationResult,
     WebhookSubscriptionStatus,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_webhook_service import BaseWebhookService
 from app.utils.structured_logging import log_structured
 
@@ -40,8 +40,8 @@ class StravaWebhookService(BaseWebhookService):
 
     def _get_strava_credentials(self) -> tuple[str, str]:
         """Get Strava client credentials. Raises ValueError if not configured."""
-        client_id = settings.strava_client_id
-        client_secret = settings.strava_client_secret.get_secret_value() if settings.strava_client_secret else None
+        client_id = provider_credentials.text("strava_client_id")
+        client_secret = provider_credentials.secret_value("strava_client_secret") or None
         if not client_id or not client_secret:
             raise ValueError("Strava client credentials not configured")
         return client_id, client_secret
@@ -64,7 +64,7 @@ class StravaWebhookService(BaseWebhookService):
             raise ValueError("callback_url is required to register webhook subscription")
 
         client_id, client_secret = self._get_strava_credentials()
-        verify_token = settings.strava_webhook_verify_token.get_secret_value()  # ty:ignore[unresolved-attribute]
+        verify_token = provider_credentials.secret_value("strava_webhook_verify_token")
 
         async with httpx.AsyncClient() as client:
             # Check for existing subscription

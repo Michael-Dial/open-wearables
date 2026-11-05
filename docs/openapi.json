@@ -6227,6 +6227,110 @@
         }
       }
     },
+    "/api/v1/oauth/providers/{provider}/credentials": {
+      "get": {
+        "tags": [
+          "Internal: Providers"
+        ],
+        "summary": "Get Provider Credentials",
+        "description": "App registration settings of a provider (client ID, redirect URI, scopes, ...).\n\nShows where each value in use comes from: saved in the dashboard, the environment, or a\ndefault. Secrets are never returned, only whether they are set and their last characters.",
+        "operationId": "get_provider_credentials_api_v1_oauth_providers__provider__credentials_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAppRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Internal: Providers"
+        ],
+        "summary": "Update Provider Credentials",
+        "description": "Save app registration settings for a provider, overriding the environment.\n\nA string saves the field; null or an empty string removes the saved value so the\nenvironment applies again. Every API and worker process picks the change up within\nabout 15 seconds.",
+        "operationId": "update_provider_credentials_api_v1_oauth_providers__provider__credentials_put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderAppUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAppRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/providers/{provider}/users/{user_id}/sync": {
       "post": {
         "tags": [
@@ -21491,6 +21595,209 @@
           "bucket"
         ],
         "title": "PresignedURLResponse"
+      },
+      "ProviderAppFieldRead": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "Field key, e.g. 'whoop_client_id'."
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "secret",
+              "url",
+              "scope"
+            ],
+            "title": "Kind"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "env_var": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env Var",
+            "description": "Environment variable the field falls back to, or null if it has none."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "dashboard",
+              "environment",
+              "derived",
+              "default",
+              "unset"
+            ],
+            "title": "Source",
+            "description": "Where the value in use comes from: 'dashboard' (saved here), 'environment', 'derived' (generated from SECRET_KEY), 'default' (built-in or built from API_BASE_URL) or 'unset'."
+          },
+          "is_set": {
+            "type": "boolean",
+            "title": "Is Set",
+            "description": "Whether the field has a value in use."
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "Value in use. Always null for secrets."
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint",
+            "description": "Secrets only: the last characters of the value in use."
+          },
+          "fallback_source": {
+            "type": "string",
+            "enum": [
+              "dashboard",
+              "environment",
+              "derived",
+              "default",
+              "unset"
+            ],
+            "title": "Fallback Source",
+            "description": "Where the value would come from with nothing saved in the dashboard."
+          },
+          "fallback_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Value",
+            "description": "That fallback value. Always null for secrets."
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "When the dashboard value was saved."
+          },
+          "unreadable": {
+            "type": "boolean",
+            "title": "Unreadable",
+            "description": "A secret is saved in the dashboard but cannot be decrypted (SECRET_KEY changed). It is ignored until entered again.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "kind",
+          "source",
+          "is_set",
+          "fallback_source"
+        ],
+        "title": "ProviderAppFieldRead",
+        "description": "One setting of a provider's app registration, as the dashboard shows it. Never carries a secret."
+      },
+      "ProviderAppRead": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "credentials_configured": {
+            "type": "boolean",
+            "title": "Credentials Configured",
+            "description": "Whether a client ID and secret are in use."
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderAppFieldRead"
+            },
+            "type": "array",
+            "title": "Fields"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "name",
+          "credentials_configured",
+          "fields"
+        ],
+        "title": "ProviderAppRead"
+      },
+      "ProviderAppUpdate": {
+        "properties": {
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Values",
+            "examples": [
+              {
+                "whoop_client_id": "abc123",
+                "whoop_client_secret": "s3cret"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "values"
+        ],
+        "title": "ProviderAppUpdate",
+        "description": "Fields to change. A string saves it; null or an empty string removes the dashboard value\nso the environment applies again. Fields left out are unchanged."
       },
       "ProviderConnectionCount": {
         "properties": {

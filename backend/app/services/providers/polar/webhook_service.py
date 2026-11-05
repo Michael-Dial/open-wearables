@@ -23,7 +23,6 @@ import httpx
 from fastapi import status
 from pydantic import ValidationError
 
-from app.config import settings
 from app.database import SessionLocal
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.enums import ProviderName
@@ -34,6 +33,7 @@ from app.schemas.responses.incoming_webhooks import (
     WebhookOperationResult,
     WebhookSubscriptionStatus,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_webhook_service import BaseWebhookService
 from app.utils.structured_logging import log_structured
 
@@ -48,8 +48,8 @@ class PolarWebhookService(BaseWebhookService):
     """App-level Polar webhook subscription management."""
 
     def _get_basic_auth(self) -> httpx.BasicAuth:
-        client_id = settings.polar_client_id
-        client_secret = settings.polar_client_secret.get_secret_value() if settings.polar_client_secret else None
+        client_id = provider_credentials.text("polar_client_id")
+        client_secret = provider_credentials.secret_value("polar_client_secret") or None
         if not client_id or not client_secret:
             raise ValueError("Polar client credentials (POLAR_CLIENT_ID / POLAR_CLIENT_SECRET) not configured")
         return httpx.BasicAuth(client_id, client_secret)
