@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.integrations import rollup_queue
 from app.integrations.rollup_queue import requeue_dirty_days
-from app.models import DataSource, EventRecordAggregate, ProviderPriority, SeriesAggregate
+from app.models import DataSource, EventRecord, EventRecordAggregate, ProviderPriority, SeriesAggregate
 from app.models.archival_setting import ArchivalSetting
 from app.repositories import AggregateRepository, EventRecordRepository, ProviderPriorityRepository
 from app.repositories.data_migration_repository import DataMigrationRepository
@@ -441,8 +441,8 @@ class TestGetSleepSummaries:
         assert result.data[0].avg_spo2_percent == 96
 
     def test_in_window_spo2_wins_over_daily_value(self, db: Session, service: SummariesService) -> None:
-        """The day-boundary fallback is only a fallback — a source with real
-        intra-night samples still reports the windowed average."""
+        """A sample stamped at the day boundary, outside the sleep, is not the night's; a source with
+        intra-night samples and no provider day value reports their average."""
         user = UserFactory()
         ds = DataSourceFactory(user=user, provider=ProviderName.GARMIN, source="garmin")
         record = EventRecordFactory(
@@ -558,6 +558,121 @@ class TestGetSleepSummaries:
         ).data[0]
 
         assert summary.avg_hrv_sdnn_ms == 50
+
+    def _pixel_night(self, db: Session) -> tuple[DataSource, Any]:
+        """2026-11-05: a Pixel Watch night, 04:30-12:17 UTC (US-eastern), through Google Health."""
+        user = UserFactory()
+        watch = DataSourceFactory(user=user, provider=ProviderName.GOOGLE_HEALTH, source="google_health_api")
+        record = EventRecordFactory(
+            data_source=watch,
+            category="sleep",
+            type="sleep",
+            start_datetime=_dt("2026-11-05T04:30:00+00:00"),
+            end_datetime=_dt("2026-11-05T12:17:00+00:00"),
+            duration_seconds=467 * 60,
+            zone_offset="-05:00",
+        )
+        SleepDetailsFactory(event_record=record)
+        return watch, user
+
+    def _night(self, db: Session, service: SummariesService, user: Any) -> Any:
+        return service.get_sleep_summaries(
+            db, user.id, _dt("2026-11-04T00:00:00+00:00"), _dt("2026-11-06T00:00:00+00:00"), cursor=None, limit=10
+        ).data[0]
+
+    def test_the_providers_nightly_hrv_outranks_our_mean_of_part_of_the_night(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        """Google's daily HRV (61.1) is the night's figure; our mean of the only eleven 5-minute windows that
+        reached us, the last fifty minutes, is 81.6. The headline is Google's, ours is beside it with its n."""
+        watch, user = self._pixel_night(db)
+        rmssd = SeriesTypeDefinitionFactory.get_or_create_heart_rate_variability_rmssd()
+        tail = [69.9, 98.6, 87.3, 103, 101, 88.8, 88.4, 78.5, 64.5, 47.3, 70.6]
+        for i, value in enumerate(tail):
+            DataPointSeriesFactory(
+                data_source=watch,
+                series_type=rmssd,
+                value=value,
+                recorded_at=_dt("2026-11-05T11:20:00+00:00") + timedelta(minutes=5 * i),
+            )
+        provider_day(db, watch, SeriesType.heart_rate_variability_rmssd, date(2026, 11, 5), avg=Decimal("61.1"))
+
+        for rolled_up in (False, True):
+            if rolled_up:
+                roll_up_everything(db)
+            night = self._night(db, service, user)
+
+            assert night.avg_hrv_rmssd_ms == pytest.approx(61.1)
+            hrv = night.vitals_provenance.avg_hrv_rmssd_ms
+            assert hrv.computed_by == ComputedBy.PROVIDER
+            assert (hrv.provider.value, hrv.provider.scope) == (pytest.approx(61.1), "day")
+            assert (hrv.open_wearables.value, hrv.open_wearables.sample_count) == (pytest.approx(81.6, abs=0.05), 11)
+
+    def test_without_a_provider_figure_the_night_says_we_computed_it(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        watch, user = self._pixel_night(db)
+        rmssd = SeriesTypeDefinitionFactory.get_or_create_heart_rate_variability_rmssd()
+        for hour, value in ((5, 40), (9, 60)):
+            DataPointSeriesFactory(
+                data_source=watch, series_type=rmssd, value=value, recorded_at=_dt(f"2026-11-05T0{hour}:00:00+00:00")
+            )
+
+        night = self._night(db, service, user)
+
+        hrv = night.vitals_provenance.avg_hrv_rmssd_ms
+        assert night.avg_hrv_rmssd_ms == 50
+        assert (hrv.computed_by, hrv.provider) == (ComputedBy.OPEN_WEARABLES, None)
+        assert (hrv.open_wearables.value, hrv.open_wearables.sample_count) == (50, 2)
+        assert night.vitals_provenance.avg_spo2_percent is None
+
+    def test_a_providers_daily_heart_rate_is_a_whole_day_and_does_not_outrank_the_nights_samples(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        """Google's daily heart-rate rollUp is a 24-hour mean: the night's own samples stay first, the day value
+        is shown beside them."""
+        watch, user = self._pixel_night(db)
+        hr = SeriesTypeDefinitionFactory.get_or_create_heart_rate()
+        for hour, value in ((5, 50), (9, 54)):
+            DataPointSeriesFactory(
+                data_source=watch, series_type=hr, value=value, recorded_at=_dt(f"2026-11-05T0{hour}:00:00+00:00")
+            )
+        provider_day(db, watch, SeriesType.heart_rate, date(2026, 11, 5), avg=Decimal("71"))
+
+        night = self._night(db, service, user)
+
+        heart = night.vitals_provenance.avg_heart_rate_bpm
+        assert night.avg_heart_rate_bpm == 52
+        assert heart.computed_by == ComputedBy.OPEN_WEARABLES
+        assert (heart.provider.value, heart.provider.scope) == (71, "day")
+
+    def test_a_figure_sent_with_the_sleep_is_the_providers_for_that_sleep(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        watch, user = self._pixel_night(db)
+        record = db.query(EventRecord).filter(EventRecord.data_source_id == watch.id).one()
+        rmssd = SeriesTypeDefinitionFactory.get_or_create_heart_rate_variability_rmssd()
+        DataPointSeriesFactory(
+            data_source=watch, series_type=rmssd, value=70, recorded_at=_dt("2026-11-05T06:00:00+00:00")
+        )
+        provider_day(db, watch, SeriesType.heart_rate_variability_rmssd, date(2026, 11, 5), avg=Decimal("61"))
+        AggregateRepository(EventRecordAggregate).upsert(
+            db,
+            [
+                {
+                    "record_id": record.id,
+                    "series_type_definition_id": rmssd.id,
+                    "computed_by": ComputedBy.PROVIDER,
+                    "avg": Decimal("58"),
+                    "count": 1,
+                }
+            ],
+        )
+
+        hrv = self._night(db, service, user).vitals_provenance.avg_hrv_rmssd_ms
+
+        assert (hrv.computed_by, hrv.provider.value, hrv.provider.scope) == (ComputedBy.PROVIDER, 58, "sleep")
+        assert (hrv.open_wearables.value, hrv.open_wearables.sample_count) == (70, 1)
 
     def test_physio_averages_none_without_physio_data(self, db: Session, service: SummariesService) -> None:
         user = UserFactory()

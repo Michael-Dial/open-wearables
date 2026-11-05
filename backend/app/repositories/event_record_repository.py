@@ -93,31 +93,43 @@ def _nap_condition(is_nap: bool) -> ColumnElement[bool]:
 # Only the (sleep, series) pairs the sleep lacks: the sleep's own device's readings inside it (rolled up within
 # 15 minutes, until then only samples), else the user's other devices'. Scalar subqueries, so the second is read
 # only where the first is empty, each one index range: joined plainly, the planner hashes the whole sample table.
+#
+# Fork: the two kinds of answer are read apart, not coalesced into one, so a summary can say which it reports and
+# show the other beside it: OW's mean of the device's samples with how many there were (`need_samples`, for the
+# sleeps no rollup has reached yet), and the provider's day value (`need_day`, for the sleeps the provider sent no
+# value of its own). A mean over the last fifty minutes of a night and the provider's whole-night figure are
+# different numbers, and once coalesced nothing showed which one a night carried.
 _NIGHT_FROM_SAMPLES = text("""
-    SELECT m.record_id, m.type_id, coalesce(
-        (SELECT avg(s.value) FROM series_sample s
-         WHERE s.data_source_id = er.data_source_id AND s.series_type_definition_id = m.type_id
-            AND s.recorded_at >= er.start_datetime AND s.recorded_at <= er.end_datetime
-            AND s.is_daily_total IS NOT TRUE),
-        -- A day value the provider sent at an instant inside the sleep (Oura's SpO2 at 00:00 UTC): a sample before
-        -- the aggregate tables, it counted in this average.
-        (SELECT avg(coalesce(a.avg, a.last)) FROM series_aggregate a
-         WHERE a.data_source_id = er.data_source_id AND a.series_type_definition_id = m.type_id
-            AND a.period_kind = 'day' AND a.computed_by = 'provider'
-            AND a.period_start >= er.start_datetime AND a.period_start <= er.end_datetime),
-        -- Fork: else the provider's day value for the day the sleep ended in (its wake-up day). Oura files its
-        -- daily SpO2 and providers their resting HR under that day, stamped at a day boundary that for anyone
-        -- west of UTC falls before the sleep starts, so the clause above never sees it.
-        (SELECT avg(coalesce(a.avg, a.last)) FROM series_aggregate a
-         WHERE a.data_source_id = er.data_source_id AND a.series_type_definition_id = m.type_id
-            AND a.period_kind = 'day' AND a.computed_by = 'provider'
-            AND a.period_start <= er.end_datetime AND a.period_end > er.end_datetime)
+    SELECT m.record_id, m.type_id, own.avg AS sample_avg, own.n AS sample_count,
+        CASE WHEN m.need_day THEN coalesce(
+            -- A day value the provider sent at an instant inside the sleep (Oura's SpO2 at 00:00 UTC).
+            (SELECT avg(coalesce(a.avg, a.last)) FROM series_aggregate a
+             WHERE a.data_source_id = er.data_source_id AND a.series_type_definition_id = m.type_id
+                AND a.period_kind = 'day' AND a.computed_by = 'provider'
+                AND a.period_start >= er.start_datetime AND a.period_start <= er.end_datetime),
+            -- Fork: else the provider's day value for the day the sleep ended in (its wake-up day). Oura files its
+            -- daily SpO2, Google its nightly HRV and providers their resting HR under that day, stamped at a day
+            -- boundary that for anyone west of UTC falls before the sleep starts, so the clause above never sees it.
+            (SELECT avg(coalesce(a.avg, a.last)) FROM series_aggregate a
+             WHERE a.data_source_id = er.data_source_id AND a.series_type_definition_id = m.type_id
+                AND a.period_kind = 'day' AND a.computed_by = 'provider'
+                AND a.period_start <= er.end_datetime AND a.period_end > er.end_datetime)
+        ) END AS day_avg
         -- Fork: no fallback to the user's other data sources. Averaging another device's samples into this night
         -- made an Oura night report a Whoop HRV, and with two accounts on one provider another person's device;
         -- a night whose own source recorded nothing reports nothing.
-    ) AS avg
-    FROM unnest(CAST(:record_ids AS uuid[]), CAST(:type_ids AS integer[])) AS m(record_id, type_id)
+    FROM unnest(
+        CAST(:record_ids AS uuid[]), CAST(:type_ids AS integer[]),
+        CAST(:need_samples AS boolean[]), CAST(:need_day AS boolean[])
+    ) AS m(record_id, type_id, need_samples, need_day)
     JOIN event_record er ON er.id = m.record_id
+    -- Lateral, so it stays one index range per row: joined plainly, the planner hashes the whole sample table.
+    LEFT JOIN LATERAL (
+        SELECT avg(s.value) AS avg, count(*) AS n FROM series_sample s
+        WHERE m.need_samples AND s.data_source_id = er.data_source_id AND s.series_type_definition_id = m.type_id
+            AND s.recorded_at >= er.start_datetime AND s.recorded_at <= er.end_datetime
+            AND s.is_daily_total IS NOT TRUE
+    ) own ON true
 """)
 
 # A night's physiology in a sleep summary, by the key its row carries.
@@ -131,6 +143,27 @@ _SLEEP_PHYSIOLOGY = {
     "avg_resp": SeriesType.respiratory_rate,
     "avg_spo2": SeriesType.oxygen_saturation,
 }
+
+# Fork: the series whose provider day value is a figure for the night, so it outranks OW's mean of the night's
+# samples: Google's daily HRV, respiratory rate and SpO2 are computed over the main sleep, Garmin's HRV day value
+# is lastNightAvg, Oura's daily SpO2 is the night's average, a resting HR is a day concept the provider owns.
+# Heart rate is not among them: a provider's heart_rate day value (Google's daily rollUp) is a 24-hour mean, so
+# for it OW's mean of the sleep's samples stays first and the day value is only the last resort, as before.
+_NIGHTLY_DAY_VALUE = frozenset(
+    {
+        SeriesType.resting_heart_rate,
+        SeriesType.heart_rate_variability_sdnn,
+        SeriesType.heart_rate_variability_rmssd,
+        SeriesType.respiratory_rate,
+        SeriesType.oxygen_saturation,
+    }
+)
+
+
+def _weighted(values: list[tuple[float, int]]) -> float | None:
+    """A night's value from its main sleeps' values, weighted by sleep length."""
+    total = sum(weight for _, weight in values)
+    return sum(value * weight for value, weight in values) / total if values else None
 
 
 def _session_stat(series_type: SeriesType, stat: StatColumn, computed_by: ComputedBy) -> ColumnElement:
@@ -1459,7 +1492,7 @@ class EventRecordRepository(
                 {**session, "sleep_stages": stages.get(session["record_id"])}
                 for session in sessions_by_key.get(key, [])
             ]
-            summary.update(physiology.get(key, dict.fromkeys(_SLEEP_PHYSIOLOGY)))
+            summary.update(physiology.get(key, {**dict.fromkeys(_SLEEP_PHYSIOLOGY), "vitals_provenance": {}}))
 
         return summaries
 
@@ -1659,45 +1692,91 @@ class EventRecordRepository(
     @staticmethod
     def _sleep_physiology(
         db_session: DbSession, main_sleeps_by_key: dict[tuple, list[tuple[UUID, int]]]
-    ) -> dict[tuple, dict[str, float | None]]:
-        """Each night's averages from its own main sleeps' aggregates, the provider's before ours, else the samples
-        its own data source recorded inside the sleep, else that source's day value for the wake-up day; weighted by
-        sleep length. Never another data source's (fork)."""
+    ) -> dict[tuple, dict]:
+        """Each night's vitals from its own main sleeps, weighted by sleep length, and where each one came from.
+
+        Two answers are read for every series and kept apart (fork):
+
+        - the provider's: its figure for the sleep itself (an event-record aggregate it sent), else its day value
+          for the sleep (one stamped inside it, else the wake-up day's);
+        - Open Wearables': the mean of the samples the sleep's own data source recorded inside it, from the rollup's
+          event-record aggregate, else from the samples themselves, with how many samples it is over.
+
+        The headline is the provider's figure for the sleep, then, for the series in ``_NIGHTLY_DAY_VALUE``, its day
+        value, then ours; for heart rate ours outranks the day value, a 24-hour mean. ``vitals_provenance`` names
+        which one the headline is and carries both. Never another data source's values (fork).
+        """
         record_ids = [record_id for sleeps in main_sleeps_by_key.values() for record_id, _ in sleeps]
         type_ids = {get_series_type_id(series_type): key for key, series_type in _SLEEP_PHYSIOLOGY.items()}
-        averages: dict[tuple[UUID, int], float] = {}
+        provider_sleep: dict[tuple[UUID, int], float] = {}
+        provider_day: dict[tuple[UUID, int], float] = {}
+        ours: dict[tuple[UUID, int], tuple[float, int]] = {}
         if record_ids:
-            rows = (
-                db_session.query(EventRecordAggregate)
-                .filter(
-                    EventRecordAggregate.record_id.in_(record_ids),
-                    EventRecordAggregate.series_type_definition_id.in_(type_ids),
-                )
-                # Ours first, so the provider's row for the same sleep overwrites it.
-                .order_by(EventRecordAggregate.computed_by == ComputedBy.PROVIDER)
+            rows = db_session.query(EventRecordAggregate).filter(
+                EventRecordAggregate.record_id.in_(record_ids),
+                EventRecordAggregate.series_type_definition_id.in_(type_ids),
             )
             for row in rows:
-                if row.avg is not None:
-                    averages[(row.record_id, row.series_type_definition_id)] = float(row.avg)
-        missing = {(record_id, type_id) for record_id in record_ids for type_id in type_ids} - set(averages)
-        if missing:
-            pairs = sorted(missing)
-            params = {"record_ids": [r for r, _ in pairs], "type_ids": [t for _, t in pairs]}
+                if row.avg is None:
+                    continue
+                pair = (row.record_id, row.series_type_definition_id)
+                if row.computed_by == ComputedBy.PROVIDER:
+                    provider_sleep[pair] = float(row.avg)
+                else:
+                    ours[pair] = (float(row.avg), int(row.count))
+        pairs = sorted(
+            (record_id, type_id)
+            for record_id in record_ids
+            for type_id in type_ids
+            if (record_id, type_id) not in ours or (record_id, type_id) not in provider_sleep
+        )
+        if pairs:
+            params = {
+                "record_ids": [r for r, _ in pairs],
+                "type_ids": [t for _, t in pairs],
+                "need_samples": [pair not in ours for pair in pairs],
+                "need_day": [pair not in provider_sleep for pair in pairs],
+            }
             for row in db_session.execute(_NIGHT_FROM_SAMPLES, params):
-                if row.avg is not None:
-                    averages[(row.record_id, row.type_id)] = float(row.avg)
+                pair = (row.record_id, row.type_id)
+                if row.sample_avg is not None and row.sample_count:
+                    ours[pair] = (float(row.sample_avg), int(row.sample_count))
+                if row.day_avg is not None:
+                    provider_day[pair] = float(row.day_avg)
 
-        physiology: dict[tuple, dict[str, float | None]] = {}
+        physiology: dict[tuple, dict] = {}
         for key, sleeps in main_sleeps_by_key.items():
-            night: dict[str, float | None] = {}
+            night: dict = {}
+            provenance: dict[str, dict | None] = {}
             for type_id, field in type_ids.items():
-                weighted = [
-                    (averages[(record_id, type_id)], max(duration, 1))
-                    for record_id, duration in sleeps
-                    if (record_id, type_id) in averages
-                ]
-                total = sum(weight for _, weight in weighted)
-                night[field] = sum(value * weight for value, weight in weighted) / total if weighted else None
+                weights = [(record_id, max(duration, 1)) for record_id, duration in sleeps]
+                by_sleep = _weighted(
+                    [(provider_sleep[(r, type_id)], w) for r, w in weights if (r, type_id) in provider_sleep]
+                )
+                by_day = _weighted(
+                    [(provider_day[(r, type_id)], w) for r, w in weights if (r, type_id) in provider_day]
+                )
+                own = [(ours[(r, type_id)], w) for r, w in weights if (r, type_id) in ours]
+                own_mean = _weighted([(value, w) for (value, _), w in own])
+                own_count = sum(count for (_, count), _ in own)
+
+                provider_value, scope = (by_sleep, "sleep") if by_sleep is not None else (by_day, "day")
+                provider = {"value": provider_value, "scope": scope} if provider_value is not None else None
+                computed = {"value": own_mean, "sample_count": own_count} if own_mean is not None else None
+                if provider_value is not None and (
+                    scope == "sleep" or _SLEEP_PHYSIOLOGY[field] in _NIGHTLY_DAY_VALUE or computed is None
+                ):
+                    night[field], computed_by = provider_value, ComputedBy.PROVIDER
+                elif own_mean is not None:
+                    night[field], computed_by = own_mean, ComputedBy.OPEN_WEARABLES
+                else:
+                    night[field], computed_by = None, None
+                provenance[field] = (
+                    {"computed_by": computed_by, "provider": provider, "open_wearables": computed}
+                    if computed_by is not None
+                    else None
+                )
+            night["vitals_provenance"] = provenance
             physiology[key] = night
         return physiology
 

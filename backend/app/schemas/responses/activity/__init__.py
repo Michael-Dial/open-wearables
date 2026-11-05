@@ -34,6 +34,7 @@ from .summaries import (
     SleepSessionSummary,
     SleepStagesSummary,
     SleepSummary,
+    SleepVitalsProvenance,
 )
 
 __all__ = [
@@ -70,4 +71,5 @@ __all__ = [
     "SleepSummary",
     "SleepSessionSummary",
     "SleepStagesSummary",
+    "SleepVitalsProvenance",
 ]

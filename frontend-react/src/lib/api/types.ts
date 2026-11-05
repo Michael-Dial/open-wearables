@@ -733,6 +733,29 @@ export interface SleepSummary {
   avg_hrv_rmssd_ms: number | null;
   avg_respiratory_rate: number | null;
   avg_spo2_percent: number | null;
+  /** Where each vital above came from; absent on responses that predate it. */
+  vitals_provenance?: SleepVitalsProvenance | null;
+}
+
+/**
+ * Where one of a night's vitals came from, with both candidates side by side.
+ * `computed_by` names the one the summary's headline field carries.
+ */
+export interface NightVital {
+  computed_by: 'provider' | 'open_wearables';
+  /** The provider's own figure: sent with the sleep, or its daily figure for the wake-up day. */
+  provider: { value: number; scope: 'sleep' | 'day' } | null;
+  /** Open Wearables' mean of the device's samples inside the sleep, and how many there were. */
+  open_wearables: { value: number; sample_count: number } | null;
+}
+
+export interface SleepVitalsProvenance {
+  avg_heart_rate_bpm: NightVital | null;
+  resting_heart_rate_bpm: NightVital | null;
+  avg_hrv_sdnn_ms: NightVital | null;
+  avg_hrv_rmssd_ms: NightVital | null;
+  avg_respiratory_rate: NightVital | null;
+  avg_spo2_percent: NightVital | null;
 }
 
 export interface BloodPressure {

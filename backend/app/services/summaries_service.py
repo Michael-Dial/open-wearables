@@ -45,6 +45,7 @@ from app.schemas.responses.activity import (
     SleepSessionSummary,
     SleepStagesSummary,
     SleepSummary,
+    SleepVitalsProvenance,
 )
 from app.schemas.utils import (
     PaginatedResponse,
@@ -208,6 +209,24 @@ def _interruptions_count(sessions: list[dict]) -> int | None:
             return None
         count += significant_awakenings(durations)
     return count
+
+
+# A sleep row's physiology keys, by the summary field each one fills.
+_VITAL_FIELDS = {
+    "avg_hr": "avg_heart_rate_bpm",
+    "avg_resting_hr": "resting_heart_rate_bpm",
+    "avg_hrv_sdnn": "avg_hrv_sdnn_ms",
+    "avg_hrv_rmssd": "avg_hrv_rmssd_ms",
+    "avg_resp": "avg_respiratory_rate",
+    "avg_spo2": "avg_spo2_percent",
+}
+
+
+def _vitals_provenance(provenance: dict | None) -> SleepVitalsProvenance | None:
+    """Where each of a night's vitals came from (fork), under the summary field it explains."""
+    if not provenance:
+        return None
+    return SleepVitalsProvenance.model_validate({field: provenance.get(key) for key, field in _VITAL_FIELDS.items()})
 
 
 class SummariesService:
@@ -557,6 +576,7 @@ class SummariesService:
                 avg_hrv_rmssd_ms=avg_hrv_rmssd,
                 avg_respiratory_rate=avg_respiratory_rate,
                 avg_spo2_percent=avg_spo2_percent,
+                vitals_provenance=_vitals_provenance(result.get("vitals_provenance")),
             )
             data.append(summary)
 

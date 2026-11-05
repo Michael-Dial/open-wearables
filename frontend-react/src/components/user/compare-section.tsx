@@ -14,9 +14,11 @@ import { SectionHeader } from '@/components/common/section-header';
 import { formatMinutes, parseApiDate } from '@/lib/utils/format';
 import { sleepSessionDayKey } from '@/lib/utils/sleep';
 import type {
+  NightVital,
   RecoverySummary,
   SleepSession,
   SleepSummary,
+  SleepVitalsProvenance,
   SourceMetadata,
 } from '@/lib/api/types';
 
@@ -43,6 +45,136 @@ interface MetricRow {
   format: (value: number | null) => string;
   /** Formats the max−min spread. Omit for metrics where a spread is meaningless. */
   formatSpread?: (spread: number) => string;
+  /** Whose number a cell shows, for the vitals. Omit for metrics that have one origin. */
+  getProvenance?: (col: SourceColumn) => CellProvenance | null;
+}
+
+/**
+ * Whose number a vital's cell shows: the provider's own figure, or one Open
+ * Wearables had to compute from the device's samples - and the other candidate
+ * beside it. A mean over the last fifty minutes of a night and the provider's
+ * whole-night figure look the same in a table; this is what tells them apart.
+ */
+export interface CellProvenance {
+  origin: 'provider' | 'open_wearables';
+  /** What the provider's figure is: sent with the sleep, its daily figure, or a recovery score's input. */
+  scope?: 'sleep' | 'day' | 'score';
+  /** How many samples Open Wearables' mean is over, when the headline is that mean. */
+  sampleCount?: number;
+  /** The candidate that is not the headline. */
+  other?:
+    | { origin: 'provider'; value: number; scope: 'sleep' | 'day' }
+    | { origin: 'open_wearables'; value: number; sampleCount: number };
+}
+
+type VitalField = keyof SleepVitalsProvenance;
+
+/** Where a vital row looks, in order: a recovery score's input, or the sleep summary's field. */
+type VitalSource =
+  | {
+      from: 'recovery';
+      key: Extract<
+        keyof RecoverySummary,
+        | 'resting_heart_rate_bpm'
+        | 'avg_hrv_rmssd_ms'
+        | 'avg_hrv_sdnn_ms'
+        | 'avg_spo2_percent'
+      >;
+    }
+  | { from: 'sleep'; key: VitalField };
+
+function fromNight(p: NightVital | null | undefined): CellProvenance | null {
+  if (!p) return null;
+  if (p.computed_by === 'provider') {
+    return {
+      origin: 'provider',
+      scope: p.provider?.scope,
+      other: p.open_wearables
+        ? {
+            origin: 'open_wearables',
+            value: p.open_wearables.value,
+            sampleCount: p.open_wearables.sample_count,
+          }
+        : undefined,
+    };
+  }
+  return {
+    origin: 'open_wearables',
+    sampleCount: p.open_wearables?.sample_count,
+    other: p.provider
+      ? { origin: 'provider', value: p.provider.value, scope: p.provider.scope }
+      : undefined,
+  };
+}
+
+/**
+ * A vital's value and its provenance, read by one list so the two cannot
+ * disagree about which source they describe. Exported for its tests.
+ *
+ * A recovery score's input is always the provider's; Open Wearables' mean from
+ * the same night's sleep summary is shown beside it when there is one. A sleep
+ * summary from a backend that predates `vitals_provenance` gets no label rather
+ * than a guessed one.
+ */
+export function readVital(
+  col: SourceColumn,
+  order: VitalSource[]
+): { value: number | null; provenance: CellProvenance | null } {
+  for (const source of order) {
+    if (source.from === 'recovery') {
+      const value = num(col.recovery?.[source.key]);
+      if (value === null) continue;
+      const own = col.sleep?.vitals_provenance?.[source.key]?.open_wearables;
+      return {
+        value,
+        provenance: {
+          origin: 'provider',
+          scope: 'score',
+          other: own
+            ? {
+                origin: 'open_wearables',
+                value: own.value,
+                sampleCount: own.sample_count,
+              }
+            : undefined,
+        },
+      };
+    }
+    const value = num(col.sleep?.[source.key]);
+    if (value === null) continue;
+    return {
+      value,
+      provenance: fromNight(col.sleep?.vitals_provenance?.[source.key]),
+    };
+  }
+  return { value: null, provenance: null };
+}
+
+const vitalRow = (order: VitalSource[]) => ({
+  getValue: (c: SourceColumn) => readVital(c, order).value,
+  getProvenance: (c: SourceColumn) => readVital(c, order).provenance,
+});
+
+const SCOPE_LABEL = { sleep: 'nightly', day: 'daily', score: 'recovery' };
+
+/** The cell's under-line: whose number it is, then the other candidate. Exported for its tests. */
+export function provenanceLines(
+  p: CellProvenance,
+  format: (value: number | null) => string
+): string[] {
+  const lines = [
+    p.origin === 'provider'
+      ? `Provider ${p.scope ? SCOPE_LABEL[p.scope] : 'figure'}`
+      : `OW-calculated${p.sampleCount ? ` · n=${p.sampleCount}` : ''}`,
+  ];
+  if (p.other?.origin === 'open_wearables') {
+    lines.push(`OW ${format(p.other.value)} · n=${p.other.sampleCount}`);
+  } else if (p.other?.origin === 'provider') {
+    lines.push(
+      `Provider ${SCOPE_LABEL[p.other.scope]} ${format(p.other.value)}`
+    );
+  }
+  return lines;
 }
 
 // `data_source_id` is the backend's own identity for one distinct source, and
@@ -199,7 +331,7 @@ const METRIC_ROWS: MetricRow[] = [
   {
     group: 'Overnight vitals',
     label: 'Avg HR',
-    getValue: (c) => num(c.sleep?.avg_heart_rate_bpm),
+    ...vitalRow([{ from: 'sleep', key: 'avg_heart_rate_bpm' }]),
     format: (v) => (v === null ? '-' : `${Math.round(v)} bpm`),
     formatSpread: (s) => `${Math.round(s)} bpm`,
   },
@@ -208,9 +340,10 @@ const METRIC_ROWS: MetricRow[] = [
     label: 'Resting HR',
     // Only some providers file a recovery score (Oura reports readiness, Garmin
     // neither), so fall back to the resting_heart_rate series on the sleep summary.
-    getValue: (c) =>
-      num(c.recovery?.resting_heart_rate_bpm) ??
-      num(c.sleep?.resting_heart_rate_bpm),
+    ...vitalRow([
+      { from: 'recovery', key: 'resting_heart_rate_bpm' },
+      { from: 'sleep', key: 'resting_heart_rate_bpm' },
+    ]),
     format: (v) => (v === null ? '-' : `${Math.round(v)} bpm`),
     formatSpread: (s) => `${Math.round(s)} bpm`,
   },
@@ -221,26 +354,29 @@ const METRIC_ROWS: MetricRow[] = [
     // named avg_hrv_sdnn_ms; upstream #1452 split the two, so recovery now carries a real
     // avg_hrv_rmssd_ms and leaves SDNN null. Prefer RMSSD from either summary and keep
     // SDNN as the last resort, so this reads correctly on both sides of that change.
-    getValue: (c) =>
-      num(c.recovery?.avg_hrv_rmssd_ms) ??
-      num(c.recovery?.avg_hrv_sdnn_ms) ??
-      num(c.sleep?.avg_hrv_rmssd_ms) ??
-      num(c.sleep?.avg_hrv_sdnn_ms),
+    ...vitalRow([
+      { from: 'recovery', key: 'avg_hrv_rmssd_ms' },
+      { from: 'recovery', key: 'avg_hrv_sdnn_ms' },
+      { from: 'sleep', key: 'avg_hrv_rmssd_ms' },
+      { from: 'sleep', key: 'avg_hrv_sdnn_ms' },
+    ]),
     format: (v) => (v === null ? '-' : `${Math.round(v)} ms`),
     formatSpread: (s) => `${Math.round(s)} ms`,
   },
   {
     group: 'Overnight vitals',
     label: 'Respiratory rate',
-    getValue: (c) => num(c.sleep?.avg_respiratory_rate),
+    ...vitalRow([{ from: 'sleep', key: 'avg_respiratory_rate' }]),
     format: (v) => (v === null ? '-' : `${v.toFixed(1)} br/min`),
     formatSpread: (s) => `${s.toFixed(1)}`,
   },
   {
     group: 'Overnight vitals',
     label: 'SpO₂',
-    getValue: (c) =>
-      num(c.recovery?.avg_spo2_percent) ?? num(c.sleep?.avg_spo2_percent),
+    ...vitalRow([
+      { from: 'recovery', key: 'avg_spo2_percent' },
+      { from: 'sleep', key: 'avg_spo2_percent' },
+    ]),
     format: (v) => (v === null ? '-' : `${v.toFixed(1)}%`),
     formatSpread: (s) => `${s.toFixed(1)} pts`,
   },
@@ -387,7 +523,10 @@ export function CompareSection({ userId }: CompareSectionProps) {
             {format(day, 'EEEE, MMM d yyyy')}
           </span>
           , side by side. Sleep is attributed to the morning you woke.{' '}
-          <span className="whitespace-nowrap">Spread = max − min.</span>
+          <span className="whitespace-nowrap">Spread = max − min.</span> Each
+          vital says whose number it is: the provider&apos;s own nightly (or
+          daily) figure, or one Open Wearables calculated from the device&apos;s
+          samples inside the sleep, with how many there were.
         </p>
 
         {isLoading ? (
@@ -509,6 +648,20 @@ export function CompareSection({ userId }: CompareSectionProps) {
                                   >
                                     {row.format(v)}
                                   </span>
+                                  {v !== null &&
+                                    (() => {
+                                      const p = row.getProvenance?.(columns[i]);
+                                      if (!p) return null;
+                                      return (
+                                        <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground whitespace-nowrap">
+                                          {provenanceLines(p, row.format).map(
+                                            (line) => (
+                                              <div key={line}>{line}</div>
+                                            )
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
                                 </td>
                               );
                             })}
