@@ -33,6 +33,7 @@ from app.constants.devices_map import (
     HANDSET_DEVICE_TYPES,
     infer_device_type_from_model,
     infer_device_type_from_source_name,
+    is_accessory_writer,
 )
 from app.schemas.enums import (
     WRITER_MODEL_SEPARATOR,
@@ -253,7 +254,11 @@ def claims_from_sdk_source(provider: ProviderName | str, source: Any) -> list[Id
 
     claims = [
         _claim(provider, DeviceIdentityKind.HEALTHKIT_DEVICE_ID, _device_id(source), IdentityConfidence.STRONG),
-        _claim(provider, DeviceIdentityKind.HEALTHKIT_BUNDLE, writer_id, IdentityConfidence.WEAK),
+        # Not for a writer that serves every accessory of its kind: two accessories
+        # would hold one claim, and a shared claim reads as "possibly the same unit".
+        None
+        if is_accessory_writer(writer_id)
+        else _claim(provider, DeviceIdentityKind.HEALTHKIT_BUNDLE, writer_id, IdentityConfidence.WEAK),
         # The grouping key: the writer/model pair on a relay route, the bare model
         # everywhere else. See grouping_claim.
         grouping_claim(provider, writer_id, model),
@@ -514,7 +519,15 @@ def _writer_names_the_host(writer_id: str, device_model: str) -> bool:
 
 
 def _is_platform_own_writer(provider_value: str, writer_id: str, device_model: str) -> bool:
-    """Whether a writer id belongs to the platform or the host rather than a third party."""
+    """Whether a writer id belongs to the platform or the host rather than a third party.
+
+    An accessory writer is the platform's own code, but not writing about the host: it
+    writes for an external accessory (AirPods, a Bluetooth strap). A host model on its
+    row names the phone that carried the data, exactly as on a third-party relay, so it
+    is answered first and never treated as the handset.
+    """
+    if is_accessory_writer(writer_id):
+        return False
     normalized = writer_id.strip()
     if any(normalized.startswith(prefix) for prefix in _PLATFORM_OWN_WRITER_PREFIXES.get(provider_value, ())):
         return True
@@ -588,12 +601,30 @@ def _is_writer_id(provider_value: str, source: str) -> bool:
     return normalized != provider_value
 
 
+def data_source_writer_id(provider: ProviderName | str, source: str | None, source_app_id: str | None) -> str | None:
+    """The writing app's identifier for a data source, on the routes that carry one.
+
+    The bundle or package id where the row has one, else the source string. On
+    HealthKit ``source`` is the source's *display name* - the name a person gave their
+    phone, or "Bluetooth Device" for every Bluetooth accessory Apple relays - so two
+    different writers can share it, and one writer's name changes when the person
+    renames the device. The id does neither. Rows written before ids were recorded
+    (and XML imports, which carry none) keep the name.
+    """
+    provider_value = getattr(provider, "value", provider)
+    app_id = source_app_id.strip() if source_app_id else None
+    if app_id and _is_writer_id(provider_value, app_id):
+        return app_id
+    return source if source and _is_writer_id(provider_value, source) else None
+
+
 def claims_from_data_source(
     provider: ProviderName | str,
     device_model: str | None,
     source: str | None,
     account_scope: str | None = None,
     declared_sensor: str | None = None,
+    source_app_id: str | None = None,
 ) -> list[IdentityClaim]:
     """Baseline claims derivable from what every data source already stores.
 
@@ -609,6 +640,11 @@ def claims_from_data_source(
     provider named - a chest strap recorded through a watch. It takes the writer's
     place, because on this row it plays the writer's part exactly: the thing that
     produced the data, distinct from the hardware the provider reported.
+
+    ``source_app_id`` is the writer's bundle or package id where the row stores one;
+    it names the writer in preference to ``source`` (see data_source_writer_id). The
+    writer is not claimed at all when it relays many accessories (see
+    ``is_accessory_writer``).
     """
     provider_value = getattr(provider, "value", provider)
 
@@ -617,7 +653,7 @@ def claims_from_data_source(
     # nothing about a device, so claiming it would give every one of that user's
     # devices on that route the same identity value - noise at best, and a grouping
     # key that means "same provider" if it were ever promoted.
-    writer_id = source if source and _is_writer_id(provider_value, source) else None
+    writer_id = data_source_writer_id(provider_value, source, source_app_id)
     if declared_sensor:
         writer_id = declared_sensor
 
@@ -628,7 +664,7 @@ def claims_from_data_source(
         grouping_claim(provider, writer_id, device_model, account_scope, bool(declared_sensor))
     ]
 
-    if writer_id and not declared_sensor:
+    if writer_id and not declared_sensor and not is_accessory_writer(writer_id):
         kind = (
             DeviceIdentityKind.HEALTH_CONNECT_PACKAGE
             if provider_value in _ANDROID_ROUTES

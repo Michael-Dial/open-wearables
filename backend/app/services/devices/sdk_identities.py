@@ -70,7 +70,7 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
             if not claims and reported_device_type is None:
                 continue
 
-            data_source = _find_data_source(
+            data_source = find_sdk_data_source(
                 db_session, user_id, provider, device_model, original_source_name, provider_device_id, source_app_id
             )
             if data_source is None:
@@ -94,7 +94,7 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
     return touched
 
 
-def _find_data_source(
+def find_sdk_data_source(
     db_session: DbSession,
     user_id: UUID,
     provider: str,

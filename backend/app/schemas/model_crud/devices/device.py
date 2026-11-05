@@ -40,6 +40,16 @@ class DeviceDataSourceResponse(BaseModel):
     device_model: str | None = None
     device_type: str | None = None
     original_source_name: str | None = None
+    # What keys the source, as the provider sent it (fork): the writer's bundle or
+    # package id, and a provider-issued per-unit id where one exists. On HealthKit the
+    # bundle id tells apart sources whose display names collide - every Bluetooth
+    # accessory Apple relays is named "Bluetooth Device".
+    source_app_id: str | None = Field(None, examples=["com.apple.heartratecoordinatord"])
+    provider_device_id: str | None = None
+    device_manufacturer: str | None = None
+    software_version: str | None = Field(
+        None, description="Latest software or OS version reported. The dated history is under source-observations."
+    )
     # Which connected account this source arrived through. One physical unit can
     # be paired with two accounts in turn - a validation arm re-paired to the
     # participant's own login, say - and the provider then reports the identical

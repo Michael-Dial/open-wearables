@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from app.database import DbSession
-from app.models import DataSource, Device, UserConnection
+from app.models import DataSource, DataSourceObservation, Device, UserConnection
 from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import LabelSource
 from app.schemas.model_crud.devices import (
@@ -27,6 +27,8 @@ from app.schemas.model_crud.devices import (
     DeviceUpdate,
     LinkProposalListResponse,
     LinkProposalResponse,
+    SourceObservationListResponse,
+    SourceObservationResponse,
 )
 from app.schemas.model_crud.user_management import account_display_label
 from app.services.devices.detection import DeviceDetectionService
@@ -70,6 +72,35 @@ class DeviceService:
         entries = self.repo.history_for_user(db, user_id, device_id, data_source_id, limit)
         items = [DeviceHistoryResponse.model_validate(e) for e in entries]
         return DeviceHistoryListResponse(items=items, total=len(items))
+
+    def list_source_observations(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        data_source_id: UUID | None = None,
+        device_id: UUID | None = None,
+    ) -> SourceObservationListResponse:
+        """What platforms reported about the hardware and software behind a user's sources.
+
+        Ordered by data source, then by when each description was first recorded, so a
+        firmware or app update reads as one row ending where the next begins.
+        """
+        if device_id is not None:
+            self._owned(db, user_id, device_id)
+        query = db.query(DataSourceObservation).filter(DataSourceObservation.user_id == user_id)
+        if data_source_id is not None:
+            query = query.filter(DataSourceObservation.data_source_id == data_source_id)
+        if device_id is not None:
+            query = query.join(DataSource, DataSource.id == DataSourceObservation.data_source_id).filter(
+                DataSource.device_id == device_id
+            )
+        rows = query.order_by(
+            DataSourceObservation.data_source_id,
+            DataSourceObservation.first_recorded_at.asc().nulls_last(),
+            DataSourceObservation.first_received_at,
+        ).all()
+        items = [SourceObservationResponse.model_validate(r) for r in rows]
+        return SourceObservationListResponse(items=items, total=len(items))
 
     def list_proposals(self, db: DbSession, user_id: UUID) -> LinkProposalListResponse:
         proposals = self.repo.pending_proposals(db, user_id)
@@ -316,6 +347,10 @@ class DeviceService:
             device_model=ds.device_model,
             device_type=ds.device_type,
             original_source_name=ds.original_source_name,
+            source_app_id=ds.source_app_id,
+            provider_device_id=ds.provider_device_id,
+            device_manufacturer=ds.device_manufacturer,
+            software_version=ds.software_version,
             user_connection_id=ds.user_connection_id,
             account_label=(
                 None

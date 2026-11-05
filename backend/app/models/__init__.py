@@ -5,6 +5,7 @@ from .beat_capture import BeatCaptureSetting, BeatCaptureWindow
 from .data_migration import DataMigration
 from .data_point_series_archive import DataPointSeriesArchive
 from .data_source import DataSource
+from .data_source_observation import DataSourceObservation
 from .data_type_coverage import DataTypeCoverage
 from .developer import Developer
 from .device import Device
@@ -52,6 +53,7 @@ __all__ = [
     "DataMigration",
     "Developer",
     "DataSource",
+    "DataSourceObservation",
     "BeatCaptureSetting",
     "BeatCaptureWindow",
     "DataPointSeriesArchive",

@@ -65,6 +65,12 @@ class SourceInfo(BaseModel):
     device_model: str | None = Field(default=None, alias="deviceModel")
     device_hardware_version: str | None = Field(default=None, alias="deviceHardwareVersion")
     device_software_version: str | None = Field(default=None, alias="deviceSoftwareVersion")
+    # Fork: the rest of HKDevice, which the iOS SDK does not send yet. Accepted now so an
+    # SDK that starts sending them is recorded from its first sync (data_source_observation).
+    # localIdentifier is per HealthKit store and changes on restore, so it is provenance only.
+    device_firmware_version: str | None = Field(default=None, alias="deviceFirmwareVersion")
+    device_local_identifier: str | None = Field(default=None, alias="deviceLocalIdentifier")
+    device_udi: str | None = Field(default=None, alias="deviceUdiDeviceIdentifier")
     recording_method: RecordingMethod | str | None = Field(default=None, alias="recordingMethod")
 
 

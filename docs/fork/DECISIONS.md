@@ -1775,3 +1775,37 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   `vitals_provenance` names which one each field carries (`computed_by`) and gives both, OW's with its
   sample count. Consumers reading `avg_hrv_rmssd_ms` through OW (the validation hubs) now get the
   vendor's nightly figure where the vendor publishes one, which is what a validation scores.
+
+## Apple's Bluetooth accessory services, the bundle id as writer, and dated source observations
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours. Upstream files touched: `app/constants/devices_map/device_types.py`
+  (`is_accessory_writer`), `app/repositories/data_source_repository.py` (`_match` rule 3,
+  `_relayed_legacy_row`, `_learn_model`, `next_device_type`'s `device_model` argument and the
+  re-type of a row that learned its model), `app/services/sdk/device_resolution.py` (accessory
+  sources named by `HKDevice.name`), `app/services/sdk/import_service.py` (the observation pass) and
+  `app/schemas/providers/mobile_sdk/sync_request.py` (three new optional `SourceInfo` fields).
+- **Why**: On 2026-11-04 a participant's AirPods Pro heart rate arrived from
+  `com.apple.heartratecoordinatord` and a Bluetooth heart-rate sensor's from
+  `com.apple.BTLEServer`. HealthKit names both sources "Bluetooth Device". Keyed on that name they
+  shared a `healthkit_bundle` claim and were proposed as one device. The AirPods source had started
+  life phone-keyed (an older SDK reported the iPhone as the model), so it was grouped as a relay
+  under "Bluetooth Device", learned "AirPods Pro" later, kept the phone's type, and left a second,
+  empty "AirPods Pro" device typed `phone` beside it. Fixes:
+  - Where a data source stores the writer's bundle id, claims and grouping keys use it, not the
+    display name (`identity.data_source_writer_id`). Relayed devices keyed by the old name-based
+    pair are still found through it (`DeviceDetectionService._find_by_writer_name`).
+  - An accessory writer is never claimed, never treated as the phone writing about itself, and its
+    records with and without a model never converge into one source.
+  - A row typed as a handset whose own model names something else is re-typed from the model, and a
+    row that learns its model is re-typed outright.
+  - `data_source_observation` keeps every distinct description of a source's hardware and software
+    (accessory name, manufacturer, hardware/firmware/software versions, app version, OS), dated by
+    the records that carried it, read through `GET /users/{id}/devices/source-observations`.
+    Previously all but the model, one software version and the manufacturer were dropped, so a
+    firmware or app update partway through a study left no trace.
+
+  Existing devices are not rewritten: attribution stays write-once. The live AirPods case is
+  repaired by a person accepting the pending "AirPods Pro / Bluetooth Device" proposal and setting
+  the type. See `docs/dev-guides/device-registry.mdx`.

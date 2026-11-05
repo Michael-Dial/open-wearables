@@ -1,6 +1,11 @@
 """Device resolution utilities for mobile SDK data (HealthKit, Health Connect, Samsung Health)."""
 
-from app.constants.devices_map import device_type_from_platform_report, is_apple_own_source, is_host_model
+from app.constants.devices_map import (
+    device_type_from_platform_report,
+    is_accessory_writer,
+    is_apple_own_source,
+    is_host_model,
+)
 from app.schemas.enums import DeviceType, ProviderName
 from app.schemas.providers.mobile_sdk import OSVersion, SourceInfo
 
@@ -38,6 +43,13 @@ def _reports_relaying_host(source: SourceInfo, provider: str | None) -> bool:
 def _get_original_source_name(source: SourceInfo | None) -> str | None:
     if not source:
         return None
+    # HealthKit names every source an Apple accessory service writes "Bluetooth Device";
+    # the accessory's own name ("Michael's AirPods Pro", "Polar H10 8E1F2C3A") is on
+    # HKDevice. On an app-keyed row the name is not part of the identity, so this
+    # changes what the source is called and typed by, never which row it lands on -
+    # hence only when the app id is there to key the row.
+    if source.device_name and is_accessory_writer(_get_source_app_id(source)):
+        return source.device_name
     if source.name:
         return source.name
     if source.device_name:
