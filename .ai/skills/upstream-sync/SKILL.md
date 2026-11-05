@@ -81,7 +81,7 @@ Then import the app - the fastest single check that nothing fork-only references
 deleted symbol:
 
 ```bash
-cd backend && SECRET_KEY=x MASTER_KEY=dGVzdC1tYXN0ZXIta2V5LWZvci10ZXN0aW5nLW9ubHk= \
+cd backend && SECRET_KEY=$(printf 'k%.0s' {1..48}) MASTER_KEY=dGVzdC1tYXN0ZXIta2V5LWZvci10ZXN0aW5nLW9ubHk= \
   uv run python -c "import app.main; print('import ok')"
 ```
 
@@ -94,6 +94,8 @@ will never fix them for you.
 |---|---|---|
 | Brand + ingestion route | `backend/app/utils/device_registry.py`, `tests/utils_tests/test_device_registry.py`, `test_ingestion_route.py`, migration `b7e3c1a9d2f4` | renames or splits a `ProviderName` member (this broke on the 0.9 `google` -> `google_health`/`health_connect` split) |
 | Priority-collapsed summaries | `backend/app/api/routes/v1/summaries.py` (`filter_by_priority=True`), `summaries_service.py`, `tests/services/test_summaries_service.py`, `tests/api/test_summary_priority_defaults.py` | changes paging params or the summary signatures. Default stays `True` here and `False` on `/timeseries` - deliberate, see the pin test |
+| Source selection (upstream #2020/#2022) | `api/routes/v1/events.py` (`_sleep_selection`: sleep's `filter_by_priority` is `per_period`, the fork's per-night winner, not upstream's `per_session`), `services/event_record_service.py` (`_winning_session_ids` dispatches per_period/per_session, both fed the relay plan), `repositories/event_record_repository.py` (`winning_sleep_record_ids` kept beside upstream's `winning_session_record_ids`, both take `relay_plan`), `timeseries_service.py`/`data_point_series_repository.py` (`relay_plan` threaded beside `ranking`/`sample_sources`), `summaries_service._filter_by_priority` (winner only, no `fill`), recovery summaries kept (upstream #2039 declined), `mcp/app/services/api_client.py` (workouts unfiltered) | reworks the ranking or session-winner functions, turns on metric `fill` in a fork summary, or changes recovery again |
+| Logging and errors (upstream #1964/#1972/#1974/#1976) | fork code uses `get_logger` with keyword attributes and raises `AppError` subclasses; `DeviceTimelineConflictError` is a `ConflictError`; Polar v3/v4 catch `ProviderError.upstream_status`; `frontend-react/src/lib/api/client.ts` reads `application/problem+json` | renames the logger API, adds an error class a fork route relied on via `HTTPException`, or changes the problem body |
 | FIT-file storage | `fit_files_dir` in `app/config.py`, `has_fit_file` in `schemas/responses/activity/events.py` + `event_record_service.py`, `raw_payload_storage.py`, migration `a1f4c7e9d3b2`, `tests/services/test_fit_file_storage.py` | adds fields to `Workout` or reworks raw storage |
 | Polar RR intervals | `backend/app/services/polar_rr_import_service.py`, `tests/services/test_polar_rr_import.py` | reworks Polar ingestion |
 | Oura ring split | `scripts/data_migrations/split_oura_sources_by_ring_setup.py`, `tests/providers/oura/test_ring_configuration.py`, `providers/oura/data_247.py` | changes Oura source naming |
@@ -139,7 +141,7 @@ su postgres -c "$PGBIN/pg_ctl -D $PGDATA -l /tmp/pg.log -o '-p 5432 -k /tmp' sta
 $PGBIN/createdb -h 127.0.0.1 -U open-wearables open_wearables_test
 redis-server --port 6379 --daemonize yes --dir /tmp
 
-export ENV=test SECRET_KEY=test-secret-key-for-ci \
+export ENV=test SECRET_KEY=test-secret-key-for-ci-must-be-32-chars-long \
   MASTER_KEY=dGVzdC1tYXN0ZXIta2V5LWZvci10ZXN0aW5nLW9ubHk= \
   TEST_DATABASE_URL="postgresql+psycopg://open-wearables@127.0.0.1:5432/open_wearables_test" \
   TEST_REDIS_URL="redis://localhost:6379/0"

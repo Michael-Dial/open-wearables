@@ -318,7 +318,7 @@ class TestCreatedByFilter:
     def test_unrecognised_value_is_rejected(
         self, client: TestClient, api_v1_prefix: str, developer: Developer, users: dict
     ) -> None:
-        assert self._list(client, api_v1_prefix, developer, "sleep-hub").status_code == 400
+        assert self._list(client, api_v1_prefix, developer, "sleep-hub").status_code == 422
 
 
 class TestSeedAttribution:

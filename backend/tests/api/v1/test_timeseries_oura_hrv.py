@@ -101,7 +101,7 @@ class TestOuraSleepHrvSeries:
         )
 
         # The app reports every request-validation failure as 400.
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_a_sample_with_no_stated_window_says_so(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]

@@ -15,12 +15,11 @@ payload and enqueues a Celery task, returning 200 immediately.
 """
 
 import json
-import logging
 from typing import Any
 from uuid import uuid4
 
 from celery import current_app as celery_app
-from fastapi import HTTPException, Request
+from fastapi import Request
 from sqlalchemy.exc import IntegrityError
 
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
@@ -34,9 +33,10 @@ from app.services.providers.suunto.workouts import SuuntoWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.raw_payload_storage import store_raw_payload
 from app.utils.connection_context import active_connection
-from app.utils.structured_logging import log_structured
+from app.utils.exceptions import InvalidInputError, is_unique_violation
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 SUPPORTED_EVENT_TYPES: list[str] = [
     "WORKOUT_CREATED",
@@ -74,9 +74,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
         if not secret:
             # suunto_webhook_secret is always derived from secret_key at startup,
             # so this branch is only reachable in misconfigured test environments.
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "SUUNTO_WEBHOOK_SECRET not configured — rejecting webhook",
                 provider="suunto",
                 action="webhook_signature_missing_secret",
@@ -85,9 +83,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
 
         provided = request.headers.get("X-HMAC-SHA256-Signature", "")
         if not provided:
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "Missing X-HMAC-SHA256-Signature header",
                 provider="suunto",
                 action="webhook_signature_invalid",
@@ -100,7 +96,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
         try:
             return json.loads(body)
         except (json.JSONDecodeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+            raise InvalidInputError("Invalid JSON body") from exc
 
     def dispatch(self, db: DbSession, payload: dict[str, Any]) -> dict[str, Any]:
         """Accept the webhook and enqueue async processing.
@@ -111,9 +107,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
         event_type = payload.get("type", "unknown")
         username = payload.get("username", "unknown")
 
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Received Suunto webhook",
             provider="suunto",
             trace_id=request_trace_id,
@@ -126,9 +120,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
         task = celery_app.send_task(
             CeleryTask.PROCESS_WEBHOOK_PUSH, args=["suunto", payload, request_trace_id], queue=CeleryQueue.WEBHOOK_SYNC
         )
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Enqueued Suunto webhook processing task",
             provider="suunto",
             trace_id=request_trace_id,
@@ -157,9 +149,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
 
         connection = self.connection_repo.get_by_provider_username(db, "suunto", username)
         if not connection:
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "No connection found for Suunto user",
                 provider="suunto",
                 trace_id=trace_id,
@@ -169,9 +159,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
 
         user_id = connection.user_id
 
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Processing Suunto webhook event",
             provider="suunto",
             trace_id=trace_id,
@@ -196,14 +184,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
             elif event_type == "ROUTE_CREATED":
                 result["status"] = "skipped"
             else:
-                log_structured(
-                    logger,
-                    "warning",
-                    "Unknown Suunto event type",
-                    provider="suunto",
-                    trace_id=trace_id,
-                    event_type=event_type,
-                )
+                logger.warning("Unknown Suunto event type", provider="suunto", trace_id=trace_id, event_type=event_type)
                 result["status"] = "unknown_event_type"
 
         if result.get("status") in ("saved", "ignored"):
@@ -224,9 +205,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
         if not workout_key:
             return {"status": "error", "error": "Missing workoutKey in WORKOUT_CREATED payload"}
 
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Fetching Suunto workout via REST",
             provider="suunto",
             trace_id=trace_id,
@@ -254,11 +233,11 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
                 if self.suunto_workouts.process_push_activity(db, user_id, raw) is not None:
                     saved += 1
             return {"status": "saved", "workout_key": str(workout_key), "saved_count": saved}
-        except IntegrityError:
+        except IntegrityError as exc:
             db.rollback()
-            log_structured(
-                logger,
-                "info",
+            if not is_unique_violation(exc):
+                raise
+            logger.info(
                 "Suunto workout already exists, skipping",
                 provider="suunto",
                 trace_id=trace_id,
@@ -268,9 +247,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
             )
             return {"status": "ignored", "reason": "duplicate_workout", "workout_key": str(workout_key)}
         except Exception as exc:
-            log_structured(
-                logger,
-                "error",
+            logger.error(
                 "Failed to fetch/save Suunto workout",
                 provider="suunto",
                 trace_id=trace_id,
@@ -290,9 +267,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
                 if self.suunto_247.save_sleep_data(db, user_id, normalized):
                     saved += 1
             except Exception as exc:
-                log_structured(
-                    logger,
-                    "warning",
+                logger.warning(
                     "Failed to save Suunto sleep sample",
                     provider="suunto",
                     trace_id=trace_id,
@@ -309,9 +284,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
             saved = self.suunto_247.save_activity_samples(db, user_id, normalized)
             return {"status": "saved", "saved_count": saved, "total_samples": len(samples)}
         except Exception as exc:
-            log_structured(
-                logger,
-                "error",
+            logger.error(
                 "Failed to save Suunto activity samples",
                 provider="suunto",
                 trace_id=trace_id,
@@ -329,9 +302,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
                 normalized = self.suunto_247.normalize_recovery(sample, user_id)
                 saved += self.suunto_247.save_recovery_data(db, user_id, normalized)
             except Exception as exc:
-                log_structured(
-                    logger,
-                    "warning",
+                logger.warning(
                     "Failed to save Suunto recovery sample",
                     provider="suunto",
                     trace_id=trace_id,

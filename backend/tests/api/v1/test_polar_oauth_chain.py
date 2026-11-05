@@ -23,6 +23,7 @@ from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import OAuthState
 from app.services.provider_settings_service import provider_settings_service
 from app.services.providers.factory import ProviderFactory
+from app.utils.exceptions import InvalidInputError
 from tests.factories import ApiKeyFactory, UserConnectionFactory, UserFactory
 from tests.utils import api_key_headers
 
@@ -216,7 +217,7 @@ class TestPolarIsOneProvider:
         assert providers["polar"]["add_on_grants"] == []
 
     def test_v4_cannot_be_configured_as_a_provider(self, db: Session) -> None:
-        with pytest.raises(ValueError, match="Unknown provider"):
+        with pytest.raises(InvalidInputError, match="Unknown provider"):
             provider_settings_service.bulk_update_providers(db, {ProviderName.POLAR_V4.value: False})
 
     def test_v4_folds_into_the_polar_connection(self, client: TestClient, db: Session) -> None:

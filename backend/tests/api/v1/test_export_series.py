@@ -173,7 +173,7 @@ class TestTypes:
             params={**WINDOW, "types": "heart_rate,not_a_series"},
         )
         # The same refusal /timeseries gives a joined list with an unknown name.
-        assert response.status_code == 400
+        assert response.status_code == 422
 
 
 class TestWindowAndFilters:

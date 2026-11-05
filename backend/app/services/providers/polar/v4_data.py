@@ -19,11 +19,10 @@ when the user has not connected a v4 token.
 import re
 from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta, timezone
-from logging import getLogger
+from http import HTTPStatus
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import HTTPException, status
 from sqlalchemy import select
 
 from app.database import DbSession
@@ -41,6 +40,8 @@ from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.polar.v4_oauth import POLAR_V4_BASE_URL, PolarV4OAuth
 from app.services.timeseries_service import timeseries_service
 from app.utils.dates import offset_to_iso
+from app.utils.exceptions import ProviderError
+from app.utils.structured_logging import get_logger
 
 # How far apart a v3 exercise and a v4 training session may start and still be the same
 # session. The two APIs report the same recording from different stores, so a few seconds
@@ -73,7 +74,7 @@ class PolarV4Data:
     """Reads the v4 endpoints with the user's v4 token, if they hold one."""
 
     def __init__(self) -> None:
-        self.logger = getLogger(__name__)
+        self.logger = get_logger(__name__)
         self.connection_repo = UserConnectionRepository()
         self.oauth = PolarV4OAuth(
             user_repo=UserRepository(User),
@@ -108,14 +109,13 @@ class PolarV4Data:
                 method="GET",
                 params=params,
             )
-        except HTTPException as exc:
-            if exc.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN):
-                self.logger.info("Polar v4 not authorised for user %s (%s)", user_id, endpoint)
+        except ProviderError as exc:
+            if exc.upstream_status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                self.logger.info("Polar v4 not authorised for user", user_id=str(user_id), endpoint=endpoint)
                 return None
-            if exc.status_code == status.HTTP_404_NOT_FOUND:
+            # 404: nothing for this day; 204: an empty day, whose body the API client cannot parse as JSON
+            if exc.upstream_status in (HTTPStatus.NOT_FOUND, HTTPStatus.NO_CONTENT):
                 return None
-            if exc.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and "Expecting value" in str(exc.detail):
-                return None  # 204 No Content on an empty day
             raise
 
     # -------------------------------------------------------------------------
@@ -161,7 +161,7 @@ class PolarV4Data:
             if raw:
                 listed = raw.get("trainingSessions") or []
                 if listed and not sessions:
-                    self.logger.info("Polar v4 training session keys: %s", sorted(listed[0]))
+                    self.logger.info("Polar v4 training session keys", keys=sorted(listed[0]))
                 sessions.extend(ListTrainingSessionsResponseJSON(**raw).training_sessions or [])
             chunk_start = chunk_end + timedelta(days=1)
         return sessions
@@ -263,7 +263,10 @@ class PolarV4Data:
                 beats = sum(len(device.ppi_samples or []) for device in day.ppi_samples_per_device or [])
                 if beats:
                     self.logger.warning(
-                        "Polar v4 PPI: no UTC offset for %s, skipped %d beats for user %s", local_day, beats, user_id
+                        "Polar v4 PPI: no UTC offset, beats skipped",
+                        local_day=str(local_day),
+                        beats=beats,
+                        user_id=str(user_id),
                     )
                 continue
             zone = timezone(timedelta(minutes=offset))
@@ -288,7 +291,7 @@ class PolarV4Data:
                         )
                     )
         if dropped:
-            self.logger.info("Polar v4 PPI: dropped %d beats (offline or no skin contact)", dropped)
+            self.logger.info("Polar v4 PPI: dropped beats (offline or no skin contact)", dropped=dropped)
         return samples
 
     def ppi_utc_offsets(self, db: DbSession, user_id: UUID, first: date, last: date) -> dict[date, int]:

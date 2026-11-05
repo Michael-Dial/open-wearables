@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-from logging import getLogger
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -17,8 +16,9 @@ from app.schemas.model_crud.user_management import (
     UserConnectionUpdate,
 )
 from app.utils.connection_context import get_active_connection_id
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCreate, UserConnectionUpdate]):
@@ -287,7 +287,8 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         except MultipleResultsFound:
             logger.warning(
                 "Multiple active connections found for provider_user_id — returning first",
-                extra={"provider": provider, "provider_user_id": provider_user_id},
+                provider=provider,
+                provider_user_id=provider_user_id,
             )
             return self._active_by_provider_external_id(db_session, provider, provider_user_id).first()
 
@@ -317,7 +318,7 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         except MultipleResultsFound:
             logger.warning(
                 "Multiple active connections found for provider_username — returning first",
-                extra={"provider": provider, "provider_username": provider_username},
+                provider=provider,
             )
             return (
                 db_session.query(self.model)

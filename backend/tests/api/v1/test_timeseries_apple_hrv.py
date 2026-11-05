@@ -7,7 +7,6 @@ window's length rather than assume five minutes. This pins that the SDK path kee
 next to the algorithm version HealthKit tags the value with.
 """
 
-import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -64,7 +63,7 @@ def _save(db: Session, user: User) -> None:
         "syncTimestamp": "2026-09-29T08:00:00Z",
         "data": {"records": records},
     }
-    ImportService(log=logging.getLogger("test")).load_data(db, payload, str(user.id))
+    ImportService().load_data(db, payload, str(user.id))
 
 
 def _get(client: TestClient, user: User, headers: dict[str, str], types: str) -> list[dict]:

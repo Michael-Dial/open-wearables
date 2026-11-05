@@ -133,7 +133,7 @@ class TestTheWindow:
     ) -> None:
         """These are aggregates over the largest tables; an unbounded window scans them."""
         response = client.get(ENDPOINT.format(user_id=user.id), headers=auth_headers, params={"days": 5000})
-        assert response.status_code == 400
+        assert response.status_code == 422
 
 
 class TestTheAccountTravelsWithIt:

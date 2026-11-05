@@ -10,7 +10,6 @@ label changed, by this person, for this reason" is.
 """
 
 from datetime import UTC, datetime
-from logging import Logger
 from uuid import UUID
 
 from app.database import DbSession
@@ -31,29 +30,27 @@ from app.schemas.model_crud.devices import (
 )
 from app.schemas.model_crud.user_management import account_display_label
 from app.services.devices.detection import DeviceDetectionService
-from app.utils.exceptions import ResourceNotFoundError, handle_exceptions
+from app.utils.exceptions import ResourceNotFoundError
+from app.utils.structured_logging import StructuredLogger
 
 
 class DeviceService:
-    def __init__(self, log: Logger):
+    def __init__(self, log: StructuredLogger):
         self.logger = log
         self.repo = DeviceRepository()
         self.detector = DeviceDetectionService(self.repo)
 
     # --- reads -------------------------------------------------------------------
 
-    @handle_exceptions
     def list_devices(self, db: DbSession, user_id: UUID, include_retired: bool = True) -> DeviceListResponse:
         devices = self.repo.list_for_user(db, user_id, include_retired=include_retired)
         accounts = self._accounts_for_user(db, user_id)
         items = [self._to_response(db, device, accounts) for device in devices]
         return DeviceListResponse(items=items, total=len(items))
 
-    @handle_exceptions
     def get_device(self, db: DbSession, user_id: UUID, device_id: UUID) -> DeviceResponse:
         return self._to_response(db, self._owned(db, user_id, device_id))
 
-    @handle_exceptions
     def get_history(
         self,
         db: DbSession,
@@ -74,7 +71,6 @@ class DeviceService:
         items = [DeviceHistoryResponse.model_validate(e) for e in entries]
         return DeviceHistoryListResponse(items=items, total=len(items))
 
-    @handle_exceptions
     def list_proposals(self, db: DbSession, user_id: UUID) -> LinkProposalListResponse:
         proposals = self.repo.pending_proposals(db, user_id)
         items = [LinkProposalResponse.model_validate(p) for p in proposals]
@@ -82,7 +78,6 @@ class DeviceService:
 
     # --- writes ------------------------------------------------------------------
 
-    @handle_exceptions
     def create_device(self, db: DbSession, user_id: UUID, payload: DeviceCreate, actor: str) -> DeviceResponse:
         device = self.repo.create(
             db,
@@ -106,7 +101,6 @@ class DeviceService:
         db.commit()
         return self._to_response(db, device)
 
-    @handle_exceptions
     def update_device(
         self,
         db: DbSession,
@@ -125,7 +119,6 @@ class DeviceService:
             db.commit()
         return self._to_response(db, device)
 
-    @handle_exceptions
     def set_retired(
         self,
         db: DbSession,
@@ -141,7 +134,6 @@ class DeviceService:
         db.commit()
         return self._to_response(db, device)
 
-    @handle_exceptions
     def link_data_source(
         self,
         db: DbSession,
@@ -163,7 +155,6 @@ class DeviceService:
         db.commit()
         return self._to_response(db, device)
 
-    @handle_exceptions
     def unlink_data_source(
         self,
         db: DbSession,
@@ -188,7 +179,6 @@ class DeviceService:
         db.commit()
         return self._to_response(db, device)
 
-    @handle_exceptions
     def merge(
         self,
         db: DbSession,
@@ -204,7 +194,6 @@ class DeviceService:
         db.commit()
         return self._to_response(db, keep)
 
-    @handle_exceptions
     def split(
         self,
         db: DbSession,
@@ -219,13 +208,11 @@ class DeviceService:
         db.commit()
         return self._to_response(db, new_device)
 
-    @handle_exceptions
     def refresh_proposals(self, db: DbSession, user_id: UUID, actor: str) -> LinkProposalListResponse:
         self.detector.propose_cross_route_links(db, user_id, actor=actor)
         db.commit()
         return self.list_proposals(db, user_id)
 
-    @handle_exceptions
     def decide_proposal(
         self,
         db: DbSession,

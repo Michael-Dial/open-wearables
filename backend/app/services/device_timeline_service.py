@@ -40,7 +40,6 @@ adds switches it sees after it.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from logging import Logger, getLogger
 from uuid import UUID, uuid4
 
 from sqlalchemy import ColumnElement, and_, delete, exists, false, func, or_, select, update
@@ -85,6 +84,7 @@ from app.utils.device_switch_detection import (
     sightings,
 )
 from app.utils.device_timeline import DevicePeriod, DeviceSpan, DeviceTimeline, load_timeline
+from app.utils.structured_logging import StructuredLogger, get_logger
 
 # Archive rows are daily aggregates (DataPointSeriesArchive).
 ARCHIVE_BUCKET = timedelta(days=1)
@@ -175,7 +175,7 @@ class _MoveResult:
 
 
 class DeviceTimelineService:
-    def __init__(self, log: Logger):
+    def __init__(self, log: StructuredLogger):
         self.log = log
         self.data_source_repo = DataSourceRepository()
 
@@ -414,11 +414,11 @@ class DeviceTimelineService:
         db_session.commit()
         db_session.refresh(connection)
         self.log.info(
-            "device history for connection %s rebuilt from %d workouts: %d periods (%s)",
-            connection.id,
-            len(evidence),
-            len(merged),
-            "reset" if request.reset else "incremental",
+            "Device history rebuilt from workouts",
+            connection_id=str(connection.id),
+            evidence_count=len(evidence),
+            periods=len(merged),
+            mode="reset" if request.reset else "incremental",
         )
 
         refile_result = None
@@ -755,4 +755,4 @@ class DeviceTimelineService:
         return result
 
 
-device_timeline_service = DeviceTimelineService(log=getLogger(__name__))
+device_timeline_service = DeviceTimelineService(log=get_logger(__name__))

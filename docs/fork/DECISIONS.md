@@ -1345,6 +1345,11 @@ then tell the watch's own data from an app's.
   ids follow its latest epoch, and a non-numeric steps or kcal value is left out of the sum. The
   fork's time-weighted heart rate and midnight stamp stay; upstream appends each activity type's
   mean as its own row at one key, so the last one wins.
+  Upstream #2038 (2026-11-05) closes the cross-push gap above: a push's epochs are joined in Redis
+  per slot and activity type for 15 minutes, under a transaction lock per slot. Taken with two fork
+  changes: the stored fields include the mean heart rate (upstream keeps only steps, kcal and active
+  time, so the fork's time-weighted heart rate came back empty for every joined slot), and the Redis
+  and lock keys carry the account, so two Garmin accounts of one user never sum each other's slots.
 
 ## A Garmin day's first epoch is stamped clear of the dailies' totals
 
@@ -1669,3 +1674,81 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   SVELTE_PORT.md. Sensor Bio keeps its odd default callback (`/oauth/callback/sensorbio`,
   which no route serves) so a registered app is not silently broken by this change; it can
   now be overridden from the dashboard.
+
+## Source selection: upstream's modes are options, the fork's defaults stay
+
+- **Area**: backend, MCP
+- **Status**: active
+- **On conflict**: reconcile
+- **Why**: Upstream #2020/#2022 add `source_selection` (`all`, `per_range`, `per_period`,
+  `per_session`, `reconcile`). Taken as opt-in options, with these fork rules (decided 2026-11-05):
+  1. Summaries stay winner-only. Upstream's `fill` would have a day name the winning source while
+     taking steps, distance, energy or heart rate from other devices; a row is one source here, as
+     MCP and the React dashboard assume. `_filter_by_priority` ranks with `SourceRanking`, no fill.
+  2. Sleep's `filter_by_priority` keeps meaning one source per night, now spelled
+     `source_selection=per_period`; upstream maps it to `per_session` (overlap hiding).
+     `per_session` is available on sleep and workouts.
+  3. Every new path is fed the relay plan: the per-session winner ranks on the rows relay dedup
+     leaves, so an aggregator's copy can never outrank the maker's own session and then be hidden,
+     leaving the night or workout with no session at all.
+  4. MCP asks for every source's workouts (upstream asks `per_session`): a strap's session beside
+     a watch's is the comparison a validation study needs.
+  5. `reconcile` (merging movement series across sources) stays available but is blind to accounts
+     and relay visibility; keep `RECONCILE_ENABLED` off, since its stored pseudo-source is not
+     excluded by the fork's own readers.
+
+## Recovery summaries for every provider (upstream #2039): declined for now
+
+- **Area**: backend
+- **Status**: declined (revisit)
+- **On conflict**: keep ours (`summaries_service.get_recovery_summaries`,
+  `health_score_repository.get_recovery_summaries`)
+- **Why**: Upstream rebuilds recovery days from resting HR, HRV, SpO2, sleep and scores, with metric
+  fill across sources. As written it groups by provider/source/model without the account (pooling a
+  user's two accounts), drops the unfiltered path the React compare view uses, relay dedup and
+  page-by-date. Porting it properly is about two days; declined on 2026-11-05. Upstream's
+  `get_recovery_scores` is not carried; `night_values` and `daily_sleep_totals` merged but are unused.
+
+## Provider sleep scores at the wake-up (#2034): not across a user's accounts
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (`_providers_with_several_accounts` in `health_score_repository.py`, the
+  ambiguity guard in `restamp_provider_sleep_scores.py`)
+- **Why**: Garmin and Whoop sleep scores carry no data source, so upstream's replace-earlier-scores
+  rule deletes every unlinked score of (user, provider) inside a night. With two accounts, account
+  A's night would delete account B's score whenever B woke inside it. For a provider the user has
+  several accounts with, stored scores are not deleted (a re-sent night may then keep its earlier
+  score beside the new one), and the restamp script leaves a score whose start second matches two
+  accounts' nights where it is.
+
+## Account scope on upstream's new deferred tasks
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: Three upstream additions resolve a token or a data source from (user, provider) in a task
+  or webhook path, which on a multi-account user means the oldest account: the SDK sleep retry
+  (#1916, `save_sdk_sleep` now takes `connection_id`), the Strava stream retry and stored-stream
+  probe (#1891, `connection_id` kwarg; the probe matches the provenance source, model and account),
+  and the Strava deauthorization and delete confirmations (#2041, run under `active_connection`).
+
+## Apple Health XML percentages rescaled by feed, not by source name
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (`scale_apple_xml_percentages.py` filters `route_id`)
+- **Why**: Upstream #1965's script finds XML samples by `data_source.source = 'apple_health_xml'`.
+  The fork files XML records under the writer's source, shared with SDK uploads, so the name finds
+  almost none, and widening to those sources would multiply SDK percentages by 100. It filters on
+  the `apple_xml.records` route instead; XML rows stored before samples carried a route id are left.
+
+## SECRET_KEY must be at least 32 characters (upstream #2043)
+
+- **Area**: deployment
+- **Status**: active
+- **On conflict**: take upstream
+- **Why**: The app now refuses to start with a shorter key. Replacing a short production key signs
+  everyone out, invalidates SDK tokens and makes the Fernet-encrypted `provider_credential` secrets
+  unreadable, so check the deployed key's length before rolling this image out.
+

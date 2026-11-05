@@ -1,5 +1,3 @@
-import logging
-
 import httpx
 
 from app.schemas.enums import ProviderName
@@ -10,9 +8,9 @@ from app.schemas.model_crud.credentials import (
 )
 from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PolarOAuth(BaseOAuthTemplate):
@@ -72,10 +70,9 @@ class PolarOAuth(BaseOAuthTemplate):
 
             response = httpx.post(register_url, json=payload, headers=headers, timeout=10.0)
         except Exception as e:
-            log_structured(
-                logger,
-                "error",
-                f"Polar user registration request failed: {e}",
+            logger.error(
+                "Polar user registration request failed",
+                exc_info=e,
                 provider="polar",
                 task="register_user",
                 member_id=member_id,
@@ -83,18 +80,16 @@ class PolarOAuth(BaseOAuthTemplate):
             return
 
         if response.status_code in (200, 201):
-            log_structured(logger, "info", "Registered Polar user", provider="polar", member_id=member_id)
+            logger.info("Registered Polar user", provider="polar", member_id=member_id)
         elif response.status_code == 409:
             # Already registered with this client, which is what a reconnect looks like.
-            log_structured(logger, "info", "Polar user already registered", provider="polar", member_id=member_id)
+            logger.info("Polar user already registered", provider="polar", member_id=member_id)
         else:
             # Unregistered, AccessLink answers 403 to every data request, and nothing
             # else says why an account syncs nothing. 403 here is Polar's "mandatory
             # consents not accepted", fixed by the account holder at account.polar.com.
-            log_structured(
-                logger,
-                "error",
-                f"Polar user registration refused ({response.status_code}): no data will sync for this account",
+            logger.error(
+                "Polar user registration refused: no data will sync for this account",
                 provider="polar",
                 task="register_user",
                 member_id=member_id,

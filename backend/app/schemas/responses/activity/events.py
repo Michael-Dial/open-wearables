@@ -156,6 +156,11 @@ class SleepSession(BaseModel):
         ),
     )
     is_nap: bool = False
+    is_final: bool = Field(
+        ...,
+        description="Whether no more data is expected for this session; until then the provider may still extend it",
+        example=True,
+    )
 
 
 class MenstrualCycleRecord(BaseModel):

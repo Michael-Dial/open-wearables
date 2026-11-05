@@ -7,7 +7,6 @@ uploaded everything a requested window covers.
 """
 
 from datetime import datetime, timezone
-from logging import Logger, getLogger
 from uuid import UUID
 
 from app.config import settings
@@ -25,12 +24,12 @@ from app.schemas.beat_capture import (
     SDKBeatCaptureWindow,
 )
 from app.services.user_service import user_service
-from app.utils.exceptions import ResourceNotFoundError, handle_exceptions
-from app.utils.structured_logging import log_structured
+from app.utils.exceptions import ResourceNotFoundError
+from app.utils.structured_logging import StructuredLogger, get_logger
 
 
 class BeatCaptureService:
-    def __init__(self, log: Logger):
+    def __init__(self, log: StructuredLogger):
         self.logger = log
         self.settings_repo = BeatCaptureSettingRepository()
         self.window_repo = BeatCaptureWindowRepository()
@@ -54,12 +53,10 @@ class BeatCaptureService:
             updated_at=stored.updated_at,
         )
 
-    @handle_exceptions
     def get_setting(self, db_session: DbSession, user_id: UUID) -> BeatCaptureSettingRead:
         user_service.get(db_session, user_id, raise_404=True)
         return self._effective(user_id, self.settings_repo.get(db_session, user_id))
 
-    @handle_exceptions
     def update_setting(
         self, db_session: DbSession, user_id: UUID, update: BeatCaptureSettingUpdate
     ) -> BeatCaptureSettingRead:
@@ -76,9 +73,7 @@ class BeatCaptureService:
             ),
             updated_at=datetime.now(timezone.utc),
         )
-        log_structured(
-            self.logger,
-            "info",
+        self.logger.info(
             "Beat capture setting updated",
             action="beat_capture_setting_updated",
             user_id=str(user_id),
@@ -88,7 +83,6 @@ class BeatCaptureService:
         )
         return self._effective(user_id, stored)
 
-    @handle_exceptions
     def create_window(
         self, db_session: DbSession, user_id: UUID, payload: BeatCaptureWindowCreate
     ) -> BeatCaptureWindow:
@@ -101,9 +95,7 @@ class BeatCaptureService:
             note=payload.note,
             created_at=datetime.now(timezone.utc),
         )
-        log_structured(
-            self.logger,
-            "info",
+        self.logger.info(
             "Beat capture window requested",
             action="beat_capture_window_requested",
             user_id=str(user_id),
@@ -113,14 +105,12 @@ class BeatCaptureService:
         )
         return window
 
-    @handle_exceptions
     def list_windows(
         self, db_session: DbSession, user_id: UUID, status: BeatCaptureWindowStatus | None = None
     ) -> list[BeatCaptureWindow]:
         user_service.get(db_session, user_id, raise_404=True)
         return self.window_repo.list_for_user(db_session, user_id, status.value if status else None)
 
-    @handle_exceptions
     def cancel_window(self, db_session: DbSession, user_id: UUID, window_id: UUID) -> BeatCaptureWindow:
         """Cancel a pending window. A fulfilled one is returned unchanged: its beats are already stored."""
         window = self.window_repo.get_for_user(db_session, user_id, window_id)
@@ -131,7 +121,6 @@ class BeatCaptureService:
             window = self.window_repo.save(db_session, window)
         return window
 
-    @handle_exceptions
     def sdk_config(self, db_session: DbSession, user_id: UUID) -> SDKBeatCaptureConfig:
         effective = self._effective(user_id, self.settings_repo.get(db_session, user_id))
         pending = self.window_repo.list_for_user(db_session, user_id, BeatCaptureWindowStatus.PENDING.value)
@@ -142,7 +131,6 @@ class BeatCaptureService:
             windows=[SDKBeatCaptureWindow.model_validate(w) for w in pending],
         )
 
-    @handle_exceptions
     def record_fulfilment(
         self, db_session: DbSession, user_id: UUID, window_id: UUID, report: SDKBeatCaptureFulfilment
     ) -> BeatCaptureWindow:
@@ -161,9 +149,7 @@ class BeatCaptureService:
         window.beats_reported = report.beats
         window.series_reported = report.series
         window = self.window_repo.save(db_session, window)
-        log_structured(
-            self.logger,
-            "info",
+        self.logger.info(
             "Beat capture window fulfilled",
             action="beat_capture_window_fulfilled",
             user_id=str(user_id),
@@ -174,4 +160,4 @@ class BeatCaptureService:
         return window
 
 
-beat_capture_service = BeatCaptureService(log=getLogger(__name__))
+beat_capture_service = BeatCaptureService(log=get_logger(__name__))

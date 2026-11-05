@@ -148,6 +148,9 @@ class OpenWearablesClient:
             "start_date": start_date,
             "end_date": end_date,
             "limit": limit,
+            # Fork: every source's workouts, not upstream's per_session. A strap's session recorded beside
+            # a watch is the comparison a validation study needs; the API still applies relay dedup, so an
+            # aggregator's copy of a directly connected maker is not counted twice.
         }
         if record_type:
             params["record_type"] = record_type

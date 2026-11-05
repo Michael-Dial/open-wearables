@@ -11,7 +11,6 @@ downstream apps pull gold-standard RR from OW like any other series.
 """
 
 from datetime import datetime, timedelta
-from logging import Logger, getLogger
 from uuid import UUID, uuid4
 
 from app.database import DbSession
@@ -20,6 +19,7 @@ from app.repositories import DataPointSeriesRepository
 from app.schemas.enums import EventCategory, SampleRoute, SeriesType
 from app.schemas.model_crud.activities import TimeSeriesSampleCreate
 from app.services.event_record_service import event_record_service
+from app.utils.structured_logging import StructuredLogger, get_logger
 
 # A parsed RR row: (interval_ms, offline).
 RrRow = tuple[int, bool]
@@ -30,7 +30,7 @@ class PolarRrImportError(ValueError):
 
 
 class PolarRrImportService:
-    def __init__(self, log: Logger) -> None:
+    def __init__(self, log: StructuredLogger) -> None:
         self.logger = log
         self.data_point_series_repo = DataPointSeriesRepository(SeriesSample)
 
@@ -136,12 +136,7 @@ class PolarRrImportService:
         db_session.commit()
 
         offline_skipped = len(rows) - len(creators)
-        self.logger.info(
-            "Imported Polar RR (%s): %d beats stored (%d offline skipped)",
-            label,
-            len(creators),
-            offline_skipped,
-        )
+        self.logger.info("Imported Polar RR", label=label, beats_stored=len(creators), offline_skipped=offline_skipped)
         return {
             "beats_stored": int(written),
             "beats_offline_skipped": offline_skipped,
@@ -208,4 +203,4 @@ class PolarRrImportService:
         )
 
 
-polar_rr_import_service = PolarRrImportService(log=getLogger(__name__))
+polar_rr_import_service = PolarRrImportService(log=get_logger(__name__))

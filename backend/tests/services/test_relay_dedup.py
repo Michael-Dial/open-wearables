@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import DataSource, SeriesSample, User
 from app.repositories.device_repository import DeviceRepository
-from app.schemas.enums import Resolution, SeriesType, get_series_type_id
+from app.schemas.enums import Resolution, SeriesType, SourceSelection, get_series_type_id
 from app.schemas.model_crud.activities import EventRecordQueryParams, TimeSeriesQueryParams
 from app.schemas.responses.activity import TimeSeriesSample
 from app.schemas.utils import PaginatedResponse
@@ -362,7 +362,9 @@ class TestSleepUnderPriorityFiltering:
         )
         db.commit()
 
-        page = event_record_service.get_sleep_sessions(db, user.id, _event_params(), filter_by_priority=True)
+        page = event_record_service.get_sleep_sessions(
+            db, user.id, _event_params(), source_selection=SourceSelection.PER_PERIOD
+        )
 
         assert [session.source.data_source_id for session in page.data] == [direct.id]
 
@@ -386,7 +388,7 @@ class TestSleepUnderPriorityFiltering:
             db,
             user.id,
             _event_params(start=NOW - timedelta(days=30), end=NOW + timedelta(days=1)),
-            filter_by_priority=True,
+            source_selection=SourceSelection.PER_PERIOD,
         )
 
         assert relayed.id in {session.source.data_source_id for session in page.data}

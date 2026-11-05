@@ -1,6 +1,5 @@
 """Authenticate Withings notifications, acknowledge them, and defer ingestion to Celery."""
 
-import logging
 from datetime import datetime, timedelta
 from secrets import compare_digest
 from typing import Any, assert_never
@@ -8,7 +7,7 @@ from urllib.parse import parse_qs
 from uuid import UUID, uuid4
 
 from celery import current_app as celery_app
-from fastapi import HTTPException, Request, status
+from fastapi import Request
 from pydantic import ValidationError
 
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
@@ -27,9 +26,10 @@ from app.services.providers.withings.handlers.applis import APPLI_DOMAIN, SUBSCR
 from app.services.providers.withings.workouts import WithingsWorkouts
 from app.services.raw_payload_storage import store_raw_payload
 from app.utils.connection_context import active_connection
-from app.utils.structured_logging import log_structured
+from app.utils.exceptions import WebhookVerificationError
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _MAX_NOTIFY_WINDOW = timedelta(days=31)
 
@@ -73,7 +73,7 @@ class WithingsWebhookHandler(BaseWebhookHandler):
     def handle_probe(self, request: Request) -> None:
         """Accept an authenticated subscribe-time HEAD probe."""
         if not self._has_valid_callback_token(request):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Withings callback token")
+            raise WebhookVerificationError("Invalid Withings callback token")
 
     def supported_event_types(self) -> list[str]:
         return [str(appli) for appli in SUBSCRIBED_APPLIS]
@@ -207,9 +207,7 @@ class WithingsWebhookHandler(BaseWebhookHandler):
                 metadata={"domain": domain},
             )
 
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Withings webhook processed",
             provider="withings",
             appli=notification.appli,
@@ -266,9 +264,7 @@ class WithingsWebhookHandler(BaseWebhookHandler):
                     revoked_at=connection.updated_at.isoformat(),
                 )
 
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Withings profile change revoked local connections",
             provider="withings",
             action=notification.action,

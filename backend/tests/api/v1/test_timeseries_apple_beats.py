@@ -7,7 +7,6 @@ the series each beat belongs to, and HealthKit's ``precededByGap`` flag to know 
 values span a gap rather than measure a beat.
 """
 
-import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -67,7 +66,7 @@ def _save(db: Session, user: User) -> None:
         "syncTimestamp": "2026-10-12T08:00:00Z",
         "data": {"records": records},
     }
-    ImportService(log=logging.getLogger("test")).load_data(db, payload, str(user.id))
+    ImportService().load_data(db, payload, str(user.id))
 
 
 def _get(client: TestClient, user: User, headers: dict[str, str], types: str) -> list[dict]:

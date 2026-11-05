@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-from logging import Logger, getLogger
 from uuid import UUID
 
 from app.config import settings
@@ -23,28 +22,26 @@ from app.services.services import AppService
 from app.utils.connection_context import active_connection
 from app.utils.device_timeline import load_timeline
 from app.utils.exceptions import (
+    ConflictError,
     DeviceTimelineConflictError,
-    ResourceAlreadyExistsError,
     ResourceNotFoundError,
-    handle_exceptions,
 )
-from app.utils.sentry_helpers import log_and_capture_error
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class UserConnectionService(
     AppService[UserConnectionRepository, UserConnection, UserConnectionCreate, UserConnectionUpdate],
 ):
-    def __init__(self, log: Logger, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(
             crud_model=UserConnectionRepository,
             model=UserConnection,
-            log=log,
             **kwargs,
         )
         self.data_source_crud = DataSourceRepository()
 
-    @handle_exceptions
     def set_device_label(
         self,
         db_session: DbSession,
@@ -110,7 +107,6 @@ class UserConnectionService(
             return None
         return connection
 
-    @handle_exceptions
     def get_account(
         self,
         db_session: DbSession,
@@ -120,7 +116,6 @@ class UserConnectionService(
         """One of the user's connected accounts by id."""
         return self.crud.get_by_id_for_user(db_session, user_id, connection_id)
 
-    @handle_exceptions
     def get_accounts_for_provider(
         self,
         db_session: DbSession,
@@ -132,7 +127,6 @@ class UserConnectionService(
         """Every account this user holds with one provider, oldest first."""
         return self.crud.get_all_by_user_and_provider(db_session, user_id, provider, active_only=active_only)
 
-    @handle_exceptions
     def update_account(
         self,
         db_session: DbSession,
@@ -160,7 +154,7 @@ class UserConnectionService(
         if "account_email" in fields_set and payload.account_email is not None:
             clash = self.crud.get_by_account_email(db_session, user_id, connection.provider, str(payload.account_email))
             if clash is not None and clash.id != connection.id:
-                raise ResourceAlreadyExistsError(
+                raise ConflictError(
                     f"Another {connection.provider} account for this user already uses that e-mail",
                 )
 
@@ -224,9 +218,7 @@ class UserConnectionService(
                 db_session, source, previous_sensor, connection.sensor_label
             )
             moved += detection.reattribute(db_session, source, ACCOUNT_SETTINGS_ACTOR)
-        log_structured(
-            self.logger,
-            "info",
+        logger.info(
             "Applied account device attribution to existing data",
             action="device_attribution_applied",
             connection_id=str(connection.id),
@@ -251,12 +243,10 @@ class UserConnectionService(
             ],
         )
 
-    @handle_exceptions
     def get_connections_by_user(self, db_session: DbSession, user_id: UUID) -> list[UserConnection]:
         """Get all connections for a user."""
         return self.crud.get_by_user_id(db_session, user_id)
 
-    @handle_exceptions
     def get_connection(self, db_session: DbSession, user_id: UUID, provider: str) -> UserConnection | None:
         """Get a user's connection for one provider, or None if there is none."""
         return self.crud.get_by_user_and_provider(db_session, user_id, provider)
@@ -298,10 +288,8 @@ class UserConnectionService(
 
         connected_at = connection.created_at if outcome == SdkConnectionOutcome.CREATED else connection.updated_at
 
-        log_structured(
-            self.logger,
-            "info",
-            f"SDK connection {outcome}",
+        logger.info(
+            "SDK connection state changed",
             action="sdk_connection_state_change",
             outcome=str(outcome),
             provider=provider,
@@ -318,7 +306,6 @@ class UserConnectionService(
         )
         return connection
 
-    @handle_exceptions
     def disconnect(
         self,
         db_session: DbSession,
@@ -357,9 +344,7 @@ class UserConnectionService(
 
             revoked_any = True
             db_session.refresh(connection)
-            log_structured(
-                self.logger,
-                "info",
+            logger.info(
                 "Connection revoked",
                 action="connection_revoked",
                 reason=reason,
@@ -410,7 +395,6 @@ class UserConnectionService(
             return []
         return [connection]
 
-    @handle_exceptions
     def purge_provider_data(
         self,
         db_session: DbSession,
@@ -436,16 +420,15 @@ class UserConnectionService(
             deleted = self.data_source_crud.delete_user_provider_data(db_session, user_id, ProviderName(provider))
         else:
             deleted = self.data_source_crud.delete_connection_data(db_session, user_id, connection_id)
-        self.logger.info(
-            "Purged %s data sources for user %s from provider %s (connection=%s)",
-            deleted,
-            user_id,
-            provider,
-            connection_id or "all",
+        logger.info(
+            "Purged provider data sources",
+            deleted_count=deleted,
+            user_id=str(user_id),
+            provider=provider,
+            connection_id=connection_id or "all",
         )
         return deleted
 
-    @handle_exceptions
     def stamp_last_synced_at(
         self,
         db_session: DbSession,
@@ -539,29 +522,20 @@ class UserConnectionService(
                 access_token,
                 provider_user_id=connection.provider_user_id,
             )
-            log_structured(
-                self.logger,
-                "info",
+            logger.info(
                 "Deregistered user from provider API",
                 provider=provider,
                 task="deregister_user",
                 user_id=str(user_id),
             )
         except Exception as e:
-            log_structured(
-                self.logger,
-                "error",
-                f"Failed to deregister user from provider API: {e}",
+            logger.error(
+                "Failed to deregister user from provider API",
+                exc_info=e,
                 provider=provider,
                 task="deregister_user",
                 user_id=str(user_id),
             )
-            log_and_capture_error(
-                e,
-                self.logger,
-                f"Failed to deregister user {user_id} from {provider} API: {e}",
-                extra={"user_id": str(user_id), "provider": provider},
-            )
 
 
-user_connection_service = UserConnectionService(log=getLogger(__name__))
+user_connection_service = UserConnectionService()

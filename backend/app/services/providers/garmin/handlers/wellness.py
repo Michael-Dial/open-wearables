@@ -17,9 +17,9 @@ from app.services.providers.garmin.data_247 import Garmin247Data
 from app.services.sync_status_service import emit_sync_completed, new_run_id
 from app.utils.connection_context import active_connection
 from app.utils.context import sync_run_context
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def process_wellness_items(
@@ -56,9 +56,7 @@ def process_wellness_items(
     for notification in notifications:
         garmin_user_id: str | None = notification.get("userId")
         if not garmin_user_id:
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "No user ID in notification",
                 provider="garmin",
                 trace_id=request_trace_id,
@@ -69,9 +67,7 @@ def process_wellness_items(
 
         connections = connection_repo.get_all_by_provider_user_id(db, "garmin", garmin_user_id)
         if not connections:
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "No connection found for Garmin user",
                 provider="garmin",
                 trace_id=request_trace_id,
@@ -113,9 +109,8 @@ def process_wellness_items(
             total_saved += count
             synced_user_ids.add(uid)
             succeeded_users.append(str(uid))
-            log_structured(
-                logger,
-                "debug" if is_secondary else "info",
+            logger.log(
+                logging.DEBUG if is_secondary else logging.INFO,
                 "Saved wellness data",
                 provider="garmin",
                 trace_id=trace_id,
@@ -141,12 +136,11 @@ def process_wellness_items(
                 },
             )
         except Exception as e:
-            log_structured(
-                logger,
-                "error",
-                f"Error processing {summary_type}",
+            logger.error(
+                "Error processing wellness data",
                 provider="garmin",
                 trace_id=trace_id,
+                summary_type=summary_type,
                 user_id=str(uid),
                 error=str(e),
             )

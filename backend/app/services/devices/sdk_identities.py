@@ -14,7 +14,6 @@ records still describes two or three devices, and doing the work once per distin
 source keeps it off the hot path.
 """
 
-from logging import getLogger
 from typing import Any
 from uuid import UUID
 
@@ -26,8 +25,9 @@ from app.services.devices.detection import DeviceDetectionService
 from app.services.devices.identity import claims_from_sdk_source
 from app.services.sdk.device_resolution import extract_device_ids, extract_device_info, extract_reported_device_type
 from app.utils.connection_context import get_active_connection_id
+from app.utils.structured_logging import get_logger
 
-log = getLogger(__name__)
+log = get_logger(__name__)
 
 ACTOR = "system:sdk_sync"
 
@@ -88,7 +88,7 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
         db_session.commit()
     except Exception:
         db_session.rollback()
-        log.exception("failed to record SDK device identities for user %s (provider=%s)", user_id, provider)
+        log.exception("Failed to record SDK device identities", user_id=str(user_id), provider=provider)
         return 0
 
     return touched

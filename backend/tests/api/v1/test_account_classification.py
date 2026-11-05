@@ -73,7 +73,7 @@ class TestClassifyingAnAccount:
             json={"account_type": "whatever-i-like"},
             headers=api_key_header,
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_classification_survives_an_unrelated_edit(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
