@@ -60,6 +60,7 @@ from .device_resolution import extract_device_ids, extract_device_info, extract_
 from .measurement_window import with_measurement_window
 from .record_metadata import normalize_record_metadata
 from .sleep_service import save_sleep
+from .workout_segments import build_workout_segments
 
 logger = get_logger(__name__)
 
@@ -278,6 +279,7 @@ class ImportService:
 
             detail = EventRecordDetailCreate(
                 record_id=workout_id,
+                segments=build_workout_segments(wjson),
                 **metrics,
             )
 

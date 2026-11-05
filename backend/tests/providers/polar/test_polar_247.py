@@ -889,23 +889,23 @@ class TestPolar247NightlyRechargeNormalization:
     # The night's own sleep start, as the sleep record states it: 23:10 local, UTC+2.
     SLEEP_START = datetime(2024, 1, 14, 23, 10, tzinfo=timezone(timedelta(hours=2)))
 
-    def test_breathing_rate_is_placed_at_the_night_s_sleep_start(
+    def test_the_nightly_averages_are_the_nights_day_values(
         self, data_247: Polar247Data, sample_recharge: dict
     ) -> None:
-        # Nightly Recharge dates carry no offset; the night's sleep record does. A bare date
-        # read as UTC midnight would sit outside the night for anyone west of Greenwich.
+        # Polar's four-hour HRV and breathing averages are its own nightly figures: day values of
+        # the night's date (upstream #2058), not samples at a time of day they do not describe.
         _, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4(), {"2024-01-15": self.SLEEP_START})
 
-        (breathing,) = samples
-        assert breathing.series_type == SeriesType.respiratory_rate
-        assert breathing.recorded_at == datetime(2024, 1, 14, 21, 10, tzinfo=timezone.utc)
-        assert breathing.zone_offset == "+02:00"
+        assert [(s.series_type, float(s.value), s.period.start.date() if s.period else None) for s in samples] == [
+            (SeriesType.heart_rate_variability_rmssd, 48, date(2024, 1, 15)),
+            (SeriesType.respiratory_rate, 14.5, date(2024, 1, 15)),
+        ]
 
     def test_a_night_without_a_status_still_yields_its_measurements(
         self, data_247: Polar247Data, sample_recharge: dict
     ) -> None:
         # Polar withholds the status for the first three nights while it builds a baseline,
-        # but it already reports breathing rate for them.
+        # but it already reports HRV and breathing rate for them.
         sample_recharge.pop("nightly_recharge_status")
 
         scores, samples = data_247.normalize_nightly_recharge(
@@ -913,28 +913,27 @@ class TestPolar247NightlyRechargeNormalization:
         )
 
         assert scores == []
-        assert [(s.series_type, float(s.value)) for s in samples] == [(SeriesType.respiratory_rate, 14.5)]
+        assert [(s.series_type, float(s.value)) for s in samples] == [
+            (SeriesType.heart_rate_variability_rmssd, 48),
+            (SeriesType.respiratory_rate, 14.5),
+        ]
 
-    def test_the_nightly_hrv_mean_is_not_written_into_the_rmssd_series(
+    def test_the_nightly_hrv_mean_is_never_an_rmssd_window(self, data_247: Polar247Data, sample_recharge: dict) -> None:
+        # Fork: the RMSSD windows come from normalize_nightly_recharge_hrv alone; the nightly mean
+        # is the day value, never an instant sample in the window series.
+        sample_recharge["hrv_samples"] = {"23:51": 86, "23:56": 81}
+        _, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4(), {"2024-01-15": self.SLEEP_START})
+
+        rmssd = [s for s in samples if s.series_type == SeriesType.heart_rate_variability_rmssd]
+        assert [(float(s.value), s.period is not None) for s in rmssd] == [(48, True)]
+
+    def test_a_night_with_no_sleep_record_gets_its_score_and_day_values_but_no_windows(
         self, data_247: Polar247Data, sample_recharge: dict
     ) -> None:
-        # Fork: heart_rate_variability_rmssd carries Polar's 5-minute windows
-        # (normalize_nightly_recharge_hrv). A nightly mean mixed into the same series
-        # would weight every per-night statistic toward it; it stays on the score.
-        user_id = uuid4()
-        scores, samples = data_247.normalize_nightly_recharge(
-            [sample_recharge], user_id, {"2024-01-15": self.SLEEP_START}
-        )
-
-        assert SeriesType.heart_rate_variability_rmssd not in {s.series_type for s in samples}
-        assert scores[0].components["heart_rate_variability_avg"].value == 48
-
-    def test_a_night_with_no_sleep_record_gets_its_score_but_no_samples(
-        self, data_247: Polar247Data, sample_recharge: dict
-    ) -> None:
+        sample_recharge["breathing_samples"] = {"23:49": 15.6}
         scores, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4())
 
-        assert samples == []
+        assert all(s.period is not None for s in samples)
         assert len(scores) == 1
 
     def test_night_without_hrv_or_breathing_still_scores_but_yields_no_samples(
@@ -968,6 +967,56 @@ class TestPolar247NightlyRechargeNormalization:
             )
 
         assert saved == 2
+
+    def test_per_sample_values_cross_midnight_at_the_sleep_offset(
+        self, data_247: Polar247Data, sample_recharge: dict
+    ) -> None:
+        sample_recharge["hrv_samples"] = {"23:51": 86, "23:56": 81, "00:01": 71}
+        sample_recharge["breathing_samples"] = {"23:49": 15.6, "00:04": 13.5}
+        cest = timezone(timedelta(hours=2))
+        sleep_starts = {"2024-01-15": datetime(2024, 1, 14, 23, 49, 26, tzinfo=cest)}
+
+        _, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4(), sleep_starts)
+
+        hrv = [
+            (s.recorded_at, s.zone_offset, float(s.value))
+            for s in data_247.normalize_nightly_recharge_hrv([sample_recharge], sleep_starts, uuid4())
+        ]
+        assert hrv == [
+            (datetime(2024, 1, 14, 23, 51, tzinfo=cest), "+02:00", 86),
+            (datetime(2024, 1, 14, 23, 56, tzinfo=cest), "+02:00", 81),
+            (datetime(2024, 1, 15, 0, 1, tzinfo=cest), "+02:00", 71),
+        ]
+        breathing = [
+            s.recorded_at for s in samples if s.series_type == SeriesType.respiratory_rate and s.period is None
+        ]
+        assert breathing == [datetime(2024, 1, 14, 23, 49, tzinfo=cest), datetime(2024, 1, 15, 0, 4, tzinfo=cest)]
+
+    def test_first_key_just_before_a_midnight_sleep_start_lands_on_the_previous_day(
+        self, data_247: Polar247Data, sample_recharge: dict
+    ) -> None:
+        sample_recharge["breathing_samples"] = {"23:59": 14.0, "00:04": 13.5}
+        sleep_starts = {"2024-01-15": datetime(2024, 1, 15, 0, 0, 59, tzinfo=timezone.utc)}
+
+        _, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4(), sleep_starts)
+
+        breathing = [
+            s.recorded_at for s in samples if s.series_type == SeriesType.respiratory_rate and s.period is None
+        ]
+        assert breathing == [
+            datetime(2024, 1, 14, 23, 59, tzinfo=timezone.utc),
+            datetime(2024, 1, 15, 0, 4, tzinfo=timezone.utc),
+        ]
+
+    def test_per_sample_values_need_the_nights_sleep_start(self, data_247: Polar247Data, sample_recharge: dict) -> None:
+        sample_recharge["hrv_samples"] = {"23:51": 86, "23:56": 81}
+
+        _, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4(), {})
+
+        assert [(s.series_type, float(s.value)) for s in samples] == [
+            (SeriesType.heart_rate_variability_rmssd, 48),
+            (SeriesType.respiratory_rate, 14.5),
+        ]
 
     def test_empty_input(self, data_247: Polar247Data) -> None:
         assert data_247.normalize_nightly_recharge([], uuid4()) == ([], [])

@@ -96,5 +96,5 @@ class TestRechargeSyncWiring:
             data_247._save_nightly_recharge(MagicMock(), uuid4(), starts, ends, items)
 
         assert get_sleep.call_count == 1
-        (saved,) = save_ts.call_args.args[1]
+        (saved,) = [sample for sample in save_ts.call_args.args[1] if sample.period is None]
         assert saved.recorded_at.isoformat() == "2026-09-21T23:40:00-04:00"
