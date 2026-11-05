@@ -2,7 +2,6 @@ import contextlib
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
-from logging import getLogger
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
 
@@ -24,6 +23,7 @@ from app.models import DataSource, HealthScore, ProviderPriority, UserConnection
 from app.repositories.data_type_coverage_repository import data_type_coverage_repository
 from app.repositories.provider_priority_repository import ProviderPriorityRepository
 from app.repositories.repositories import CrudRepository
+from app.repositories.series_reconcile_repository import NOT_RECONCILED_SOURCE
 from app.schemas.enums import (
     DeviceModelOrigin,
     DeviceType,
@@ -39,11 +39,12 @@ from app.utils.device_registry import (
     resolve_brand_signal,
 )
 from app.utils.device_timeline import load_timeline
+from app.utils.structured_logging import get_logger
 
 if TYPE_CHECKING:
     from app.services.devices.identity import IdentityClaim
 
-log = getLogger(__name__)
+log = get_logger(__name__)
 
 # Creator fields that describe the record's data source rather than the record itself.
 # The writers strip them before building the row (upstream #1781's DATA_SOURCE_FIELDS,
@@ -868,9 +869,9 @@ class DataSourceRepository(
             # off the object that just failed can raise from inside the rescue, which
             # is the one way to lose the data it was written to protect.
             log.exception(
-                "device attribution failed for data_source %s (provider=%s); left unattributed",
-                getattr(data_source, "id", None),
-                getattr(data_source, "provider", None),
+                "Device attribution failed; source left unattributed",
+                data_source_id=str(getattr(data_source, "id", None)),
+                data_source_provider=getattr(data_source, "provider", None),
             )
 
     # Types that name a body-worn recorder, as opposed to a handset or an app.
@@ -1457,7 +1458,8 @@ class DataSourceRepository(
     ) -> list[DataSource]:
         return (
             db_session.query(self.model)
-            .filter(self.model.user_id == user_id)
+            # The reconciled source holds merged values, not a device the user connected.
+            .filter(self.model.user_id == user_id, NOT_RECONCILED_SOURCE)
             .order_by(self.model.provider.asc(), self.model.device_model.asc())
             .all()
         )

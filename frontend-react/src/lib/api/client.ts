@@ -3,6 +3,14 @@ import { ApiError } from '../errors/api-error';
 import { getToken, clearSession } from '../auth/session';
 import { ROUTES } from '../constants/routes';
 
+/**
+ * JSON bodies, including RFC 9457 errors: the API answers errors as
+ * `application/problem+json`, which a plain `application/json` match misses.
+ */
+function isJsonContentType(contentType: string | null): boolean {
+  return /\bapplication\/([\w.+-]+\+)?json\b/i.test(contentType ?? '');
+}
+
 interface RequestOptions extends RequestInit {
   timeout?: number;
   retries?: number;
@@ -106,7 +114,7 @@ export const apiClient = {
         response.headers.get('content-length') === '0'
       ) {
         data = undefined;
-      } else if (contentType?.includes('application/json')) {
+      } else if (isJsonContentType(contentType)) {
         data = await response.json();
       } else {
         data = await response.text();
@@ -168,7 +176,7 @@ export const apiClient = {
     let data: unknown;
     const contentType = response.headers.get('content-type');
 
-    if (contentType?.includes('application/json')) {
+    if (isJsonContentType(contentType)) {
       data = await response.json();
     } else {
       data = await response.text();
@@ -292,7 +300,7 @@ export const apiClient = {
     let data: unknown;
     const contentType = response.headers.get('content-type');
 
-    if (contentType?.includes('application/json')) {
+    if (isJsonContentType(contentType)) {
       data = await response.json();
     } else {
       data = await response.text();

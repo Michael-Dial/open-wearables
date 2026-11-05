@@ -1,11 +1,11 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from http import HTTPStatus
 from statistics import median
 from typing import Any, Iterable
 from uuid import UUID, uuid4
 
 import isodate
-from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from app.constants.series_types.polar import RR_INTERVAL_SAMPLE_TYPE
@@ -26,6 +26,10 @@ from app.services.providers.polar.v4_data import polar_v4_data
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.timeseries_service import timeseries_service
 from app.utils.dates import offset_to_iso
+from app.utils.exceptions import ProviderError
+from app.utils.structured_logging import get_logger
+
+logger = get_logger(__name__)
 
 # Marks a workout stored from a v4 training session, so a v3 copy of it is not added.
 V4_EXTERNAL_ID_PREFIX = "v4:"
@@ -65,11 +69,10 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         }
         try:
             return self._make_api_request(db, user_id, "/v3/exercises", params=params) or []
-        except HTTPException as e:
+        except ProviderError as e:
             # No exercises in the last 30 days comes back as an empty body (204), which the
-            # API client reports as a 500 around a JSON decode error. That is no exercises,
-            # not a failed sync.
-            if e.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and "Expecting value" in str(e.detail):
+            # API client fails to parse as JSON. That is no exercises, not a failed sync.
+            if e.upstream_status == HTTPStatus.NO_CONTENT:
                 return []
             raise
 
@@ -243,12 +246,12 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         if missing:
             deficit = duration_seconds * 1000 - sum(valid)
             gap_ms = deficit / missing if deficit > 0 else float(median(valid))
-            self.logger.info(
-                "Polar exercise %s: %d of %d RR beats missing; gap estimated at %.1f ms",
-                raw_workout.id,
-                missing,
-                len(values),
-                gap_ms,
+            logger.info(
+                "Polar exercise RR beats missing; gap estimated",
+                raw_workout_id=str(raw_workout.id),
+                missing=missing,
+                beats=len(values),
+                gap_ms=gap_ms,
             )
 
         samples: list[TimeSeriesSampleCreate] = []
@@ -303,13 +306,17 @@ class PolarWorkouts(BaseWorkoutsTemplate):
                 db, user_id, self._local_start(raw_workout.start_time), day_cache
             )
         except Exception as exc:  # noqa: BLE001 - v4 is an upgrade, never a dependency
-            self.logger.warning(
-                "Polar v4 RR lookup failed for exercise %s, falling back to v3: %s", raw_workout.id, exc
+            logger.warning(
+                "Polar v4 RR lookup failed for exercise, falling back to v3",
+                raw_workout_id=str(raw_workout.id),
+                exc_info=exc,
             )
             v4_rows = None
 
         if v4_rows:
-            self.logger.info("Polar exercise %s: using v4 RR (%d beats, exact clock)", raw_workout.id, len(v4_rows))
+            logger.info(
+                "Polar exercise using v4 RR (exact clock)", raw_workout_id=str(raw_workout.id), beats=len(v4_rows)
+            )
             return polar_rr_import_service.build_creators(
                 v4_rows,
                 user_id=user_id,
@@ -344,7 +351,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         try:
             return PolarExerciseJSON(**raw)
         except ValidationError as e:
-            self.logger.warning("Polar exercise %s failed validation, skipped: %s", raw.get("id"), e)
+            logger.warning("Polar exercise failed validation, skipped", exercise_id=raw.get("id"), exc_info=e)
             return None
 
     def _build_bundles(
@@ -454,7 +461,9 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         if offset is None and session.exercises:
             offset = session.exercises[0].timezone_offset_minutes
         if not session.start_time or offset is None:
-            self.logger.warning("Polar v4 session at %s has no start or UTC offset, skipped", session.start_time)
+            logger.warning(
+                "Polar v4 session has no start or UTC offset, skipped", session_start_time=str(session.start_time)
+            )
             return None
         local_start = self._local_start(session.start_time)
         start_date = (local_start - timedelta(minutes=offset)).replace(tzinfo=timezone.utc)
@@ -463,7 +472,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         elif session.stop_time:
             end_date = start_date + (self._local_start(session.stop_time) - local_start)
         else:
-            self.logger.warning("Polar v4 session at %s has no duration, skipped", session.start_time)
+            logger.warning("Polar v4 session has no duration, skipped", session_start_time=str(session.start_time))
             return None
         if end_date <= start_date:
             return None
@@ -516,7 +525,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         try:
             sessions = polar_v4_data.list_training_sessions(db, user_id, first, last)
         except Exception as exc:  # noqa: BLE001 - v4 adds to v3, it never fails the sync
-            self.logger.warning("Polar v4 training session list failed for user %s: %s", user_id, exc)
+            logger.warning("Polar v4 training session list failed for user", user_id=str(user_id), exc_info=exc)
             return 0
 
         count = 0
@@ -534,7 +543,9 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             try:
                 rows = polar_v4_data.rr_rows_for_session(db, user_id, local_start, day_cache)
             except Exception as exc:  # noqa: BLE001 - the workout stands without its beats
-                self.logger.warning("Polar v4 RR lookup failed for session %s: %s", record.external_id, exc)
+                logger.warning(
+                    "Polar v4 RR lookup failed for session", record_external_id=str(record.external_id), exc_info=exc
+                )
                 rows = None
             if rows:
                 self._save_rr_samples(
@@ -551,7 +562,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             db.commit()
             count += 1
         if count:
-            self.logger.info("Polar v4: stored %d sessions v3 did not list for user %s", count, user_id)
+            logger.info("Polar v4: stored sessions v3 did not list for user", count=count, user_id=str(user_id))
         return count
 
     def fetch_and_save_exercise(self, db: DbSession, user_id: UUID, path: str) -> int:

@@ -3,11 +3,11 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from logging import getLogger
 from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
 from celery import current_app as celery_app
+from redis.exceptions import LockError
 
 from app.config import settings
 from app.constants.celery_tasks import CeleryTask
@@ -31,6 +31,7 @@ from app.schemas.providers.mobile_sdk import (
     SLEEP_START_STATES,
     SleepState,
     SleepStateStage,
+    SyncRequestData,
 )
 from app.schemas.providers.mobile_sdk import (
     SyncRequest as SDKSyncRequest,
@@ -41,9 +42,12 @@ from app.services.sdk.device_resolution import extract_device_ids, extract_devic
 from app.utils.connection_context import active_connection, get_active_connection_id
 from app.utils.dates import as_utc
 from app.utils.sleep_stages import measured_stages
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
+
+# Seconds before a sleep the lock kept out is tried again, growing with each attempt.
+SLEEP_RETRY_SECONDS = 30
 
 # (provider_device_id, source_app_id, device_manufacturer) as extract_device_ids returns them
 SourceIds = tuple[str | None, str | None, str | None]
@@ -167,12 +171,12 @@ def load_sleep_state(user_id: str, scope: str = "") -> SleepState | None:
             state = state.decode("utf-8")
         return SleepState.model_validate_json(state)
     except Exception as e:
-        logger.error(f"Failed to parse sleep state for user {user_id}: {e}")
+        logger.error("Failed to parse sleep state", exc_info=e, user_id=user_id)
         try:
             raw = json.loads(state)
             return SleepState.model_validate(raw)
         except Exception as fallback_e:
-            logger.error(f"Legacy state migration failed for user {user_id}: {fallback_e}; session will be dropped")
+            logger.error("Legacy state migration failed; session will be dropped", exc_info=fallback_e, user_id=user_id)
             return None
 
 
@@ -384,13 +388,7 @@ def handle_sleep_data(
     try:
         acquired = lock.acquire()
         if not acquired:
-            logger.warning("Could not acquire sleep processing lock for user %s; skipping batch", user_id)
-            return {
-                "applied": 0,
-                "unmapped_stages": {},
-                "incoming_by_source": {},
-                "applied_by_source": {},
-            }
+            raise LockError(f"Could not acquire sleep processing lock for user {user_id}")
 
         provider = request.provider
 
@@ -523,6 +521,34 @@ def handle_sleep_data(
         "incoming_by_source": dict(incoming_by_source),
         "applied_by_source": dict(applied_by_source),
     }
+
+
+def save_sleep(db_session: DbSession, request: SDKSyncRequest, user_id: str) -> SleepIngestResult | None:
+    """Save the request's sleep now, or, while another batch of the user holds the sleep lock, in a task that
+    retries it; the ingest result when saved now, None when deferred. The lock is per user, so waiting for it is
+    what a busy export needs.
+
+    Fork: the task carries the account the upload arrived through. A session's scope and its data source
+    come from the active connection, so a retry run outside that account would file the night elsewhere.
+    """
+    try:
+        return handle_sleep_data(db_session, request, user_id)
+    except LockError:
+        sleep_only = request.model_copy(update={"data": SyncRequestData(sleep=request.data.sleep)})
+        connection_id = get_active_connection_id()
+        celery_app.send_task(
+            CeleryTask.SAVE_SDK_SLEEP,
+            args=[sleep_only.model_dump_json(), user_id],
+            kwargs={"connection_id": str(connection_id) if connection_id else None},
+            countdown=SLEEP_RETRY_SECONDS,
+        )
+        logger.warning(
+            "Sleep lock busy; sleep saved by a retrying task",
+            provider=request.provider,
+            user_id=user_id,
+            sleep_count=len(request.data.sleep),
+        )
+        return None
 
 
 def _calculate_final_metrics(stages: list[SleepStateStage]) -> tuple[dict, list[SleepStage]]:
@@ -756,10 +782,8 @@ def _finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> Non
         # keeps the session available for the next periodic finalization attempt.
         delete_sleep_state(user_id, state)
     except Exception as e:
-        log_structured(
-            logger,
-            "error",
-            f"Error saving sleep record {sleep_record.id} for user {user_id}: {e}",
+        logger.error(
+            "Error saving sleep record",
             provider=state.provider or "unknown",
             action="sleep_record_save_error",
             user_id=user_id,

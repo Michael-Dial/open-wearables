@@ -25,7 +25,6 @@ Concretely:
 """
 
 from datetime import datetime, timedelta
-from logging import getLogger
 from uuid import UUID
 
 from sqlalchemy import select
@@ -54,8 +53,9 @@ from app.services.devices.identity import (
     relaying_host_model,
 )
 from app.utils.device_registry import is_apple_hardware_code, relayed_brand, resolve_brand
+from app.utils.structured_logging import get_logger
 
-log = getLogger(__name__)
+log = get_logger(__name__)
 
 # A proposal is worth a person's attention at or above this score. Not an
 # auto-accept threshold - there is deliberately no score at which the system links
@@ -448,9 +448,8 @@ class DeviceDetectionService:
             # came to be stored as a Series 8.
             if is_apple_hardware_code(data_source.device_model) and data_source.device_model not in DEVICE_NAMES:
                 log.warning(
-                    "Apple hardware code %s is not in app/constants/devices_map/apple.py; "
-                    "shown by family until it is added",
-                    data_source.device_model,
+                    "Apple hardware code is not in devices_map/apple.py; shown by family until it is added",
+                    data_source_device_model=data_source.device_model,
                 )
             device = self.repo.create(
                 db_session,

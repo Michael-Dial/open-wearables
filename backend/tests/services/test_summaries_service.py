@@ -3,14 +3,14 @@
 import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from logging import getLogger
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.integrations import rollup_queue
+from app.integrations.rollup_queue import requeue_dirty_days
 from app.models import DataSource, EventRecordAggregate, ProviderPriority, SeriesAggregate
 from app.models.archival_setting import ArchivalSetting
 from app.repositories import AggregateRepository, EventRecordRepository, ProviderPriorityRepository
@@ -18,6 +18,7 @@ from app.repositories.data_migration_repository import DataMigrationRepository
 from app.schemas.enums import ComputedBy, HealthScoreCategory, ProviderName, SeriesType
 from app.schemas.model_crud.activities import CalendarPeriod
 from app.services.summaries_service import SummariesService
+from app.utils.exceptions import InvalidCursorError
 from tests.factories import (
     DataPointSeriesFactory,
     DataSourceFactory,
@@ -35,7 +36,7 @@ from tests.factories import (
 
 @pytest.fixture
 def service() -> SummariesService:
-    return SummariesService(log=getLogger(__name__))
+    return SummariesService()
 
 
 def _dt(iso: str) -> datetime:
@@ -180,6 +181,25 @@ class TestFilterByPriority:
         result = service._filter_by_priority(db, uuid4(), entries, date_key="sleep_date")
         assert len(result) == 1
 
+    def test_fills_metrics_the_winner_lacks_from_the_next_source(self, db: Session, service: SummariesService) -> None:
+        """A phone's steps and a watch's heart rate show on one day; a group the winner has part of stays its own."""
+        day = date(2026, 1, 1)
+        watch = {"activity_date": day, "provider": "garmin", "device_type": "watch", "steps_sum": 4000}
+        watch |= {"active_energy_sum": 300.0, "basal_energy_sum": None, "hr_avg": None}
+        band = {"activity_date": day, "provider": "garmin", "device_type": "band", "steps_sum": 9000}
+        band |= {"active_energy_sum": 500.0, "basal_energy_sum": 1500.0, "hr_avg": 60, "hr_max": 120, "hr_min": 50}
+
+        [result] = service._filter_by_priority(
+            db,
+            uuid4(),
+            [band, watch],
+            fill=(("steps_sum",), ("active_energy_sum", "basal_energy_sum"), ("hr_avg", "hr_max", "hr_min")),
+        )
+
+        assert (result["device_type"], result["steps_sum"]) == ("watch", 4000)
+        assert (result["active_energy_sum"], result["basal_energy_sum"]) == (300.0, None)
+        assert (result["hr_avg"], result["hr_max"], result["hr_min"]) == (60, 120, 50)
+
 
 # ---------------------------------------------------------------------------
 # _get_user_max_hr
@@ -249,7 +269,7 @@ class TestGetSleepSummaries:
         assert (totals.days, totals.steps) == (1, 1000)
 
     def test_a_bad_cursor_is_the_clients_error(self, db: Session, service: SummariesService) -> None:
-        with pytest.raises(HTTPException) as raised:
+        with pytest.raises(InvalidCursorError) as raised:
             service.get_sleep_summaries(
                 db, uuid4(), _dt("2026-01-01T00:00:00+00:00"), _dt("2026-01-07T00:00:00+00:00"), cursor="?", limit=10
             )
@@ -1032,6 +1052,25 @@ class TestGetActivitySummaries:
 
         assert self._day(db, service, user) == []
 
+    def test_a_queued_day_is_counted_from_its_samples_not_its_old_row(
+        self, db: Session, service: SummariesService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Samples newer than the last rollup run: the summary follows them, as the day reads do."""
+        user = UserFactory()
+        ds = self._apple_steps(user, [1000, 250])
+        roll_up_everything(db)
+        _rollup_reached_the_history(db)
+        DataPointSeriesFactory(
+            data_source=ds,
+            series_type=SeriesTypeDefinitionFactory.get_or_create_steps(),
+            value=500,
+            recorded_at=_dt("2026-01-01T12:00:00+00:00"),
+        )
+        requeue_dirty_days([(ds.id, date(2026, 1, 1))])
+        monkeypatch.setattr(rollup_queue, "QUEUED_DAYS_TIMEOUT_SECONDS", 5)
+
+        assert [day.steps for day in self._day(db, service, user)] == [1750]
+
     def test_includes_days_with_only_a_workout(self, db: Session, service: SummariesService) -> None:
         user = UserFactory()
         ds = DataSourceFactory(user=user, provider=ProviderName.STRAVA, source="strava")
@@ -1260,3 +1299,66 @@ class TestBodySummaryAverages:
 
         assert body is not None
         assert body.averaged.resting_heart_rate_bpm == 52
+
+    def test_a_day_takes_the_preferred_sources_value_not_the_mean_of_all(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        """Sources measure a vital differently; a day is the preferred one's, never a blend across ranks."""
+        user = UserFactory()
+        watch = DataSourceFactory(user=user, provider=ProviderName.GARMIN, source="garmin")
+        ring = DataSourceFactory(user=user, provider=ProviderName.OURA, source="oura")
+        priorities = ProviderPriorityRepository(ProviderPriority)
+        priorities.upsert(db, ProviderName.OURA, 1)
+        priorities.upsert(db, ProviderName.GARMIN, 2)
+        yesterday, before = date.today() - timedelta(days=1), date.today() - timedelta(days=2)
+        provider_day(db, watch, SeriesType.resting_heart_rate, yesterday, avg=Decimal("60"))
+        provider_day(db, ring, SeriesType.resting_heart_rate, yesterday, avg=Decimal("50"))
+        provider_day(db, watch, SeriesType.resting_heart_rate, before, avg=Decimal("62"))
+
+        body = service.get_body_summary(db, user.id, 7, 24)
+
+        assert body is not None
+        assert body.averaged.resting_heart_rate_bpm == 56  # the ring's 50, and the watch's 62 on its own day
+
+
+class TestBodySummarySlowChanging:
+    def _reading(self, source: object, series: object, at: datetime, value: str) -> None:
+        DataPointSeriesFactory(mapping=source, series_type=series, recorded_at=at, value=Decimal(value))
+
+    def test_the_preferred_source_wins_a_day_both_reported(self, db: Session, service: SummariesService) -> None:
+        """Oura's height a second newer than Whoop's must not show under Whoop's name."""
+        user = UserFactory()
+        whoop = DataSourceFactory(user=user, provider=ProviderName.WHOOP, source="whoop")
+        oura = DataSourceFactory(user=user, provider=ProviderName.OURA, source="oura")
+        priorities = ProviderPriorityRepository(ProviderPriority)
+        priorities.upsert(db, ProviderName.WHOOP, 1)
+        priorities.upsert(db, ProviderName.OURA, 2)
+        height = SeriesTypeDefinitionFactory.get_or_create_height()
+        at = datetime.now(timezone.utc) - timedelta(hours=1)
+        self._reading(whoop, height, at, "177.8")
+        self._reading(oura, height, at + timedelta(seconds=1), "180")
+
+        body = service.get_body_summary(db, user.id, 7, 24)
+
+        assert body is not None
+        assert (body.slow_changing.height_cm, body.source.provider) == (177.8, "whoop")
+
+    def test_a_preferred_sources_old_value_does_not_beat_a_newer_day(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        """Priority decides on the newest day only: a weight typed in a year ago is not today's weight."""
+        user = UserFactory()
+        apple = DataSourceFactory(user=user, provider=ProviderName.APPLE, source="apple_health_sdk")
+        withings = DataSourceFactory(user=user, provider=ProviderName.WITHINGS, source="withings")
+        priorities = ProviderPriorityRepository(ProviderPriority)
+        priorities.upsert(db, ProviderName.APPLE, 1)
+        priorities.upsert(db, ProviderName.WITHINGS, 2)
+        weight = SeriesTypeDefinitionFactory.get_or_create_weight()
+        now = datetime.now(timezone.utc)
+        self._reading(apple, weight, now - timedelta(days=365), "90")
+        self._reading(withings, weight, now - timedelta(hours=1), "78.4")
+
+        body = service.get_body_summary(db, user.id, 7, 24)
+
+        assert body is not None
+        assert (body.slow_changing.weight_kg, body.source.provider) == (78.4, "withings")

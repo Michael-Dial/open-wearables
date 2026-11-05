@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -6,7 +6,7 @@ from pydantic import BeforeValidator
 
 from app.api.routes.v1.timeseries import split_comma_types
 from app.database import DbSession
-from app.schemas.enums import EventCategory, ProviderName, SeriesType, WorkoutType
+from app.schemas.enums import EventCategory, ProviderName, SeriesType, SourceSelection, WorkoutType
 from app.schemas.model_crud.activities import EventRecordQueryParams, SleepInclude, WorkoutInclude
 from app.schemas.responses.activity import (
     Meal,
@@ -46,13 +46,40 @@ IncludeRedundantRelaysQuery = Annotated[
         ),
     ),
 ]
+# Fork: sleep also takes `per_period`, one source per night - what filter_by_priority means for sleep here.
+SleepSourceSelectionQuery = Annotated[
+    Literal[SourceSelection.ALL, SourceSelection.PER_PERIOD, SourceSelection.PER_SESSION] | None,
+    Query(
+        description="`all` returns every source's sessions. `per_period` keeps one source per night: the "
+        "best-ranked source's sessions of each local sleep date, naps included. `per_session` drops a session when "
+        "the sessions of one source ranked higher by provider, then device type priority, cover at least "
+        "`SESSION_DUPLICATE_OVERLAP` of it (default 0.5); sessions nothing better covers stay, and equally ranked "
+        "sources never hide each other. Source filters narrow which sessions compete. Defaults to `all`."
+    ),
+]
+SessionSourceSelectionQuery = Annotated[
+    Literal[SourceSelection.ALL, SourceSelection.PER_SESSION] | None,
+    Query(
+        description="`all` returns every source's sessions. `per_session` drops a session when the sessions of one "
+        "source ranked higher by provider, then device type priority, cover at least `SESSION_DUPLICATE_OVERLAP` of "
+        "it (default 0.5); sessions nothing better covers stay, and equally ranked sources never hide each other. "
+        "Source filters narrow which sessions compete. Defaults to `all`."
+    ),
+]
 FilterByPriorityQuery = Annotated[
     bool,
     Query(
-        description="When true, keep only the highest-priority source's sessions per sleep date "
-        "(provider/device priority, same ranking as summaries). Defaults to false for backwards compatibility."
+        deprecated=True,
+        description="Same as source_selection=per_period: the highest-priority source's sessions per sleep date.",
     ),
 ]
+
+
+def _sleep_selection(source_selection: SourceSelection | None, filter_by_priority: bool) -> SourceSelection:
+    """Fork: filter_by_priority keeps its meaning, one source per night (per_period), not upstream's per_session."""
+    if source_selection is not None:
+        return source_selection
+    return SourceSelection.PER_PERIOD if filter_by_priority else SourceSelection.ALL
 
 
 @router.get("/users/{user_id}/events/workouts")
@@ -72,6 +99,7 @@ def list_workouts(
     device_model: str | None = None,
     data_source_id: UUID | None = None,
     include_redundant_relays: IncludeRedundantRelaysQuery = False,
+    source_selection: SessionSourceSelectionQuery = None,
 ) -> PaginatedResponse[Workout]:
     """Returns workout sessions."""
     params = EventRecordQueryParams(
@@ -87,7 +115,9 @@ def list_workouts(
         data_source_id=data_source_id,
         include_redundant_relays=include_redundant_relays,
     )
-    return event_record_service.get_workouts(db, user_id, params, include=include)
+    return event_record_service.get_workouts(
+        db, user_id, params, include=include, source_selection=source_selection or SourceSelection.ALL
+    )
 
 
 @router.get("/users/{user_id}/events/workouts/types")
@@ -114,6 +144,7 @@ def get_workout_totals(
     device_model: str | None = None,
     data_source_id: UUID | None = None,
     include_redundant_relays: IncludeRedundantRelaysQuery = False,
+    source_selection: SessionSourceSelectionQuery = None,
 ) -> WorkoutTotals:
     """Returns the count, duration, energy and distance of the workouts the same filters would list.
 
@@ -131,7 +162,9 @@ def get_workout_totals(
         data_source_id=data_source_id,
         include_redundant_relays=include_redundant_relays,
     )
-    return event_record_service.get_workout_totals(db, user_id, params)
+    return event_record_service.get_workout_totals(
+        db, user_id, params, source_selection=source_selection or SourceSelection.ALL
+    )
 
 
 def _csv_response(export: CsvExport) -> Response:
@@ -260,6 +293,7 @@ def list_sleep_sessions(
     data_source_id: UUID | None = None,
     include_redundant_relays: IncludeRedundantRelaysQuery = False,
     is_nap: IsNapQuery = None,
+    source_selection: SleepSourceSelectionQuery = None,
     filter_by_priority: FilterByPriorityQuery = False,
 ) -> PaginatedResponse[SleepSession]:
     """Returns sleep sessions (including naps)."""
@@ -276,7 +310,7 @@ def list_sleep_sessions(
         is_nap=is_nap,
     )
     return event_record_service.get_sleep_sessions(
-        db, user_id, params, filter_by_priority=filter_by_priority, include=include
+        db, user_id, params, source_selection=_sleep_selection(source_selection, filter_by_priority), include=include
     )
 
 
@@ -317,6 +351,7 @@ def get_sleep_totals(
     device_model: str | None = None,
     data_source_id: UUID | None = None,
     is_nap: IsNapQuery = None,
+    source_selection: SleepSourceSelectionQuery = None,
     filter_by_priority: FilterByPriorityQuery = False,
     include_redundant_relays: IncludeRedundantRelaysQuery = False,
 ) -> SleepTotals:
@@ -337,7 +372,9 @@ def get_sleep_totals(
         is_nap=is_nap,
         include_redundant_relays=include_redundant_relays,
     )
-    return event_record_service.get_sleep_totals(db, user_id, params, filter_by_priority=filter_by_priority)
+    return event_record_service.get_sleep_totals(
+        db, user_id, params, source_selection=_sleep_selection(source_selection, filter_by_priority)
+    )
 
 
 @router.get("/users/{user_id}/events/menstrual-cycles")

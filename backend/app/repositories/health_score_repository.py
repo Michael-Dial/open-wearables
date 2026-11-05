@@ -2,15 +2,15 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
-from sqlalchemy import Date, and_, asc, desc, func, literal_column, or_, select, tuple_
+from sqlalchemy import Date, and_, asc, delete, desc, func, literal_column, or_, select, tuple_
 from sqlalchemy import cast as sa_cast
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database import DbSession
-from app.models import DataSource, HealthScore, SleepDetails
+from app.models import DataSource, EventRecord, HealthScore, SleepDetails, UserConnection
 from app.repositories.data_point_series_repository import WriteCounts
-from app.repositories.repositories import CrudRepository, source_priority_order
-from app.schemas.enums import DeviceType, HealthScoreCategory, ProviderName
+from app.repositories.repositories import CrudRepository, SourceRanking
+from app.schemas.enums import EventCategory, HealthScoreCategory, ProviderName
 from app.schemas.model_crud.activities import HealthScoreCreate, HealthScoreQueryParams, HealthScoreUpdate
 from app.utils.dates import as_utc
 from app.utils.pagination import decode_cursor
@@ -41,6 +41,19 @@ def _utc_midnight(moment: datetime) -> datetime:
     return datetime.combine(as_utc(moment).date(), time.min, tzinfo=timezone.utc)
 
 
+def _providers_with_several_accounts(db_session: DbSession, pairs: set[tuple[UUID, str]]) -> set[tuple[UUID, str]]:
+    """The (user, provider) pairs among ``pairs`` the user has more than one account with."""
+    if not pairs:
+        return set()
+    rows = db_session.execute(
+        select(UserConnection.user_id, UserConnection.provider)
+        .where(tuple_(UserConnection.user_id, UserConnection.provider).in_([(u, str(p)) for u, p in pairs]))
+        .group_by(UserConnection.user_id, UserConnection.provider)
+        .having(func.count() > 1)
+    ).all()
+    return {(row.user_id, row.provider) for row in rows}
+
+
 class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, HealthScoreUpdate]):
     def get_by_all_components(self, db_session: DbSession, components: list[str]) -> list[HealthScore]:
         """Return health scores whose components JSONB contains all specified keys (?& operator)."""
@@ -55,8 +68,7 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         db_session: DbSession,
         user_id: UUID,
         params: HealthScoreQueryParams,
-        provider_order: dict[ProviderName, int],
-        device_type_order: dict[DeviceType, int],
+        ranking: SourceRanking,
     ) -> tuple[list[tuple[HealthScore, DataSource | None]], int]:
         """Scores newest first, with their data source; one OW score per category and day, picked before paging."""
         filters = [HealthScore.user_id == user_id]
@@ -89,7 +101,7 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
                     partition_by=(HealthScore.category, sa_cast(func.timezone("UTC", HealthScore.recorded_at), Date)),
                     order_by=(
                         DataSource.id.is_(None),  # a score without a source comes last
-                        *source_priority_order(provider_order, device_type_order),
+                        *ranking.order_terms(),
                         # Longest sleep first, so an unflagged nap (#938) doesn't beat the night
                         func.coalesce(SleepDetails.sleep_total_duration_minutes, 0).desc(),
                         HealthScore.recorded_at.desc(),
@@ -134,12 +146,102 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         if not creators:
             return WriteCounts(0, 0)
 
+        creators = self._replace_earlier_scores_of_the_nights(db_session, creators)
         values = [c.model_dump() for c in creators]
 
         stmt = insert(HealthScore).values(values).on_conflict_do_nothing().returning(HealthScore.id)
         inserted = len(db_session.execute(stmt).scalars().all())
         # Caller is responsible for commit — allows batching with other operations
         return WriteCounts(inserted, 0)
+
+    @staticmethod
+    def _replace_earlier_scores_of_the_nights(
+        db_session: DbSession, creators: list[HealthScoreCreate]
+    ) -> list[HealthScoreCreate]:
+        """A provider sleep score sits at its night's end, which a re-sent night moves (Whoop extends a scored
+        night, Garmin a fragment): the night's earlier scores, from its start to its end, give way to the new one,
+        stored or in the same batch.
+
+        The night is the provider's sleep record ending at the score, stored before its score. A score linked to
+        its record (Polar) is unique per record already.
+
+        Fork: only for a provider the user has one account with. These scores carry no data source or account,
+        so with two accounts (two Garmins on one participant) account A's night would delete account B's score
+        whenever B woke inside A's night. There a re-sent night may leave its earlier score beside the new one,
+        which a read can tell apart by time; a deleted score is gone.
+        """
+        ends = {
+            (c.user_id, c.provider, c.recorded_at)
+            for c in creators
+            if c.category == HealthScoreCategory.SLEEP
+            and c.provider != ProviderName.INTERNAL
+            and c.event_record_id is None
+        }
+        if not ends:
+            return creators
+        night = (
+            select(EventRecord.start_datetime, EventRecord.end_datetime, DataSource.user_id, DataSource.provider)
+            .join(DataSource, DataSource.id == EventRecord.data_source_id)
+            .where(
+                EventRecord.category == EventCategory.SLEEP,
+                tuple_(DataSource.user_id, DataSource.provider, EventRecord.end_datetime).in_(list(ends)),
+            )
+            .subquery()
+        )
+        nights = db_session.execute(select(night)).all()
+        shared = _providers_with_several_accounts(db_session, {(n.user_id, n.provider) for n in nights})
+        nights = [n for n in nights if (n.user_id, n.provider) not in shared]
+        if not nights:
+            return creators
+        db_session.execute(
+            delete(HealthScore)
+            .where(
+                HealthScore.category == HealthScoreCategory.SLEEP,
+                HealthScore.event_record_id.is_(None),
+                HealthScore.user_id == night.c.user_id,
+                HealthScore.provider == night.c.provider,
+                HealthScore.recorded_at >= night.c.start_datetime,
+                HealthScore.recorded_at <= night.c.end_datetime,
+                *([tuple_(night.c.user_id, night.c.provider).notin_(list(shared))] if shared else []),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return [
+            c
+            for c in creators
+            if c.event_record_id is not None
+            or not any(
+                c.category == HealthScoreCategory.SLEEP
+                and (c.user_id, c.provider) == (n.user_id, n.provider)
+                and n.start_datetime <= c.recorded_at < n.end_datetime
+                for n in nights
+            )
+        ]
+
+    def drop_provider_sleep_score(self, db_session: DbSession, data_source_id: UUID, night_end: datetime) -> None:
+        """The provider score at a night's former end, left behind when the provider moved that end.
+
+        Fork: not for a provider the user has several accounts with - the score names no account, and the one at
+        that second may be another account's (see _replace_earlier_scores_of_the_nights).
+        """
+        owner = db_session.execute(
+            select(DataSource.user_id, DataSource.provider).where(DataSource.id == data_source_id)
+        ).first()
+        if owner is None or _providers_with_several_accounts(db_session, {(owner.user_id, owner.provider)}):
+            return
+        db_session.execute(
+            delete(HealthScore)
+            .where(
+                HealthScore.category == HealthScoreCategory.SLEEP,
+                HealthScore.event_record_id.is_(None),
+                HealthScore.provider != ProviderName.INTERNAL,
+                tuple_(HealthScore.user_id, HealthScore.provider).in_(
+                    select(DataSource.user_id, DataSource.provider).where(DataSource.id == data_source_id)
+                ),
+                HealthScore.recorded_at == night_end,
+            )
+            .execution_options(synchronize_session=False)
+        )
 
     def bulk_create_keeping_highest(self, db_session: DbSession, creators: list[HealthScoreCreate]) -> WriteCounts:
         """Bulk upsert health scores, keeping the higher value when a score for the same time is sent again.

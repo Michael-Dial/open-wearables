@@ -91,7 +91,7 @@ class TestTheOverride:
             headers=api_key_header,
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_another_users_source_is_not_found(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]

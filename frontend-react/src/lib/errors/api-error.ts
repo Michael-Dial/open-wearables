@@ -45,9 +45,13 @@ export class ApiError extends Error {
       response.statusText ||
       'An error occurred';
     const code = dataObj?.code as ApiErrorCode | undefined;
+    // RFC 9457 validation problems list their field errors under `errors`.
     const details =
       (dataObj?.details as Record<string, unknown>) ||
-      (dataObj?.validation_errors as Record<string, unknown>);
+      (dataObj?.validation_errors as Record<string, unknown>) ||
+      (Array.isArray(dataObj?.errors)
+        ? { errors: dataObj.errors as unknown[] }
+        : undefined);
 
     return new ApiError(message, response.status, code, details);
   }

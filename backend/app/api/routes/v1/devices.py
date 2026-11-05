@@ -10,7 +10,6 @@ a dashboard login only, because the audit trail records a developer against each
 and an API key names no person.
 """
 
-from logging import getLogger
 from typing import Annotated
 from uuid import UUID
 
@@ -41,10 +40,11 @@ from app.schemas.model_crud.devices.activity import (
 from app.services import ApiKeyDep, DeveloperDep
 from app.services.device_service import DeviceService
 from app.services.source_activity_service import SourceActivityService
+from app.utils.structured_logging import get_logger
 
 router = APIRouter()
-device_service = DeviceService(log=getLogger(__name__))
-source_activity_service = SourceActivityService(log=getLogger(__name__))
+device_service = DeviceService(log=get_logger(__name__))
+source_activity_service = SourceActivityService(log=get_logger(__name__))
 
 
 def _actor(developer: Developer) -> str:

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import logging
 import threading
 import time
 from collections.abc import Callable
@@ -37,9 +36,9 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import ProviderCredential
 from app.schemas.enums import ProviderName
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CredentialKind(StrEnum):
@@ -291,9 +290,7 @@ class ProviderCredentialStore:
             except Exception as e:
                 # Keep serving what was last read (or the environment alone): a database
                 # hiccup must not take every provider integration down with it.
-                log_structured(
-                    logger,
-                    "warning",
+                logger.warning(
                     "Could not read provider credentials saved in the dashboard; using the environment",
                     action="provider_credentials_load",
                     error=type(e).__name__,

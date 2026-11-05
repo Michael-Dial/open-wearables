@@ -10,6 +10,7 @@ from app.schemas.model_crud.data_priority import (
 )
 from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities
 from app.services.providers.factory import ProviderFactory
+from app.utils.exceptions import InvalidInputError, UnsupportedProviderError
 
 _NON_PROVIDER_NAMES = UNLISTED_PROVIDERS
 
@@ -103,7 +104,7 @@ class ProviderSettingsService:
         strategy = self._configurable_strategy(provider)
 
         if update.live_sync_mode is not None and not strategy.live_sync_configurable:
-            raise ValueError(f"Provider '{provider}' does not support live sync mode configuration")
+            raise UnsupportedProviderError(provider, "live sync mode configuration")
 
         db_settings_map = self.repo.get_all(db)
         current = db_settings_map.get(provider)
@@ -140,11 +141,11 @@ class ProviderSettingsService:
     def _configurable_strategy(self, provider: str) -> BaseProviderStrategy:
         # An add-on grant is configured through its host (Polar), not as a provider.
         if is_add_on_grant(provider):
-            raise ValueError(f"Unknown provider: {provider}")
+            raise InvalidInputError(f"Unknown provider: {provider}") from None
         try:
             return self.factory.get_provider(provider)
         except ValueError:
-            raise ValueError(f"Unknown provider: {provider}")
+            raise InvalidInputError(f"Unknown provider: {provider}") from None
 
     def bulk_update_providers(self, db: DbSession, updates: dict[str, bool]) -> list[ProviderSettingRead]:
         """Bulk update is_enabled for multiple providers."""

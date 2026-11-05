@@ -24,7 +24,7 @@ logger = getLogger(__name__)
 @pytest.fixture
 def service() -> XMLService:
     """The parse helpers under test never touch the path."""
-    return XMLService(Path("unused.xml"), logger)
+    return XMLService(Path("unused.xml"))
 
 
 # A real sleep record from an Apple Health export: sourceName, no device.

@@ -1,5 +1,3 @@
-import logging
-
 import httpx
 
 from app.schemas.auth import (
@@ -13,9 +11,9 @@ from app.schemas.model_crud.credentials import (
 )
 from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class WhoopOAuth(BaseOAuthTemplate):
@@ -62,9 +60,7 @@ class WhoopOAuth(BaseOAuthTemplate):
             # which of them a night of data came from.
             email = user_data.get("email")
 
-            log_structured(
-                logger,
-                "info",
+            logger.info(
                 "Fetched Whoop user profile",
                 provider="whoop",
                 task="get_provider_user_info",
@@ -72,13 +68,12 @@ class WhoopOAuth(BaseOAuthTemplate):
             )
             return {"user_id": provider_user_id, "username": None, "email": email}
         except Exception as e:
-            log_structured(
-                logger,
-                "error",
-                f"Failed to fetch Whoop user profile: {e}",
+            logger.error(
+                "Failed to fetch Whoop user profile",
                 provider="whoop",
                 task="get_provider_user_info",
                 user_id=user_id,
+                error=str(e),
             )
             return {"user_id": None, "username": None, "email": None}
 

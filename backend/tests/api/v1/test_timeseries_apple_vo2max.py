@@ -6,7 +6,6 @@ same series. Without the test type the three are one row shape. This pins that t
 phone SDK path keeps HealthKit's key and that the read states it.
 """
 
-import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -59,7 +58,7 @@ def test_the_sdk_path_states_healthkits_test_type(
             ]
         },
     }
-    ImportService(log=logging.getLogger("test")).load_data(db, payload, str(user.id))
+    ImportService().load_data(db, payload, str(user.id))
 
     response = client.get(
         f"/api/v1/users/{user.id}/timeseries?types=vo2_max"

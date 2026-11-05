@@ -1,9 +1,9 @@
-import logging
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse
 
 from app.config import settings
@@ -28,19 +28,19 @@ from app.services.provider_credentials_service import ProviderHasNoAppSettingsEr
 from app.services.provider_settings_service import add_on_grant_enabled, provider_settings_service
 from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.factory import ProviderFactory
-from app.utils.structured_logging import log_structured
+from app.utils.exceptions import InvalidInputError, NotFoundError, UnsupportedProviderError, unknown_provider
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 router = APIRouter()
 factory = ProviderFactory()
 
 
 def resolve_provider(slug: str) -> ProviderName:
-    # 400 rather than 404 keeps the response the enum-typed parameter used to give.
     try:
         return ProviderName(from_url_slug(slug))
     except ValueError:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown provider: '{slug}'")
+        raise unknown_provider(slug, ("path", "provider"), (p.value for p in ProviderName)) from None
 
 
 def get_oauth_strategy(provider: ProviderName) -> BaseProviderStrategy:
@@ -48,10 +48,7 @@ def get_oauth_strategy(provider: ProviderName) -> BaseProviderStrategy:
     strategy = factory.get_provider(provider.value)
 
     if not strategy.oauth:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Provider '{provider.value}' does not support OAuth",
-        )
+        raise UnsupportedProviderError(provider.value, "OAuth")
     return strategy
 
 
@@ -94,7 +91,7 @@ def _declined_chained_grant(provider: str, state: str | None) -> OAuthState | No
         return None
     try:
         strategy = get_oauth_strategy(resolve_provider(provider))
-    except HTTPException:
+    except (RequestValidationError, UnsupportedProviderError):
         return None
     assert strategy.oauth
     oauth_state = strategy.oauth.consume_declined_state(state)
@@ -163,9 +160,8 @@ def authorize_provider(
     strategy = get_oauth_strategy(provider_name)
 
     if connection_id is not None and new_account:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "connection_id re-authorizes an existing account and new_account adds one; pass at most one",
+        raise InvalidInputError(
+            "connection_id re-authorizes an existing account and new_account adds one; pass at most one"
         )
 
     then_provider = None
@@ -226,9 +222,7 @@ def oauth_callback(
         # beat-to-beat access is no reason to leave the person with no Polar at all.
         declined = _declined_chained_grant(provider, state)
         if declined is not None:
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "Chained OAuth grant declined, continuing to the next one",
                 provider=provider,
                 task="oauth_callback",
@@ -363,10 +357,7 @@ def update_provider_setting(
     _developer: DeveloperDep,
 ):
     """Update is_enabled and/or live_sync_mode for a single provider."""
-    try:
-        return provider_settings_service.update_provider_setting(db, provider, update)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return provider_settings_service.update_provider_setting(db, provider, update)
 
 
 @router.get("/providers/{provider}/credentials", response_model=ProviderAppRead, tags=["Internal: Providers"])
@@ -383,7 +374,7 @@ def get_provider_credentials(
     try:
         return provider_credentials_service.read(db, from_url_slug(provider))
     except ProviderHasNoAppSettingsError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise NotFoundError(str(e)) from e
 
 
 @router.put("/providers/{provider}/credentials", response_model=ProviderAppRead, tags=["Internal: Providers"])
@@ -402,9 +393,9 @@ def update_provider_credentials(
     try:
         return provider_credentials_service.update(db, from_url_slug(provider), payload, developer.id)
     except ProviderHasNoAppSettingsError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise NotFoundError(str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise InvalidInputError(str(e)) from e
 
 
 @router.put("/providers", response_model=list[ProviderSettingRead], tags=["Internal: Providers"])

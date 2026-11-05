@@ -217,7 +217,7 @@ class TestSleepStages:
             response = client.post(
                 f"/api/v1/users/{user.id}/import/manual/sleep-stages", headers=api_key_header, json=body
             )
-            assert response.status_code == 400, body
+            assert response.status_code == 422, body
         assert _sleep_sessions(client, user, api_key_header) == []
 
     def test_totals_an_instrument_stated_are_stored_as_stated_with_no_timeline(
@@ -270,7 +270,7 @@ class TestSleepStages:
             response = client.post(
                 f"/api/v1/users/{user.id}/import/manual/sleep-stages", headers=api_key_header, json=body
             )
-            assert response.status_code == 400, body
+            assert response.status_code == 422, body
         assert _sleep_sessions(client, user, api_key_header) == []
 
     def test_a_provenance_tag_is_stored_on_the_record_and_follows_a_replacement(
@@ -315,7 +315,7 @@ class TestSleepStages:
                 headers=api_key_header,
                 json={"device_label": PSG, "stages": OUR_WORDS, "provenance": tag},
             )
-            assert response.status_code == 400, tag
+            assert response.status_code == 422, tag
 
     def test_an_unknown_user_is_a_404(self, client: TestClient, db: Session, api_key_header: dict[str, str]) -> None:
         response = client.post(
@@ -505,7 +505,7 @@ class TestSeries:
             headers=api_key_header,
             json={"device_label": KUBIOS, "series_type": "not_a_series", "samples": _samples(1)},
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert _connections(client, user, api_key_header) == []
 
 

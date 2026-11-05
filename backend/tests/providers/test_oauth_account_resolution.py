@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.repositories.user_connection_repository import UserConnectionRepository
@@ -23,6 +22,7 @@ from app.schemas.model_crud.credentials import (
     ProviderEndpoints,
 )
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
+from app.utils.exceptions import InvalidInputError
 from tests.factories import UserConnectionFactory, UserFactory
 
 
@@ -81,18 +81,18 @@ class TestResolution:
         theirs_connection = UserConnectionFactory(user=theirs, provider="whoop", provider_user_id="w-theirs")
         db.commit()
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(InvalidInputError) as exc:
             template._resolve_target_connection(
                 db, mine.id, None, None, _state(mine.id, connection_id=theirs_connection.id)
             )
-        assert exc.value.status_code == 400
+        assert exc.value.status_code == 400  # InvalidInputError answers 400
 
     def test_a_missing_connection_id_is_refused(self, db: Session, template: _Template) -> None:
         user = UserFactory()
         UserConnectionFactory(user=user, provider="whoop", provider_user_id="w-1")
         db.commit()
 
-        with pytest.raises(HTTPException):
+        with pytest.raises(InvalidInputError):
             template._resolve_target_connection(db, user.id, None, None, _state(user.id, connection_id=uuid4()))
 
     def test_the_provider_user_id_matches_an_account_we_already_hold(self, db: Session, template: _Template) -> None:

@@ -59,7 +59,7 @@ class TestBeatCaptureSetting:
             f"{api_v1_prefix}/users/{user.id}/beat-capture", json={"lookback_days": 0}, headers=api_key_header
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_unknown_user_is_404(
         self, client: TestClient, db: Session, api_v1_prefix: str, api_key_header: dict[str, str]
@@ -103,7 +103,7 @@ class TestBeatCaptureWindows:
             headers=api_key_header,
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_window_span_is_capped(
         self, client: TestClient, db: Session, api_v1_prefix: str, api_key_header: dict[str, str]
@@ -116,7 +116,7 @@ class TestBeatCaptureWindows:
             headers=api_key_header,
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_window_needs_a_timezone(
         self, client: TestClient, db: Session, api_v1_prefix: str, api_key_header: dict[str, str]
@@ -129,7 +129,7 @@ class TestBeatCaptureWindows:
             headers=api_key_header,
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_cancel_pending_but_not_fulfilled(
         self, client: TestClient, db: Session, api_v1_prefix: str, api_key_header: dict[str, str]

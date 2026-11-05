@@ -15,7 +15,6 @@ alphabet gets null totals, never figures derived from a fold the consumer owns.
 
 from datetime import datetime
 from decimal import Decimal
-from logging import Logger, getLogger
 from uuid import UUID, uuid4
 
 from app.config import settings
@@ -41,7 +40,7 @@ from app.services.timeseries_service import timeseries_service
 from app.services.user_connection_service import user_connection_service
 from app.services.user_service import user_service
 from app.utils.dates import offset_to_iso
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import StructuredLogger, get_logger
 
 MANUAL_PROVIDER = ProviderName.MANUAL.value
 REFERENCE_ACCOUNT_LABEL = "Reference instruments (manual import)"
@@ -89,7 +88,7 @@ def _clipped_seconds(stages: list[SleepStage]) -> dict[SleepStageType, float]:
 
 
 class ManualImportService:
-    def __init__(self, log: Logger) -> None:
+    def __init__(self, log: StructuredLogger) -> None:
         self.logger = log
         self.data_source_repo = DataSourceRepository(DataSource)
 
@@ -225,9 +224,7 @@ class ManualImportService:
         if metadata is not None and result.provider_metadata != {**(result.provider_metadata or {}), **metadata}:
             result.provider_metadata = {**(result.provider_metadata or {}), **metadata}
             db_session.commit()
-        log_structured(
-            self.logger,
-            "info",
+        self.logger.info(
             "Imported manual sleep record",
             provider=MANUAL_PROVIDER,
             action="manual_sleep_import",
@@ -287,9 +284,7 @@ class ManualImportService:
         ]
         counts = timeseries_service.bulk_create_samples(db_session, creators)
         db_session.commit()
-        log_structured(
-            self.logger,
-            "info",
+        self.logger.info(
             "Imported manual series",
             provider=MANUAL_PROVIDER,
             action="manual_series_import",
@@ -312,4 +307,4 @@ class ManualImportService:
         )
 
 
-manual_import_service = ManualImportService(log=getLogger(__name__))
+manual_import_service = ManualImportService(log=get_logger(__name__))

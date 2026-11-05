@@ -4,7 +4,6 @@ Resolution (which value is in use) lives in ``app/services/provider_credentials.
 this module is the admin side: what the dashboard shows, and saving what it sends.
 """
 
-import logging
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -28,9 +27,9 @@ from app.services.provider_credentials import (
     provider_credentials,
 )
 from app.services.providers.factory import ProviderFactory
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 MAX_VALUE_LENGTH = 4096
 
@@ -144,9 +143,7 @@ class ProviderCredentialsService:
 
         self.repo.apply(db, provider, upserts, deletes, developer_id)
         provider_credentials.invalidate()
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Provider app settings changed in the dashboard",
             action="provider_credentials_update",
             provider=provider,

@@ -1,6 +1,5 @@
 from contextlib import ExitStack, suppress
 from datetime import datetime, timedelta, timezone
-from logging import getLogger
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -43,11 +42,10 @@ from app.services.sync_status_service import (
 from app.utils.config_utils import format_duration
 from app.utils.connection_context import bind_active_connection, clear_active_connection
 from app.utils.context import sync_run_context, trace_id_var
-from app.utils.sentry_helpers import log_and_capture_error
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 from app.utils.sync_params import build_sync_params
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _emit_sync_status(fn: Any, /, *args: Any, **kwargs: Any) -> None:
@@ -55,12 +53,7 @@ def _emit_sync_status(fn: Any, /, *args: Any, **kwargs: Any) -> None:
     try:
         fn(*args, **kwargs)
     except Exception as exc:
-        log_and_capture_error(
-            exc,
-            logger,
-            "Failed to emit sync status event",
-            extra={"detail": str(exc)},
-        )
+        logger.error("Failed to emit sync status event", exc_info=exc, detail=str(exc))
 
 
 def live_pull_lookback(configured: timedelta | None, provider_floor: timedelta | None) -> timedelta | None:
@@ -160,19 +153,7 @@ def sync_vendor_data(
     try:
         user_uuid = UUID(user_id)
     except ValueError as e:
-        log_structured(
-            logger,
-            "error",
-            f"Invalid user_id format: {user_id}",
-            task="sync_vendor_data",
-            user_id=user_id,
-        )
-        log_and_capture_error(
-            e,
-            logger,
-            f"Invalid user_id format: {user_id}",
-            extra={"user_id": user_id, "task": "sync_vendor_data", "trace_id": trace_id},
-        )
+        logger.error("Invalid user_id format", exc_info=e, task="sync_vendor_data", user_id=user_id)
         return SyncVendorDataResult(
             user_id=user_id,
             start_date=start_date,
@@ -218,22 +199,19 @@ def sync_vendor_data(
             ]
 
             if not connections:
-                log_structured(
-                    logger,
-                    "info",
-                    f"No active connections found for user {user_id}",
+                logger.info(
+                    "No active connections found",
                     task="sync_vendor_data",
                     user_id=user_id,
                 )
                 result.message = "No active provider connections found"
                 return result.model_dump()
 
-            log_structured(
-                logger,
-                "info",
-                f"Found {len(connections)} active connections for user {user_id}",
+            logger.info(
+                "Found active connections",
                 task="sync_vendor_data",
                 user_id=user_id,
+                count=len(connections),
             )
 
             for connection in connections:
@@ -252,10 +230,8 @@ def sync_vendor_data(
                     if accounts_per_provider.get(provider_name, 1) == 1
                     else f"{provider_name}:{connection.id}"
                 )
-                log_structured(
-                    logger,
-                    "info",
-                    f"Syncing data from {provider_name} for user {user_id}",
+                logger.info(
+                    "Syncing data from provider",
                     provider=provider_name,
                     task="sync_vendor_data",
                     user_id=user_id,
@@ -289,10 +265,8 @@ def sync_vendor_data(
                         # Steal it so this profile can become primary.
                         active = user_connection_repo.get_active_connection(db, existing_primary, provider_name)
                         if not active:
-                            log_structured(
-                                logger,
-                                "info",
-                                f"Stealing stale {provider_name} primary lock — holder has no active connection",
+                            logger.info(
+                                "Stealing stale primary lock — holder has no active connection",
                                 provider=provider_name,
                                 task="sync_vendor_data",
                                 user_id=user_id,
@@ -304,10 +278,8 @@ def sync_vendor_data(
                             )
 
                     if not is_pull_primary:
-                        log_structured(
-                            logger,
-                            "info",
-                            f"Skipping {provider_name} pull — this provider account is already syncing",
+                        logger.info(
+                            "Skipping pull — this provider account is already syncing",
                             provider=provider_name,
                             task="sync_vendor_data",
                             user_id=user_id,
@@ -440,25 +412,13 @@ def sync_vendor_data(
                                 )
                             )
                         except Exception as e:
-                            log_structured(
-                                logger,
-                                "warning",
+                            logger.error(
                                 "Workouts sync failed",
+                                exc_info=e,
                                 error_code=error_code_of(e),
                                 provider=provider_name,
                                 task="sync_vendor_data",
                                 user_id=user_id,
-                            )
-                            log_and_capture_error(
-                                e,
-                                logger,
-                                "Workouts sync failed",
-                                extra={
-                                    "user_id": user_id,
-                                    "provider": provider_name,
-                                    "task": "sync_vendor_data",
-                                    "trace_id": trace_id,
-                                },
                             )
                             provider_result.params["workouts"] = {"success": False, "error_code": error_code_of(e)}
                             data_type_outcomes.append(
@@ -503,35 +463,21 @@ def sync_vendor_data(
                             pull_written += results_247.rows_written
                             for _task, _outcome in results_247.outcomes.items():
                                 data_type_outcomes.extend(_task_outcomes(_task, _outcome))
-                            log_structured(
-                                logger,
-                                "info",
-                                f"247 data synced for {provider_name}",
+                            logger.info(
+                                "247 data synced",
                                 provider=provider_name,
                                 task="sync_vendor_data",
                                 user_id=user_id,
                                 data_247=summary_247,
                             )
                         except Exception as e:
-                            log_structured(
-                                logger,
-                                "warning",
+                            logger.error(
                                 "24/7 data sync failed",
+                                exc_info=e,
                                 error_code=error_code_of(e),
                                 provider=provider_name,
                                 task="sync_vendor_data",
                                 user_id=user_id,
-                            )
-                            log_and_capture_error(
-                                e,
-                                logger,
-                                "24/7 data sync failed",
-                                extra={
-                                    "user_id": user_id,
-                                    "provider": provider_name,
-                                    "task": "sync_vendor_data",
-                                    "trace_id": trace_id,
-                                },
                             )
                             provider_result.params["data_247"] = Sync247Summary(
                                 status=SyncStatus.FAILED,
@@ -568,10 +514,8 @@ def sync_vendor_data(
                         for linked_conn in linked_connections:
                             if linked_conn.user_id == user_uuid:
                                 continue
-                            log_structured(
-                                logger,
-                                "info",
-                                f"Fanning out {provider_name} sync to linked profile",
+                            logger.info(
+                                "Fanning out sync to linked profile",
                                 provider=provider_name,
                                 task="sync_vendor_data",
                                 user_id=user_id,
@@ -596,10 +540,8 @@ def sync_vendor_data(
                     provider_result.params["connection_id"] = str(connection.id)
                     provider_result.params["account_label"] = connection.account_label
                     result.providers_synced[result_key] = provider_result
-                    log_structured(
-                        logger,
-                        "info",
-                        f"Successfully synced {provider_name} for user {user_id}",
+                    logger.info(
+                        "Successfully synced provider",
                         provider=provider_name,
                         task="sync_vendor_data",
                         user_id=user_id,
@@ -686,16 +628,13 @@ def sync_vendor_data(
                         message=f"Sync from {provider_name} failed",
                         metadata={"is_historical": is_historical},
                     )
-                    log_and_capture_error(
-                        e,
-                        logger,
+                    logger.error(
                         "Provider sync failed",
-                        extra={
-                            "user_id": user_id,
-                            "provider": provider_name,
-                            "task": "sync_vendor_data",
-                            "trace_id": trace_id,
-                        },
+                        exc_info=e,
+                        user_id=user_id,
+                        provider=provider_name,
+                        task="sync_vendor_data",
+                        trace_id=trace_id,
                     )
                     result.errors[result_key] = error_code_of(e)
                     continue
@@ -706,12 +645,7 @@ def sync_vendor_data(
             return result.model_dump()
 
         except Exception as e:
-            log_and_capture_error(
-                e,
-                logger,
-                "User sync failed",
-                extra={"user_id": user_id, "task": "sync_vendor_data", "trace_id": trace_id},
-            )
+            logger.error("User sync failed", exc_info=e, user_id=user_id, task="sync_vendor_data", trace_id=trace_id)
             result.errors["general"] = error_code_of(e)
             return result.model_dump()
         finally:

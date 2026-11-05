@@ -6,7 +6,6 @@ often no help: a source called "Bluetooth Device" or a bare bundle id identifies
 nothing, and the only evidence left is what it reported and how recently.
 """
 
-from logging import Logger
 from uuid import UUID
 
 from sqlalchemy import select
@@ -25,7 +24,7 @@ from app.schemas.model_crud.devices.activity import (
     MIN_WINDOW_DAYS,
 )
 from app.schemas.model_crud.user_management import account_display_label
-from app.utils.exceptions import handle_exceptions
+from app.utils.structured_logging import StructuredLogger
 
 # How many time-series codes to return per source. A source can carry dozens; the
 # question here is what kind of hardware this is, and the busiest handful answers it.
@@ -34,11 +33,10 @@ MAX_METRICS_PER_SOURCE = 8
 
 
 class SourceActivityService:
-    def __init__(self, log: Logger):
+    def __init__(self, log: StructuredLogger):
         self.logger = log
         self.repo = SourceActivityRepository()
 
-    @handle_exceptions
     def get_user_source_activity(
         self,
         db: DbSession,

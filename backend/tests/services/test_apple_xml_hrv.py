@@ -7,7 +7,6 @@ none of it stored.
 """
 
 from decimal import Decimal
-from logging import getLogger
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,7 +19,7 @@ from app.services.providers.apple.apple_xml.xml_service import XMLService
 @pytest.fixture
 def service() -> XMLService:
     """The record builder under test never touches the path."""
-    return XMLService(Path("unused.xml"), getLogger(__name__))
+    return XMLService(Path("unused.xml"))
 
 
 def _hrv_record(metric_type: str) -> dict[str, str]:
@@ -106,7 +105,7 @@ class TestHrvWindowAndMetadata:
 </HealthData>
 """
         )
-        service = XMLService(export, getLogger(__name__))
+        service = XMLService(export)
 
         samples = [s for series, _, _ in service.parse_xml(str(uuid4())) for s in series]
 

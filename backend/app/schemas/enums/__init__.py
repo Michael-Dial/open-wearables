@@ -65,6 +65,7 @@ from .series_types import (
     get_series_type_id,
     get_series_type_unit,
 )
+from .source_selection import SourceSelection
 from .timeline import (
     TimelineBucket,
     TimelineGroupBy,
@@ -130,6 +131,7 @@ __all__ = [
     "HealthScoreCategory",
     "PeriodKind",
     "SdkConnectionOutcome",
+    "SourceSelection",
     "TimelineBucket",
     "TimelineGroupBy",
 ]

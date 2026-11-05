@@ -1,4 +1,3 @@
-from logging import getLogger
 from uuid import UUID
 
 from celery import shared_task
@@ -9,9 +8,9 @@ from app.database import SessionLocal
 from app.models import UserConnection
 from app.services.device_timeline_service import device_timeline_service
 from app.utils.device_switch_detection import EVIDENCE_PROVIDERS
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @shared_task(name=CeleryTask.DETECT_DEVICE_SWITCHES)
@@ -54,14 +53,12 @@ def detect_device_switches() -> dict:
             except Exception:
                 db.rollback()
                 failed.append(str(connection_id))
-                logger.exception("device switch detection failed for connection %s", connection_id)
+                logger.exception("Device switch detection failed", connection_id=str(connection_id))
                 continue
             if result.changed:
                 changed.append(str(connection_id))
                 moved = result.refile.total_moved if result.refile else None
-                log_structured(
-                    logger,
-                    "info",
+                logger.info(
                     "Device history updated from workouts",
                     action="device_switch_detected",
                     user_connection_id=str(connection_id),
