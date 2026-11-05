@@ -37,11 +37,11 @@ from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
-from app.config import settings
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
 from app.schemas.providers.oura import OuraWebhookNotification
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.oura.data_247 import Oura247Data
 from app.services.providers.oura.workouts import OuraWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
@@ -85,7 +85,7 @@ class OuraWebhookHandler(BaseWebhookHandler):
 
     def verify_signature(self, request: Request, body: bytes) -> bool:
         """Verify x-oura-signature using HMAC-SHA256 + hex (upper-case)."""
-        secret_setting = settings.oura_client_secret
+        secret_setting = provider_credentials.secret("oura_client_secret")
         if not secret_setting:
             log_structured(
                 logger,
@@ -167,7 +167,7 @@ class OuraWebhookHandler(BaseWebhookHandler):
         Oura sends ``?verification_token=...&challenge=...`` when a subscription
         is created. We verify the token and echo the challenge back.
         """
-        expected = settings.oura_webhook_verification_token.get_secret_value()  # ty:ignore[unresolved-attribute]
+        expected = provider_credentials.secret_value("oura_webhook_verification_token")
 
         verification_token = request.query_params.get("verification_token")
         challenge = request.query_params.get("challenge", "")

@@ -14,12 +14,12 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from app.config import settings
 from app.schemas.responses.incoming_webhooks import (
     OuraWebhookSubscription,
     WebhookOperationResult,
     WebhookSubscriptionStatus,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_webhook_service import BaseWebhookService
 from app.utils.structured_logging import log_structured
 
@@ -67,8 +67,8 @@ class OuraWebhookService(BaseWebhookService):
 
     def _get_oura_credentials(self) -> tuple[str, str]:
         """Get Oura client credentials. Raises ValueError if not configured."""
-        client_id = settings.oura_client_id
-        client_secret = settings.oura_client_secret.get_secret_value() if settings.oura_client_secret else None
+        client_id = provider_credentials.text("oura_client_id")
+        client_secret = provider_credentials.secret_value("oura_client_secret") or None
         if not client_id or not client_secret:
             raise ValueError("Oura client credentials not configured")
         return client_id, client_secret
@@ -96,9 +96,9 @@ class OuraWebhookService(BaseWebhookService):
         headers = self._get_client_headers()
         headers["Content-Type"] = "application/json"
 
-        if not settings.oura_webhook_verification_token:
+        verification_token = provider_credentials.secret_value("oura_webhook_verification_token")
+        if not verification_token:
             raise ValueError("Oura webhook verification token is not configured")
-        verification_token = settings.oura_webhook_verification_token.get_secret_value()
 
         results: list[dict[str, Any]] = []
 
@@ -321,9 +321,9 @@ class OuraWebhookService(BaseWebhookService):
         GETs the existing subscription to retain its data_type and event_type,
         then PUTs the updated body.
         """
-        if not settings.oura_webhook_verification_token:
+        verification_token = provider_credentials.secret_value("oura_webhook_verification_token")
+        if not verification_token:
             raise ValueError("Oura webhook verification token is not configured")
-        verification_token = settings.oura_webhook_verification_token.get_secret_value()
 
         existing = await self.get_subscription(subscription_id)
         if not existing:

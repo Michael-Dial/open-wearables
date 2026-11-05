@@ -1,6 +1,10 @@
 import { apiClient } from '../client';
 import { API_ENDPOINTS } from '../config';
-import type { Provider } from '../types';
+import type {
+  Provider,
+  ProviderAppSettings,
+  ProviderAppSettingsUpdate,
+} from '../types';
 
 /**
  * Update payload for OAuth provider settings.
@@ -61,6 +65,31 @@ export const oauthService = {
   ): Promise<Provider> {
     return apiClient.put<Provider>(
       API_ENDPOINTS.providerSetting(provider),
+      update
+    );
+  },
+
+  /**
+   * App registration settings of a provider (client ID, redirect URI, scopes,
+   * webhook tokens) and where each value in use comes from. Secrets are never
+   * returned, only whether they are set.
+   */
+  async getProviderCredentials(provider: string): Promise<ProviderAppSettings> {
+    return apiClient.get<ProviderAppSettings>(
+      API_ENDPOINTS.providerCredentials(provider)
+    );
+  },
+
+  /**
+   * Saves app registration settings, overriding the backend environment.
+   * A null value removes the saved value so the environment applies again.
+   */
+  async updateProviderCredentials(
+    provider: string,
+    update: ProviderAppSettingsUpdate
+  ): Promise<ProviderAppSettings> {
+    return apiClient.put<ProviderAppSettings>(
+      API_ENDPOINTS.providerCredentials(provider),
       update
     );
   },

@@ -2,13 +2,13 @@ import logging
 
 import httpx
 
-from app.config import settings
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import (
     OAuthTokenResponse,
     ProviderCredentials,
     ProviderEndpoints,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.utils.structured_logging import log_structured
 
@@ -28,10 +28,10 @@ class PolarOAuth(BaseOAuthTemplate):
     @property
     def credentials(self) -> ProviderCredentials:
         return ProviderCredentials(
-            client_id=settings.polar_client_id or "",
-            client_secret=(settings.polar_client_secret.get_secret_value() if settings.polar_client_secret else ""),
-            redirect_uri=settings.oauth_redirect_uri(ProviderName.POLAR),
-            default_scope=settings.polar_default_scope,
+            client_id=provider_credentials.text("polar_client_id") or "",
+            client_secret=provider_credentials.secret_value("polar_client_secret"),
+            redirect_uri=provider_credentials.redirect_uri(ProviderName.POLAR),
+            default_scope=provider_credentials.scope("polar_default_scope"),
         )
 
     def _get_provider_user_info(self, token_response: OAuthTokenResponse, user_id: str) -> dict[str, str | None]:

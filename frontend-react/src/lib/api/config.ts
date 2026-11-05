@@ -40,6 +40,8 @@ export const API_ENDPOINTS = {
   userConnectionDeviceTimelineDetect: (userId: string, connectionId: string) =>
     `/api/v1/users/${userId}/connections/accounts/${connectionId}/device-timeline/detect`,
   providerSetting: (provider: string) => `/api/v1/oauth/providers/${provider}`,
+  providerCredentials: (provider: string) =>
+    `/api/v1/oauth/providers/${provider}/credentials`,
   userWorkouts: (userId: string) => `/api/v1/users/${userId}/events/workouts`,
   userWorkoutDetail: (userId: string, workoutId: string) =>
     `/api/v1/users/${userId}/events/workouts/${workoutId}`,

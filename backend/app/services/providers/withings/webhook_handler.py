@@ -11,7 +11,6 @@ from celery import current_app as celery_app
 from fastapi import HTTPException, Request, status
 from pydantic import ValidationError
 
-from app.config import settings
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
@@ -21,6 +20,7 @@ from app.schemas.providers.withings import WithingsNotification
 from app.schemas.sync_status import SyncStatus
 from app.services import sync_status_service
 from app.services.outgoing_webhooks.events import on_connection_revoked
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.providers.withings.data_247 import Withings247Data
 from app.services.providers.withings.handlers.applis import APPLI_DOMAIN, SUBSCRIBED_APPLIS, Domain
@@ -59,7 +59,7 @@ class WithingsWebhookHandler(BaseWebhookHandler):
 
     @staticmethod
     def _has_valid_callback_token(request: Request) -> bool:
-        expected = settings.withings_webhook_token
+        expected = provider_credentials.secret("withings_webhook_token")
         actual = request.query_params.get("token")
         if expected is None or not actual:
             return False

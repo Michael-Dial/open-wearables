@@ -3,9 +3,10 @@ from typing import Any
 
 import httpx
 
-from app.config import settings
 from app.schemas.auth import AuthenticationMethod
+from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import OAuthTokenResponse, ProviderCredentials, ProviderEndpoints
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.utils.structured_logging import log_structured
 
@@ -28,12 +29,10 @@ class SensorBioOAuth(BaseOAuthTemplate):
     @property
     def credentials(self) -> ProviderCredentials:
         return ProviderCredentials(
-            client_id=settings.sensorbio_client_id or "",
-            client_secret=(
-                settings.sensorbio_client_secret.get_secret_value() if settings.sensorbio_client_secret else ""
-            ),
-            redirect_uri=f"{settings.api_base_url}/api/v1/oauth/callback/sensorbio",
-            default_scope=settings.sensorbio_default_scope,
+            client_id=provider_credentials.text("sensorbio_client_id") or "",
+            client_secret=provider_credentials.secret_value("sensorbio_client_secret"),
+            redirect_uri=provider_credentials.redirect_uri(ProviderName.SENSORBIO),
+            default_scope=provider_credentials.scope("sensorbio_default_scope"),
         )
 
     def _get_provider_user_info(self, token_response: OAuthTokenResponse, user_id: str) -> dict[str, Any]:

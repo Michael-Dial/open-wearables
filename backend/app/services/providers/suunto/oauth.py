@@ -1,12 +1,12 @@
 from jose import jwt
 
-from app.config import settings
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import (
     OAuthTokenResponse,
     ProviderCredentials,
     ProviderEndpoints,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 
 
@@ -23,13 +23,11 @@ class SuuntoOAuth(BaseOAuthTemplate):
     @property
     def credentials(self) -> ProviderCredentials:
         return ProviderCredentials(
-            client_id=settings.suunto_client_id or "",
-            client_secret=(settings.suunto_client_secret.get_secret_value() if settings.suunto_client_secret else ""),
-            redirect_uri=settings.oauth_redirect_uri(ProviderName.SUUNTO),
-            default_scope=settings.suunto_default_scope,
-            subscription_key=(
-                settings.suunto_subscription_key.get_secret_value() if settings.suunto_subscription_key else ""
-            ),
+            client_id=provider_credentials.text("suunto_client_id") or "",
+            client_secret=provider_credentials.secret_value("suunto_client_secret"),
+            redirect_uri=provider_credentials.redirect_uri(ProviderName.SUUNTO),
+            default_scope=provider_credentials.scope("suunto_default_scope"),
+            subscription_key=provider_credentials.secret_value("suunto_subscription_key"),
         )
 
     def _get_provider_user_info(self, token_response: OAuthTokenResponse, user_id: str) -> dict[str, str | None]:

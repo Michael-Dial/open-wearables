@@ -1638,3 +1638,34 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   Whole-night reference figures (Kubios RMSSD, SDNN, mean HR) needed no change: a
   sample under the same label inside the night is averaged onto it by the sleep
   summary, which a test now pins.
+
+## Provider app credentials editable in the dashboard
+
+- **Area**: backend, frontend, docs
+- **Status**: active
+- **On conflict**: keep ours, and reconcile new reads. Every upstream line that reads a
+  provider credential from `settings` (`settings.<provider>_client_id`, `_client_secret`,
+  `_default_scope`, webhook tokens, `settings.oauth_redirect_uri(...)`) is replaced in the
+  fork by `provider_credentials.text/secret/secret_value/scope/redirect_uri(...)` from
+  `app/services/provider_credentials.py`. On a sync, take upstream's change and re-apply that
+  substitution; a credential upstream adds goes into `_FIELDS` there. A read left on `settings`
+  still works, but ignores what was saved in the dashboard.
+- **Why**: changing a provider's client ID, secret, redirect URI or scopes meant editing
+  `.env` on the server and restarting the API and workers. The lab rotates and adds
+  developer apps often enough that this belongs in the dashboard. Values saved under
+  Settings → Providers → App settings go into the fork-only `provider_credential` table, one
+  row per field, and win over the environment; with no row the environment applies, so an
+  instance configured only through `.env` behaves exactly as before. Each process caches the
+  rows for 15 s, which is how the Celery workers pick a change up without a restart. Secrets
+  are Fernet-encrypted with a key derived from `SECRET_KEY` (OAuth tokens in `user_connection`
+  are not, but an app secret outlives any one token and is worth the line of code); a
+  `SECRET_KEY` change leaves them unreadable, so they are ignored and flagged for re-entry
+  rather than failing every request. The GET never returns a secret, only whether one is set
+  and (for one of 12+ characters) its last four. Behavioural settings (lookbacks, `STRAVA_ENRICH_ACTIVITY_DETAIL`,
+  `GOOGLE_USE_RECONCILE`, `API_BASE_URL`) stay env-only on purpose: they are deployment
+  choices, not app registration.
+
+  The UI is in `frontend-react/` (the served dashboard); the SvelteKit portal row is in
+  SVELTE_PORT.md. Sensor Bio keeps its odd default callback (`/oauth/callback/sensorbio`,
+  which no route serves) so a registered app is not silently broken by this change; it can
+  now be overridden from the dashboard.

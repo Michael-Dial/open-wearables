@@ -4,7 +4,6 @@ import logging
 
 import httpx
 
-from app.config import settings
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import AuthenticationMethod
@@ -14,6 +13,7 @@ from app.schemas.model_crud.credentials import (
     ProviderCredentials,
     ProviderEndpoints,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 
 
@@ -46,12 +46,10 @@ class UltrahumanOAuth(BaseOAuthTemplate):
     def credentials(self) -> ProviderCredentials:
         """OAuth credentials from environment variables."""
         return ProviderCredentials(
-            client_id=settings.ultrahuman_client_id or "",
-            client_secret=(
-                settings.ultrahuman_client_secret.get_secret_value() if settings.ultrahuman_client_secret else ""
-            ),
-            redirect_uri=settings.oauth_redirect_uri(ProviderName.ULTRAHUMAN),
-            default_scope=settings.ultrahuman_default_scope,
+            client_id=provider_credentials.text("ultrahuman_client_id") or "",
+            client_secret=provider_credentials.secret_value("ultrahuman_client_secret"),
+            redirect_uri=provider_credentials.redirect_uri(ProviderName.ULTRAHUMAN),
+            default_scope=provider_credentials.scope("ultrahuman_default_scope"),
         )
 
     # OAuth configuration

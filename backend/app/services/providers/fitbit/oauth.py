@@ -1,6 +1,5 @@
 import httpx
 
-from app.config import settings
 from app.schemas.auth import AuthenticationMethod
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import (
@@ -8,6 +7,7 @@ from app.schemas.model_crud.credentials import (
     ProviderCredentials,
     ProviderEndpoints,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 
 
@@ -29,10 +29,10 @@ class FitbitOAuth(BaseOAuthTemplate):
     def credentials(self) -> ProviderCredentials:
         """OAuth credentials from environment variables."""
         return ProviderCredentials(
-            client_id=settings.fitbit_client_id or "",
-            client_secret=(settings.fitbit_client_secret.get_secret_value() if settings.fitbit_client_secret else ""),
-            redirect_uri=settings.oauth_redirect_uri(ProviderName.FITBIT),
-            default_scope=settings.fitbit_default_scope,
+            client_id=provider_credentials.text("fitbit_client_id") or "",
+            client_secret=provider_credentials.secret_value("fitbit_client_secret"),
+            redirect_uri=provider_credentials.redirect_uri(ProviderName.FITBIT),
+            default_scope=provider_credentials.scope("fitbit_default_scope"),
         )
 
     def _get_provider_user_info(self, token_response: OAuthTokenResponse, user_id: str) -> dict[str, str | None]:

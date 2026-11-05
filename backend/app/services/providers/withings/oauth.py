@@ -8,7 +8,6 @@ from celery import current_app as celery_app
 from fastapi import HTTPException
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
 
-from app.config import settings
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession, SessionLocal
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
@@ -20,6 +19,7 @@ from app.schemas.model_crud.credentials import (
     ProviderCredentials,
     ProviderEndpoints,
 )
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.providers.withings.handlers.errors import WithingsTokenError
 from app.services.providers.withings.webhook_service import WithingsWebhookService
@@ -44,12 +44,10 @@ class WithingsOAuth(BaseOAuthTemplate):
     @property
     def credentials(self) -> ProviderCredentials:
         return ProviderCredentials(
-            client_id=settings.withings_client_id or "",
-            client_secret=(
-                settings.withings_client_secret.get_secret_value() if settings.withings_client_secret else ""
-            ),
-            redirect_uri=settings.oauth_redirect_uri(ProviderName.WITHINGS),
-            default_scope=settings.withings_default_scope,
+            client_id=provider_credentials.text("withings_client_id") or "",
+            client_secret=provider_credentials.secret_value("withings_client_secret"),
+            redirect_uri=provider_credentials.redirect_uri(ProviderName.WITHINGS),
+            default_scope=provider_credentials.scope("withings_default_scope"),
         )
 
     def _exchange_token(self, code: str, code_verifier: str | None) -> OAuthTokenResponse:

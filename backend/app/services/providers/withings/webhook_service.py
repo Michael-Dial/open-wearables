@@ -26,6 +26,7 @@ from app.repositories.provider_settings_repository import ProviderSettingsReposi
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.auth import LiveSyncMode
 from app.schemas.responses.incoming_webhooks import WebhookOperationResult
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.providers.templates.base_webhook_service import BaseWebhookService
 from app.services.providers.withings.handlers.applis import SUBSCRIBED_APPLIS
@@ -50,7 +51,7 @@ def _callback_url() -> str | None:
     Withings and documented in the setup guide; a bad ``API_BASE_URL`` breaks the
     OAuth redirect long before it reaches here.
     """
-    token = settings.withings_webhook_token
+    token = provider_credentials.secret("withings_webhook_token")
     if token is None or not token.get_secret_value():
         return None
     query = urlencode({"token": token.get_secret_value()})

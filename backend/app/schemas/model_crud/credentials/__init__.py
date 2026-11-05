@@ -18,6 +18,12 @@ from .oauth import (
     ProviderCredentials,
     ProviderEndpoints,
 )
+from .provider_app import (
+    CredentialSource,
+    ProviderAppFieldRead,
+    ProviderAppRead,
+    ProviderAppUpdate,
+)
 from .user_invitation_code import (
     InvitationCodeRedeemResponse,
     UserInvitationCodeCreate,
@@ -43,6 +49,11 @@ __all__ = [
     "ProviderEndpoints",
     "ProviderCredentials",
     "AuthorizationURLResponse",
+    # Provider app registration
+    "CredentialSource",
+    "ProviderAppFieldRead",
+    "ProviderAppRead",
+    "ProviderAppUpdate",
     # UserInvitationCode
     "UserInvitationCodeCreate",
     "UserInvitationCodeRead",

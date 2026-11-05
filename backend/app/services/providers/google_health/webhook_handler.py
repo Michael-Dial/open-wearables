@@ -8,7 +8,7 @@ intervals, then persist it.
 Authentication
 --------------
 Google echoes a bearer secret (configured on the subscriber) in the ``Authorization``
-header of every request. We compare it against ``settings.google_webhook_secret``.
+header of every request. We compare it against the configured Google webhook secret.
 (Asymmetric ``GOOGLE-HEALTH-API-SIGNATURE`` / Tink verification is deferred.)
 
 Endpoint verification handshake
@@ -35,11 +35,11 @@ from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
-from app.config import settings
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
 from app.schemas.providers.google import GoogleWebhookNotification
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.google_health.data_247 import (
     GoogleHealth247Data,
     UnsupportedGranularityError,
@@ -86,7 +86,7 @@ class GoogleWebhookHandler(BaseWebhookHandler):
 
     def verify_signature(self, request: Request, body: bytes) -> bool:
         """Verify the bearer secret Google echoes in the Authorization header."""
-        secret_setting = settings.google_webhook_secret
+        secret_setting = provider_credentials.secret("google_webhook_secret")
         if not secret_setting:
             log_structured(
                 logger,

@@ -42,6 +42,7 @@ the React code's line counts, tests excluded.
 | 9 | Fork version and upstream sync date in the sidebar footer | `components/layout/version-footer.tsx`, `lib/utils/build-info.ts`, `fork-version.json` | `lib/components/layout/AppVersion.svelte` | ~100 |
 | 10 | WHOOP integration walkthrough page and screenshots | `public/whoop-integration.html`, `public/whoop-screenshots/` | `static/` (plain HTML, moves as is) | - |
 | 11 | Which app created a user: "Created by" column, filter and detail field | `components/users/created-by.tsx`, `users-table.tsx`, `components/user/profile-section.tsx` | `lib/components/users/` (users table, user detail header) | ~150 |
+| 12 | Provider app settings: client ID/secret, redirect URI, scopes and webhook tokens per provider, with where each value comes from | `components/settings/providers/provider-credentials-dialog.tsx`, `provider-item.tsx` (button and "Needs app credentials" badge), `lib/utils/provider-credentials.ts`, `hooks/api/use-oauth-providers.ts` | `routes/(app)/settings/providers/`, `lib/components/settings/providers/`, `lib/server/` (GET/PUT `/api/v1/oauth/providers/{provider}/credentials`) | ~330 |
 
 ## Notes for whoever ports a row
 

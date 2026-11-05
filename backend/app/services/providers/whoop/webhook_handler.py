@@ -36,11 +36,11 @@ from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
-from app.config import settings
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
 from app.schemas.providers.whoop import WhoopWebhookNotification, WhoopWebhookNotificationType
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.providers.whoop.data_247 import Whoop247Data
 from app.services.providers.whoop.workouts import WhoopWorkouts
@@ -68,7 +68,7 @@ class WhoopWebhookHandler(BaseWebhookHandler):
 
     def verify_signature(self, request: Request, body: bytes) -> bool:
         """Verify X-WHOOP-Signature using HMAC-SHA256 + base64."""
-        secret_setting = settings.whoop_client_secret
+        secret_setting = provider_credentials.secret("whoop_client_secret")
         if not secret_setting:
             log_structured(
                 logger,

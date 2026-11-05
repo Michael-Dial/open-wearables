@@ -18,10 +18,10 @@ from uuid import UUID, uuid4
 from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 
-from app.config import settings
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.garmin.backfill_state import (
     get_backfill_status,
     get_trace_id,
@@ -67,7 +67,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
 
     Garmin does not sign request bodies with HMAC; it identifies itself via the
     ``garmin-client-id`` request header.  ``verify_signature`` checks that this
-    header matches the configured ``settings.garmin_client_id`` (constant-time),
+    header matches the configured Garmin client ID (constant-time),
     failing closed when the value is not configured.
     """
 
@@ -94,7 +94,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
     # ------------------------------------------------------------------
 
     def verify_signature(self, request: Request, body: bytes) -> bool:
-        expected = settings.garmin_client_id
+        expected = provider_credentials.text("garmin_client_id")
         if not expected:
             log_structured(
                 logger,

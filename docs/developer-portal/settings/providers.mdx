@@ -1,24 +1,54 @@
 ---
 title: "Providers"
 sidebarTitle: "Providers"
-description: "Enable or disable OAuth providers and choose between periodic pull and webhook live sync from Settings → Providers in the Open Wearables developer portal."
-keywords: ["enable oauth provider", "garmin oura whoop polar", "live sync mode", "periodic pull", "webhook sync"]
+description: "Enable or disable OAuth providers, edit their app credentials and choose between periodic pull and webhook live sync from Settings → Providers in the Open Wearables developer portal."
+keywords: ["enable oauth provider", "garmin oura whoop polar", "oauth client secret", "redirect uri", "live sync mode", "periodic pull", "webhook sync"]
 "og:title": "Providers | Open Wearables"
-"og:description": "Enable or disable OAuth providers and choose between periodic pull and webhook live sync from Settings → Providers in the Open Wearables developer portal."
+"og:description": "Enable or disable OAuth providers, edit their app credentials and choose between periodic pull and webhook live sync from Settings → Providers in the Open Wearables developer portal."
 "og:url": "https://docs.openwearables.io/developer-portal/settings/providers"
 "og:type": "article"
 "twitter:title": "Providers | Open Wearables"
-"twitter:description": "Enable or disable OAuth providers and choose between periodic pull and webhook live sync from Settings → Providers in the Open Wearables developer portal."
+"twitter:description": "Enable or disable OAuth providers, edit their app credentials and choose between periodic pull and webhook live sync from Settings → Providers in the Open Wearables developer portal."
 "twitter:card": "summary_large_image"
 ---
 
-**Settings → Providers** controls which OAuth providers your end users can connect and how live data is pulled from each of them.
+**Settings → Providers** controls which OAuth providers your end users can connect, the app credentials each one uses, and how live data is pulled from each of them.
 
 ## Enabling a provider
 
 Each provider row shows its current state (**Enabled** or **Disabled**) and a toggle. Flip the toggles you want to change, then confirm with **Save Changes** in the bar that appears at the bottom of the page. Nothing is saved until you click it.
 
-A provider still needs its OAuth client credentials configured in the backend environment before users can connect it. See [Supported Providers](/providers/supported) for the per-provider setup guides.
+A provider still needs its OAuth client credentials before users can connect it, either in the backend environment or under [App settings](#app-settings). A cloud provider with no client ID or secret shows a **Needs app credentials** badge. See [Supported Providers](/providers/supported) for the per-provider setup guides.
+
+## App settings
+
+Every cloud provider row has an **App settings** button. It opens the values Open Wearables uses for that provider's developer app, so you can change them without editing `.env` or restarting anything:
+
+| Field | Providers |
+|-------|-----------|
+| Client ID and client secret (Garmin: consumer key and secret) | All cloud providers |
+| Redirect URI | All cloud providers; Polar also has a second one for its AccessLink v4 (beat-to-beat) grant |
+| Scopes | All cloud providers; Polar also has AccessLink v4 scopes |
+| Subscription key | Suunto |
+| Webhook secret or verification token | Suunto, Oura, Strava, Google Health, Withings |
+| GCP project number | Google Health |
+
+Each field shows where the value in use comes from:
+
+- **Saved here** - entered in this dialog. It overrides the environment.
+- **From `VARIABLE_NAME`** - read from the backend environment (`.env`).
+- **Built from API_BASE_URL** - a redirect URI with nothing configured, built as `{API_BASE_URL}/api/v1/oauth/{provider}/callback`. Register exactly the URL shown under **In use** in the provider's developer portal; the copy button next to the field copies it.
+- **Derived from SECRET_KEY** - a webhook token with nothing configured, generated from the backend's `SECRET_KEY`.
+- **Default** - the built-in value (scopes).
+- **Not set**.
+
+An input shows only the value saved here; the environment's value appears greyed out as the placeholder. To go back to the environment's value, empty the input or click the reset icon next to it, then save. Secrets are never sent back to the browser: the field shows whether one is set and, for a secret of 12 characters or more, its last four, and typing a new value replaces it.
+
+Saved values reach every API and worker process within about 15 seconds. Secrets are stored encrypted with a key derived from `SECRET_KEY`. If `SECRET_KEY` changes, saved secrets can no longer be read: the backend ignores them and falls back to the environment, and the dialog flags each one so you can enter it again.
+
+<Warning>
+  Switching a provider to a different developer app (a new client ID) means accounts connected through the old app have to reconnect, since their tokens belong to the old app. Webhook subscriptions created with an earlier token or client keep using it until they are registered again; see [Provider webhook subscriptions](/api-reference/guides/provider-webhook-subscriptions).
+</Warning>
 
 ## Live sync mode
 

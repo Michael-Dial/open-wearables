@@ -23,12 +23,12 @@ from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 
-from app.config import settings
 from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession
 from app.models import UserConnection
 from app.repositories import UserConnectionRepository
 from app.schemas.providers.suunto.workout_import import REQUESTED_WORKOUT_EXTENSIONS
+from app.services.provider_credentials import provider_credentials
 from app.services.providers.suunto.data_247 import Suunto247Data
 from app.services.providers.suunto.workouts import SuuntoWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
@@ -70,7 +70,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
         return self.connection_repo.get_by_provider_username(db, "suunto", provider_user_id)
 
     def verify_signature(self, request: Request, body: bytes) -> bool:
-        secret = settings.suunto_webhook_secret
+        secret = provider_credentials.secret("suunto_webhook_secret")
         if not secret:
             # suunto_webhook_secret is always derived from secret_key at startup,
             # so this branch is only reachable in misconfigured test environments.

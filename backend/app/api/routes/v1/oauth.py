@@ -12,13 +12,19 @@ from app.database import DbSession
 from app.integrations.celery.tasks import start_garmin_full_backfill, sync_vendor_data
 from app.models import UserConnection
 from app.schemas.enums import AccountType, ProviderName
-from app.schemas.model_crud.credentials import AuthorizationURLResponse, OAuthState
+from app.schemas.model_crud.credentials import (
+    AuthorizationURLResponse,
+    OAuthState,
+    ProviderAppRead,
+    ProviderAppUpdate,
+)
 from app.schemas.model_crud.data_priority import (
     BulkProviderSettingsUpdate,
     ProviderSettingRead,
     ProviderSettingUpdate,
 )
 from app.services import DeveloperDep, user_connection_service
+from app.services.provider_credentials_service import ProviderHasNoAppSettingsError, provider_credentials_service
 from app.services.provider_settings_service import add_on_grant_enabled, provider_settings_service
 from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.factory import ProviderFactory
@@ -359,6 +365,44 @@ def update_provider_setting(
     """Update is_enabled and/or live_sync_mode for a single provider."""
     try:
         return provider_settings_service.update_provider_setting(db, provider, update)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/providers/{provider}/credentials", response_model=ProviderAppRead, tags=["Internal: Providers"])
+def get_provider_credentials(
+    provider: str,
+    db: DbSession,
+    _developer: DeveloperDep,
+):
+    """App registration settings of a provider (client ID, redirect URI, scopes, ...).
+
+    Shows where each value in use comes from: saved in the dashboard, the environment, or a
+    default. Secrets are never returned, only whether they are set and their last characters.
+    """
+    try:
+        return provider_credentials_service.read(db, from_url_slug(provider))
+    except ProviderHasNoAppSettingsError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.put("/providers/{provider}/credentials", response_model=ProviderAppRead, tags=["Internal: Providers"])
+def update_provider_credentials(
+    provider: str,
+    payload: ProviderAppUpdate,
+    db: DbSession,
+    developer: DeveloperDep,
+):
+    """Save app registration settings for a provider, overriding the environment.
+
+    A string saves the field; null or an empty string removes the saved value so the
+    environment applies again. Every API and worker process picks the change up within
+    about 15 seconds.
+    """
+    try:
+        return provider_credentials_service.update(db, from_url_slug(provider), payload, developer.id)
+    except ProviderHasNoAppSettingsError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

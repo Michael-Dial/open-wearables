@@ -12,6 +12,7 @@ import os
 import socket
 import sys
 from collections.abc import Generator
+from contextlib import nullcontext
 from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
@@ -30,6 +31,7 @@ from app.integrations.redis_client import get_redis_client
 from app.main import api
 from app.models import SeriesTypeDefinition
 from app.schemas.enums import SERIES_TYPE_DEFINITIONS
+from app.services.provider_credentials import provider_credentials
 from tests import factories
 
 
@@ -133,6 +135,21 @@ def set_factory_session(db: Session) -> Generator[None, None, None]:
     for name, obj in vars(factories).items():
         if isinstance(obj, type) and hasattr(obj, "_meta") and hasattr(obj._meta, "sqlalchemy_session"):
             obj._meta.sqlalchemy_session = None
+
+
+@pytest.fixture(autouse=True)
+def provider_credentials_on_test_db(db: Session) -> Generator[None, None, None]:
+    """Read dashboard-saved provider credentials from the test transaction, afresh on every access.
+
+    The store otherwise opens its own session on the app's engine, which tests never reach.
+    """
+    with (
+        patch.object(provider_credentials, "session_factory", lambda: nullcontext(db)),
+        patch.object(provider_credentials, "ttl_seconds", 0.0),
+    ):
+        provider_credentials.invalidate()
+        yield
+    provider_credentials.invalidate()
 
 
 @pytest.fixture
