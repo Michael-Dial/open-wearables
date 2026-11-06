@@ -20,6 +20,7 @@ from app.config import settings
 from app.constants.google_health_endpoints import (
     DAILY_ROLLUP_ENDPOINT,
     LIST_ENDPOINT,
+    PAIRED_DEVICES_ENDPOINT,
     RECONCILE_ENDPOINT,
     ROLLUP_ENDPOINT,
 )
@@ -39,6 +40,7 @@ from app.schemas.providers.google import (
     RollupSpec,
     TimeShape,
 )
+from app.services.devices.source_observations import record_provider_observations
 from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.google_health.helpers import (
     GOOGLE_HEALTH_API_SOURCE,
@@ -47,6 +49,7 @@ from app.services.providers.google_health.helpers import (
     extract_form_factor,
     extract_source,
     next_page_token,
+    observation_values,
     parse_date,
     parse_interval,
     parse_page,
@@ -54,6 +57,7 @@ from app.services.providers.google_health.helpers import (
     physical_interval,
     read_level_sum,
     read_number,
+    source_provenance,
     time_filter,
     zone_offset_from,
 )
@@ -75,6 +79,17 @@ logger = get_logger(__name__)
 # running VO2max (run-vo2-max) and the generic vo2-max are different algorithms, and once
 # both sit in vo2_max on one data source nothing else on the row tells them apart.
 LABELLED_ESTIMATES: frozenset[SeriesType] = frozenset({SeriesType.vo2_max})
+
+
+_PROVENANCE_KEYS = ("recording_method", "platform", "application", "manufacturer", "form_factor")
+
+
+def _merged(*parts: dict[str, Any] | None) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    for part in parts:
+        if part:
+            merged.update(part)
+    return merged or None
 
 
 def estimate_metadata(data_type: str, series_type: SeriesType) -> dict[str, Any] | None:
@@ -151,6 +166,9 @@ class GoogleHealth247Data(Base247DataTemplate):
         with run.step("nutrition-log", savepoint=True, commit=True, rollback_on_error=True, capture=True) as step:
             step.record(self.nutrition.load_and_save(db, user_id, start_time, end_time))
 
+        with run.step("paired-devices", savepoint=True, commit=True, rollback_on_error=True, capture=True) as step:
+            step.record(self.save_paired_devices(db, user_id))
+
         # Every attempted data type failed (e.g. ACCOUNT_NOT_LINKED) — the caller marks
         # the sync FAILED off ``all_failed`` rather than treating it as an empty success.
         run.log_summary(granularity=granularity.value)
@@ -158,12 +176,87 @@ class GoogleHealth247Data(Base247DataTemplate):
             raise UnsupportedGranularityError(granularity)
         return run.result
 
+    def save_paired_devices(self, db: DbSession, user_id: UUID) -> int:
+        """Register each device the account has paired, by Google's own id for it.
+
+        ``users/me/pairedDevices`` lists the account's hardware: ``name``
+        (``users/{user}/pairedDevices/{id}``, stable per unit) and ``deviceVersion`` (the
+        product name). It was never called, though its scope is requested. It says which
+        units an account owns, not which one recorded a reading; that stays with each
+        point's ``dataSource``. ``macAddress`` is personal data and is not stored.
+
+        Read from the published spec; ``oauth_google_paired_devices`` logs what came back
+        so the first live account confirms the shape.
+        """
+        from app.repositories.device_repository import DeviceRepository
+        from app.schemas.enums.device_registry import DeviceIdentityKind, IdentityConfidence
+        from app.services.devices.identity import IdentityClaim
+
+        response = make_authenticated_request(
+            db=db,
+            user_id=user_id,
+            connection_repo=self.connection_repo,
+            oauth=self.oauth,
+            api_base_url=self.api_base_url,
+            provider_name=self.provider_name,
+            endpoint=PAIRED_DEVICES_ENDPOINT,
+            method="GET",
+        )
+        devices = response.get("pairedDevices") if isinstance(response, dict) else None
+        logger.info(
+            "Google Health paired devices",
+            action="oauth_google_paired_devices",
+            user_id=str(user_id),
+            listed=len(devices) if isinstance(devices, list) else None,
+            keys=sorted(response) if isinstance(response, dict) else type(response).__name__,
+        )
+        if not isinstance(devices, list):
+            return 0
+        repo = DeviceRepository()
+        registered = 0
+        for paired in devices:
+            if not isinstance(paired, dict) or not isinstance(paired.get("name"), str):
+                continue
+            unit_id = paired["name"].rsplit("/", 1)[-1]
+            model = paired.get("deviceVersion") if isinstance(paired.get("deviceVersion"), str) else None
+            claim = IdentityClaim(
+                route=self.provider_name,
+                kind=DeviceIdentityKind.GOOGLE_PAIRED_DEVICE,
+                value=unit_id,
+                confidence=IdentityConfidence.STRONG,
+            )
+            device = repo.find_by_claim(db, user_id, claim)
+            if device is not None:
+                repo.touch_seen(db, device)
+                continue
+            created = repo.create(
+                db,
+                user_id=user_id,
+                model_raw=model,
+                actor="system:google_paired_devices",
+                reason="Device listed by users/me/pairedDevices",
+                detected=True,
+            )
+            repo.add_claim(db, created, claim, actor="system:google_paired_devices")
+            if model:
+                model_claim = IdentityClaim(
+                    route=self.provider_name,
+                    kind=DeviceIdentityKind.MODEL_STRING,
+                    value=model,
+                    confidence=IdentityConfidence.WEAK,
+                )
+                repo.add_claim(db, created, model_claim, actor="system:google_paired_devices")
+            registered += 1
+        db.commit()
+        return registered
+
     def _store_samples(self, run: Sync247Run, name: str, build: Callable[[], list[TimeSeriesSampleCreate]]) -> None:
         """Fetch and write one data type in a savepoint, so a failure rolls back only that type."""
         with run.step(name, savepoint=True, commit=True, rollback_on_error=True, capture=True) as step:
             samples = build()
             if samples:
                 step.record(timeseries_service.bulk_create_samples(run.db, samples))
+                self._record_sources(run.db, samples)
 
     def sync_data_type(
         self,
@@ -196,7 +289,30 @@ class GoogleHealth247Data(Base247DataTemplate):
             return None
         counts = timeseries_service.bulk_create_samples(db, samples)
         db.commit()
+        self._record_sources(db, samples)
         return counts
+
+    def _record_sources(self, db: DbSession, samples: list[TimeSeriesSampleCreate]) -> None:
+        """Date what each sample's dataSource stated onto the data source it was written to."""
+        by_source: dict[tuple[str | None, str | None], list[TimeSeriesSampleCreate]] = {}
+        for sample in samples:
+            if sample.provider_metadata and any(k in sample.provider_metadata for k in _PROVENANCE_KEYS):
+                key = (sample.device_model, sample.device_type.value if sample.device_type else None)
+                by_source.setdefault(key, []).append(sample)
+        rows = []
+        for group in by_source.values():
+            try:
+                data_source = timeseries_service.crud.create_data_source(db, group[0])
+            except Exception:
+                db.rollback()
+                logger.exception("Google Health device record skipped", provider=self.provider_name)
+                continue
+            for sample in group:
+                values = observation_values(sample.provider_metadata, sample.device_model)
+                if values is not None:
+                    rows.append((data_source.id, values, sample.recorded_at, sample.recorded_at))
+        if rows:
+            record_provider_observations(db, samples[0].user_id, self.provider_name, rows)
 
     def _log_metric_failure(self, data_type: str, user_id: UUID, error: Exception) -> None:
         logger.error(
@@ -426,6 +542,7 @@ class GoogleHealth247Data(Base247DataTemplate):
             # Only list points carry a dataSource; reconciled points are already merged.
             device_model = None if reconcile else extract_source(point.get("dataSource"))[1]
             device_type = None if reconcile else extract_form_factor(point.get("dataSource"))
+            provenance = None if reconcile else source_provenance(point.get("dataSource"))
             for series_type, field, subfield, scale in self._bindings(metric.series_type, spec):
                 value = read_number(value_obj, field, subfield, scale)
                 if value is None or value == 0:
@@ -441,7 +558,7 @@ class GoogleHealth247Data(Base247DataTemplate):
                         device_model,
                         device_type,
                         width,
-                        estimate_metadata(metric.data_type, series_type),
+                        _merged(estimate_metadata(metric.data_type, series_type), provenance),
                     )
                 )
             # Unlike the readings above, a difference of zero is a measurement: the night sat on
@@ -462,6 +579,7 @@ class GoogleHealth247Data(Base247DataTemplate):
                         device_model,
                         device_type,
                         width,
+                        provenance,
                     )
                 )
         return samples

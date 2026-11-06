@@ -19,6 +19,7 @@ from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.enums import EventCategory, ProviderName
 from app.schemas.model_crud.activities import EventRecordCreate, EventRecordDetailCreate
 from app.schemas.model_crud.activities.sleep import SleepStage
+from app.services.devices.source_observations import record_provider_observations
 from app.services.event_record_service import event_record_service
 from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.google_health.helpers import (
@@ -27,11 +28,13 @@ from app.services.providers.google_health.helpers import (
     extract_form_factor,
     extract_source,
     next_page_token,
+    observation_values,
     parse_interval,
     parse_page,
     parse_rfc3339,
     physical_interval,
     read_number,
+    source_provenance,
     zone_offset_from,
 )
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
@@ -58,6 +61,7 @@ class GoogleHealthApiSleep:
         morning window and would never be kept if the start were tested.
         """
         count = 0
+        seen: list[tuple[UUID, dict[str, str | None], datetime, datetime]] = []
         for point in self._fetch(db, user_id, start_time, end_time):
             sleep = point.get("sleep")
             if not isinstance(sleep, dict):
@@ -67,8 +71,14 @@ class GoogleHealthApiSleep:
             if start is None or end is None or not (start_time <= end < end_time):
                 continue
             record, detail = self._normalize(point, sleep, interval, start, end, user_id)
-            event_record_service.create_or_merge_sleep(db, user_id, record, detail, settings.sleep_end_gap_minutes)
+            stored = event_record_service.create_or_merge_sleep(
+                db, user_id, record, detail, settings.sleep_end_gap_minutes
+            )
             count += 1
+            values = observation_values(record.provider_metadata, record.device_model)
+            if values is not None and stored.data_source_id is not None:
+                seen.append((stored.data_source_id, values, start, end))
+        record_provider_observations(db, user_id, self.provider_name, seen)
         return count
 
     def _fetch(self, db: DbSession, user_id: UUID, start_time: datetime, end_time: datetime) -> list[dict[str, Any]]:
@@ -138,6 +148,7 @@ class GoogleHealthApiSleep:
             duration_seconds=int((end - start).total_seconds()),
             zone_offset=zone_offset,
             user_id=user_id,
+            provider_metadata=source_provenance(point.get("dataSource")),
         )
         return record, self._build_detail(record_id, sleep, metadata)
 

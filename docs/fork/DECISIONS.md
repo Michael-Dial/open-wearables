@@ -1877,3 +1877,9 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   Oura's `ring_id` is. Nothing is re-keyed, so no stream's history is split; the record says which unit
   wrote which span. A failure while recording never costs the sync its data. See the per-route table in
   `docs/dev-guides/device-registry.mdx`.
+- **Google Health**: each point's `dataSource.recordingMethod`, `platform` and `application.packageName` were
+  never read, so a hand-typed (`MANUAL`) value entered as a measurement and a relayed point could not be told
+  from a native one. They are kept on each sample/record and in the dated record; nothing is filtered (report,
+  don't repair). `users/me/pairedDevices` (scope already requested, never called) registers each paired unit by
+  Google's id; written from the spec, logged as `oauth_google_paired_devices` until a live account confirms the
+  shape; the MAC address is not stored.
