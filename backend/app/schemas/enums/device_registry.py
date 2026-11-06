@@ -17,6 +17,7 @@ class DeviceIdentityKind(StrEnum):
     OURA_CONFIG_ID = "oura_config_id"  # /v2/usercollection/ring_configuration -> id
     HEALTHKIT_DEVICE_ID = "healthkit_device_id"  # HKDevice localIdentifier / udiDeviceIdentifier
     GARMIN_SUMMARY_PREFIX = "garmin_summary_prefix"  # leading token of Garmin summaryId
+    GOOGLE_PAIRED_DEVICE = "google_paired_device"  # users/me/pairedDevices -> name's {paired_device}
 
     # Writer identity: names the app, not the unit. Two rings owned by one user
     # share these, so they are never sufficient on their own.

@@ -157,6 +157,48 @@ def extract_source(data_source: Any) -> tuple[str, str | None]:
     return platform or "Google Health", device_model
 
 
+def source_provenance(data_source: Any) -> dict[str, str] | None:
+    """What a list data point's ``dataSource`` says about where it came from, beyond the device.
+
+    ``recordingMethod`` says whether a person typed the value (``MANUAL``), a sensor
+    measured it (``PASSIVELY_MEASURED``, ``ACTIVELY_MEASURED``) or an algorithm produced
+    it (``DERIVED``). ``platform`` is the road it took into Google (``FITBIT``,
+    ``HEALTH_CONNECT``, ``HEALTH_KIT``...), ``application.packageName`` the app that wrote
+    it. None of these was read, so a hand-typed value entered as a measurement and a
+    relayed one could not be told from a native one. Kept verbatim; absent keys are left
+    out rather than set to null. Reconciled points carry no dataSource and get None.
+    """
+    if not isinstance(data_source, dict):
+        return None
+    device = data_source.get("device") if isinstance(data_source.get("device"), dict) else {}
+    application = data_source.get("application") if isinstance(data_source.get("application"), dict) else {}
+    found = {
+        "recording_method": data_source.get("recordingMethod"),
+        "platform": data_source.get("platform"),
+        "application": application.get("packageName"),
+        "manufacturer": device.get("manufacturer"),
+        "form_factor": device.get("formFactor"),
+    }
+    kept = {key: str(value) for key, value in found.items() if value}
+    return kept or None
+
+
+def observation_values(provenance: dict[str, Any] | None, device_model: str | None) -> dict[str, str | None] | None:
+    """The source observation one Google record states, from ``source_provenance`` and its model."""
+    from app.services.devices.source_observations import blank_values
+
+    provenance = provenance or {}
+    values = blank_values() | {
+        "source_name": provenance.get("platform"),
+        "source_bundle_id": provenance.get("application"),
+        "device_model": device_model,
+        "device_manufacturer": provenance.get("manufacturer"),
+        "device_type_reported": provenance.get("form_factor"),
+        "recording_method": provenance.get("recording_method"),
+    }
+    return values if any(values.values()) else None
+
+
 def extract_form_factor(data_source: Any) -> DeviceType | None:
     """Device type from a list data point's ``dataSource.device.formFactor``; reconciled points carry none."""
     device = data_source.get("device") if isinstance(data_source, dict) else None

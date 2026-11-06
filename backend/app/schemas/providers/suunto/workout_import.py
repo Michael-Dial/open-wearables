@@ -46,6 +46,8 @@ class DeviceJSON(BaseModel):
     serialNumber: str | None = None
     swVersion: str | None = Field(default=None, validation_alias=AliasChoices("swVersion", "softwareVersion"))
     hwVersion: str | None = Field(default=None, validation_alias=AliasChoices("hwVersion", "hardwareVersion"))
+    # "SPORT_WATCH" on a Race 2 (SummaryExtension.gear); kept as the type the route reported.
+    productType: str | None = None
 
 
 class PauseMarkerExtension(BaseModel):

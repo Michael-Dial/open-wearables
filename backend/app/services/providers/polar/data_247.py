@@ -60,6 +60,7 @@ from app.schemas.providers.polar.sleepwise import (
     CircadianBedtimeResultType,
     GradeType,
 )
+from app.services.devices.source_observations import blank_values, record_provider_observations
 from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.providers.api_client import make_authenticated_request
@@ -1020,6 +1021,7 @@ class Polar247Data(Base247DataTemplate):
                     recorded_at=anchor + timedelta(milliseconds=s.recording_time_delta_milliseconds or 0),
                     value=s.temperature_celsius,
                     series_type=series_type,
+                    provider_metadata=self._device_metadata(parsed.source_device_id),
                 )
                 for s in parsed.samples
                 if s.temperature_celsius is not None
@@ -1119,6 +1121,7 @@ class Polar247Data(Base247DataTemplate):
                         provider=ProviderName.POLAR,
                         source=ProviderName.POLAR,
                         recorded_at=recorded_at,
+                        provider_metadata=self._device_metadata(parsed.source_device_id),
                         value=parsed.blood_oxygen_percent,
                         series_type=SeriesType.oxygen_saturation,
                     )
@@ -1132,6 +1135,7 @@ class Polar247Data(Base247DataTemplate):
                         provider=ProviderName.POLAR,
                         source=ProviderName.POLAR,
                         recorded_at=recorded_at,
+                        provider_metadata=self._device_metadata(parsed.source_device_id),
                         value=parsed.heart_rate_variability_ms,
                         series_type=SeriesType.heart_rate_variability_rmssd,
                     )
@@ -1174,6 +1178,7 @@ class Polar247Data(Base247DataTemplate):
                         provider=ProviderName.POLAR,
                         source=ProviderName.POLAR,
                         recorded_at=recorded_at,
+                        provider_metadata=self._device_metadata(parsed.source_device_id),
                         value=parsed.heart_rate_variability_ms,
                         series_type=SeriesType.heart_rate_variability_rmssd,
                     )
@@ -1187,6 +1192,7 @@ class Polar247Data(Base247DataTemplate):
                         provider=ProviderName.POLAR,
                         source=ProviderName.POLAR,
                         recorded_at=recorded_at,
+                        provider_metadata=self._device_metadata(parsed.source_device_id),
                         value=parsed.average_heart_rate_bpm,
                         series_type=SeriesType.heart_rate,
                     )
@@ -1223,7 +1229,43 @@ class Polar247Data(Base247DataTemplate):
         counts = WriteCounts(0, 0)
         if samples:
             counts = timeseries_service.bulk_create_samples(db, samples)
+            self._record_source_devices(db, samples)
         return counts
+
+    @staticmethod
+    def _device_metadata(source_device_id: str | None) -> dict[str, str] | None:
+        """The Elixir result's ``source_device_id``, kept on each sample it produced."""
+        return {"source_device_id": source_device_id} if source_device_id else None
+
+    def _record_source_devices(self, db: DbSession, samples: list[TimeSeriesSampleCreate]) -> None:
+        """Date each Polar device an Elixir result names by the samples it produced.
+
+        Body temperature, SpO2 and wrist ECG results carry ``source_device_id``, the same
+        per-device uuid Polar stamps on a night's sleep. Those samples are not keyed by it
+        (re-keying would split each series' history across two sources), so it was
+        dropped; it is now on each sample and in the data source's dated device record.
+        """
+        stamped = [s for s in samples if s.provider_metadata and s.provider_metadata.get("source_device_id")]
+        if not stamped:
+            return
+        try:
+            data_source = timeseries_service.crud.create_data_source(db, stamped[0])
+        except Exception:
+            db.rollback()
+            logger.exception("Polar device record skipped", provider="polar")
+            return
+        rows = [
+            (
+                data_source.id,
+                blank_values()
+                | {"source_name": "Polar", "device_local_identifier": str(s.provider_metadata["source_device_id"])},
+                s.recorded_at,
+                s.recorded_at,
+            )
+            for s in stamped
+            if s.provider_metadata
+        ]
+        record_provider_observations(db, stamped[0].user_id, self.provider_name, rows)
 
     def _save_scores(self, db: DbSession, scores: list[HealthScoreCreate]) -> WriteCounts:
         if scores:

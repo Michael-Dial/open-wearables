@@ -18,6 +18,7 @@ from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.enums import EventCategory, ProviderName
 from app.schemas.model_crud.activities import EventRecordCreate, EventRecordDetailCreate
 from app.schemas.providers.google import TimeShape
+from app.services.devices.source_observations import record_provider_observations
 from app.services.event_record_service import event_record_service
 from app.services.providers.google_health.coverage import WORKOUT_ENERGY_SERIES
 from app.services.providers.google_health.helpers import (
@@ -26,11 +27,13 @@ from app.services.providers.google_health.helpers import (
     extract_form_factor,
     extract_source,
     next_page_token,
+    observation_values,
     parse_duration_seconds,
     parse_interval,
     parse_page,
     parse_rfc3339,
     read_number,
+    source_provenance,
     time_filter,
     zone_offset_from,
 )
@@ -134,6 +137,7 @@ class GoogleHealthApiWorkouts(BaseWorkoutsTemplate):
             source_name=source_name,
             device_model=device_model,
             device_type=device_type,
+            provider_metadata=source_provenance(raw_workout.get("dataSource")),
             external_id=raw_workout.get("name"),
             start_datetime=start,
             end_datetime=end,
@@ -169,11 +173,15 @@ class GoogleHealthApiWorkouts(BaseWorkoutsTemplate):
             return 0
 
         count = 0
+        seen: list[tuple[UUID, dict[str, str | None], datetime, datetime]] = []
         for point in self.get_workouts(db, user_id, start, end):
             try:
                 record, detail = self._normalize_workout(point, user_id)
                 created = event_record_service.create(db, record)
                 event_record_service.create_detail(db, detail.model_copy(update={"record_id": created.id}))
+                values = observation_values(record.provider_metadata, record.device_model)
+                if values is not None and created.data_source_id is not None:
+                    seen.append((created.data_source_id, values, created.start_datetime, created.end_datetime))
             except Exception as e:
                 logger.error(
                     "Google workout sync failed for a datapoint",
@@ -184,6 +192,7 @@ class GoogleHealthApiWorkouts(BaseWorkoutsTemplate):
                 )
                 continue
             count += 1
+        record_provider_observations(db, user_id, self.provider_name, seen)
         return count
 
     @staticmethod

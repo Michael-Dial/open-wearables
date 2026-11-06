@@ -77,3 +77,27 @@ def test_extract_dates(fitbit_workouts: FitbitWorkouts) -> None:
         3600000,
     )
     assert (end - start).total_seconds() == 3600
+
+
+class TestActivitySourceIsDated:
+    """An activity log's ``source`` names the tracker (id, name, type); only the name was kept."""
+
+    def test_a_tracker_source_records_its_id(self) -> None:
+        values = FitbitWorkouts._source_values(
+            {"id": "310492015", "name": "Charge 6", "type": "tracker", "url": "https://www.fitbit.com/"}
+        )
+        assert values is not None
+        assert values["device_local_identifier"] == "310492015"
+        assert values["source_name"] == "Charge 6"
+        assert values["device_type_reported"] == "tracker"
+        assert values["source_bundle_id"] is None
+
+    def test_an_app_source_is_the_writer_not_a_device(self) -> None:
+        values = FitbitWorkouts._source_values({"id": "228VSR", "name": "Strava", "type": "app"})
+        assert values is not None
+        assert values["device_local_identifier"] is None
+        assert values["source_bundle_id"] == "228VSR"
+
+    def test_no_source_records_nothing(self) -> None:
+        assert FitbitWorkouts._source_values(None) is None
+        assert FitbitWorkouts._source_values({}) is None

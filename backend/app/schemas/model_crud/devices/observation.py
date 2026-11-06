@@ -36,9 +36,14 @@ class SourceObservationResponse(BaseModel):
     device_local_identifier: str | None = Field(
         None,
         description=(
-            "HKDevice.localIdentifier. Scoped to one HealthKit store and not stable across a restore "
-            "or re-pair: evidence, never an identity."
+            "The route's own identifier for the unit, as the route words it: HKDevice.localIdentifier "
+            "(scoped to one HealthKit store, not stable across a restore), Oura's sleep.ring_id, "
+            "Withings' deviceid, Fitbit's tracker id, Polar's device id. Meaningful only on its own "
+            "route: evidence, never an identity."
         ),
+    )
+    device_serial_number: str | None = Field(
+        None, description="A manufacturer serial number the route sent (Suunto gear.serialNumber)."
     )
     device_udi: str | None = Field(None, description="HKDevice.udiDeviceIdentifier, for regulated devices.")
     device_type_reported: str | None = Field(None, description="Device type the platform or SDK declared.")

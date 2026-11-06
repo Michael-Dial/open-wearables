@@ -34,6 +34,7 @@ from app.schemas.providers.withings import (
     WithingsSleepSummary,
 )
 from app.schemas.providers.withings.imports import WithingsSleepSeriesEntry
+from app.services.devices.source_observations import blank_values, record_provider_observations
 from app.services.event_record_service import event_record_service
 from app.services.providers.sync_247_result import Sync247Result
 from app.services.providers.templates.base_247_data import Base247DataTemplate
@@ -231,7 +232,54 @@ class Withings247Data(Base247DataTemplate):
             return 0
         counts = timeseries_service.bulk_create_samples(db, samples)
         db.commit()
+        self._record_measure_devices(db, user_id, page.rows, samples[0])
         return counts
+
+    def _record_measure_devices(
+        self, db: DbSession, user_id: UUID, rows: list[dict], sample: TimeSeriesSampleCreate
+    ) -> None:
+        """Date each device a measure group names (``deviceid``, ``model``) by its measurements.
+
+        Every Withings measure lands on one data source, so a scale and a blood-pressure
+        cuff on one account share it; the group's ``deviceid`` is the only thing that says
+        which took a reading. It was parsed and dropped.
+        """
+        rows_out = []
+        for row in rows:
+            try:
+                group = WithingsMeasureGroup.model_validate(row)
+            except ValidationError:
+                continue
+            if not (group.deviceid or group.model):
+                continue
+            at = datetime.fromtimestamp(group.date, tz=timezone.utc)
+            values = blank_values() | {
+                "source_name": "Withings",
+                "device_local_identifier": group.deviceid,
+                "device_model": group.model,
+            }
+            rows_out.append((values, at, at))
+        self._record_on_sample_source(db, user_id, sample, rows_out)
+
+    def _record_on_sample_source(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        sample: TimeSeriesSampleCreate,
+        rows: list[tuple[dict[str, str | None], datetime, datetime]],
+    ) -> None:
+        """Record observations on the data source ``sample``'s route writes to."""
+        if not rows:
+            return
+        try:
+            data_source = timeseries_service.crud.create_data_source(db, sample)
+        except Exception:
+            db.rollback()
+            logger.exception("Withings device record skipped", provider="withings", user_id=str(user_id))
+            return
+        record_provider_observations(
+            db, user_id, self.provider_name, [(data_source.id, values, a, b) for values, a, b in rows]
+        )
 
     # ---------------------- Daily activity (getactivity) ----------------------
 
@@ -358,6 +406,14 @@ class Withings247Data(Base247DataTemplate):
             return 0
         counts = timeseries_service.bulk_create_samples(db, samples)
         db.commit()
+        devices = []
+        for activity in self._parse_activities(rows, user_id):
+            if not activity.deviceid:
+                continue
+            day = datetime.combine(activity.date, datetime.min.time(), tzinfo=timezone.utc)
+            values = blank_values() | {"source_name": "Withings", "device_local_identifier": activity.deviceid}
+            devices.append((values, day, day))
+        self._record_on_sample_source(db, user_id, samples[0], devices)
         return counts
 
     # ---------------------- Intraday activity (getintradayactivity) ----------------------
@@ -781,6 +837,18 @@ class Withings247Data(Base247DataTemplate):
             db.rollback()
             logger.error("Withings sleep save error", exc_info=e, provider="withings", user_id=str(user_id))
             return None
+
+        if (summary.model is not None or summary.model_id is not None) and stored.data_source_id is not None:
+            # Verbatim: model is Withings' device category (16 tracker, 32 Sleep Monitor),
+            # model_id its model number. Sleep summaries carry no deviceid.
+            values = blank_values() | {
+                "source_name": "Withings",
+                "device_model": None if summary.model_id is None else str(summary.model_id),
+                "device_type_reported": None if summary.model is None else str(summary.model),
+            }
+            record_provider_observations(
+                db, user_id, self.provider_name, [(stored.data_source_id, values, start_dt, end_dt)]
+            )
 
         # One offset fits the whole night unless it crosses a DST change.
         start_offset = zone_offset_at(

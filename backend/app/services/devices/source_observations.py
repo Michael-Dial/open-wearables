@@ -53,6 +53,12 @@ _FIELDS: tuple[tuple[str, str], ...] = (
     ("recording_method", "recording_method"),
 )
 
+# Columns added after the first release. They enter the fingerprint only when set, so a row
+# stored before a column existed keeps its fingerprint and is not duplicated by the next sync.
+_LATER_FIELDS: tuple[str, ...] = ("device_serial_number",)
+
+_COLUMNS: tuple[str, ...] = tuple(c for c, _ in _FIELDS) + _LATER_FIELDS
+
 _MAX_LEN = 255
 
 
@@ -76,7 +82,9 @@ def observation_values(source: Any) -> dict[str, str | None]:
 
 
 def fingerprint(values: dict[str, str | None]) -> str:
-    return hashlib.sha256(json.dumps([values[c] for c, _ in _FIELDS]).encode()).hexdigest()
+    parts: list[object] = [values.get(c) for c, _ in _FIELDS]
+    parts += [[c, values[c]] for c in _LATER_FIELDS if values.get(c) is not None]
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()
 
 
 @dataclass
@@ -157,7 +165,7 @@ def record_sdk_observations(
 
 def blank_values() -> dict[str, str | None]:
     """Every observation column, unsaid. A provider route fills only what its payload states."""
-    return {column: None for column, _ in _FIELDS}
+    return {column: None for column in _COLUMNS}
 
 
 def record_provider_observations(
@@ -173,15 +181,20 @@ def record_provider_observations(
     grouping, dating and best-effort rule as the SDK pass.
     """
     groups: dict[tuple[UUID, str], _Group] = {}
-    for data_source_id, raw_values, start, end in records:
-        values = {column: _text(raw_values.get(column)) for column, _ in _FIELDS}
-        if not any(values.values()):
-            continue
-        key = (data_source_id, fingerprint(values))
-        group = groups.get(key)
-        if group is None:
-            group = groups[key] = _Group(values=values)
-        group.add(start, end)
+    try:
+        for data_source_id, raw_values, start, end in records:
+            values = {column: _text(raw_values.get(column)) for column in _COLUMNS}
+            if not any(values.values()):
+                continue
+            key = (data_source_id, fingerprint(values))
+            group = groups.get(key)
+            if group is None:
+                group = groups[key] = _Group(values=values)
+            group.add(start, end)
+    except Exception:
+        # Provenance must never cost a sync its data, the grouping included.
+        log.exception("Failed to group source observations", user_id=str(user_id), provider=provider)
+        return 0
     return _upsert(db_session, user_id, groups, provider=provider)
 
 

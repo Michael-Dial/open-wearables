@@ -29446,7 +29446,19 @@
               }
             ],
             "title": "Device Local Identifier",
-            "description": "HKDevice.localIdentifier. Scoped to one HealthKit store and not stable across a restore or re-pair: evidence, never an identity."
+            "description": "The route's own identifier for the unit, as the route words it: HKDevice.localIdentifier (scoped to one HealthKit store, not stable across a restore), Oura's sleep.ring_id, Withings' deviceid, Fitbit's tracker id, Polar's device id. Meaningful only on its own route: evidence, never an identity."
+          },
+          "device_serial_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Serial Number",
+            "description": "A manufacturer serial number the route sent (Suunto gear.serialNumber)."
           },
           "device_udi": {
             "anyOf": [

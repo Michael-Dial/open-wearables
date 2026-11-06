@@ -14,6 +14,7 @@ from app.schemas.model_crud.activities import (
     EventRecordMetrics,
 )
 from app.schemas.providers.suunto import WorkoutJSON as SuuntoWorkoutJSON
+from app.schemas.providers.suunto.workout_import import DeviceJSON
 from app.services.event_record_service import event_record_service
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.utils.dates import offset_to_iso, parse_iso_datetime
@@ -252,13 +253,44 @@ class SuuntoWorkouts(BaseWorkoutsTemplate):
                 )
 
         count = 0
-        for record, details in self._build_bundles(workouts, user_id):
+        seen: list[tuple[Any, DeviceJSON | None]] = []
+        for workout, (record, details) in zip(workouts, self._build_bundles(workouts, user_id), strict=True):
             created_record = event_record_service.create(db, record)
             detail_for_record = details.model_copy(update={"record_id": created_record.id})
             event_record_service.create_detail(db, detail_for_record)
+            seen.append((created_record, workout.gear or workout.gear_from_summary_extension))
             count += 1
 
+        self._record_gear(db, user_id, seen)
         return count
+
+    def _record_gear(self, db: DbSession, user_id: UUID, seen: list[tuple[Any, DeviceJSON | None]]) -> None:
+        """Date each watch description by the workouts that carried it.
+
+        The gear block names the unit (serialNumber) and its hardware and software
+        versions. Only the name and software version were kept, on the data source,
+        overwritten by each sync; a firmware update or a second watch of the same model
+        was invisible. Each distinct description is now a source observation spanning its
+        workouts.
+        """
+        from app.services.devices.source_observations import blank_values, record_provider_observations
+
+        rows = []
+        for record, gear in seen:
+            if gear is None or record is None or getattr(record, "data_source_id", None) is None:
+                continue
+            values = blank_values() | {
+                "source_name": "Suunto",
+                "device_name": gear.displayName,
+                "device_manufacturer": gear.manufacturer,
+                "device_model": gear.name,
+                "device_serial_number": gear.serialNumber,
+                "device_hardware_version": gear.hwVersion,
+                "device_software_version": gear.swVersion,
+                "device_type_reported": gear.productType,
+            }
+            rows.append((record.data_source_id, values, record.start_datetime, record.end_datetime))
+        record_provider_observations(db, user_id, self.provider_name, rows)
 
     def get_workout_detail(
         self,
@@ -307,6 +339,7 @@ class SuuntoWorkouts(BaseWorkoutsTemplate):
             created_record = event_record_service.create(db, record)
             detail_for_record = detail.model_copy(update={"record_id": created_record.id})
             event_record_service.create_detail(db, detail_for_record)
+            self._record_gear(db, user_id, [(created_record, gear)])
             return created_record.id
 
         return None
