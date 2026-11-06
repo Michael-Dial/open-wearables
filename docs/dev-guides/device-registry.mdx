@@ -203,6 +203,19 @@ the first sync that does.
 Read them with `GET /users/{user_id}/devices/source-observations`, optionally filtered by
 `data_source_id` or `device_id`.
 
+## A strap paired to the Watch: the sample says, the source does not
+
+A chest strap paired to an Apple Watch is written under the Watch's own source, so no
+data source and no device separates its heart rate from the wrist sensor's. HealthKit
+records where each sample was measured (`HKMetadataKeyHeartRateSensorLocation`: chest,
+wrist, finger, hand, ear lobe, foot, other), and the SDK route stores that metadata on the
+sample. `GET /users/{user_id}/timeseries/heart-rate-sensors?start_time&end_time` (at most
+7 days) reads it back: per source, samples counted by stated location, and the runs of one
+source's samples that share a location, in time order, so a switch inside a workout is
+two consecutive runs. A sample that stated nothing is `not_stated`, never assumed to be
+the wrist; samples from the Apple Health XML import, which drops this metadata, are always
+`not_stated`.
+
 ## A detach has to survive the next sync
 
 Attribution is write-once for a source that already has a device — but a NULL

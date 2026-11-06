@@ -3276,6 +3276,142 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/timeseries/heart-rate-sensors": {
+      "get": {
+        "tags": [
+          "External: Timeseries"
+        ],
+        "summary": "Heart-rate samples by the sensor each one says it came from",
+        "description": "Every heart-rate sample in the window (at most 7 days), counted by source and by the sensor location it states.\n\nA chest strap paired to an Apple Watch is written under the Watch's own source, so a data source cannot\ntell strap from wrist; the sample's HealthKit metadata (`HKMetadataKeyHeartRateSensorLocation`) can.\n`runs` lists each stretch of one source's samples that share a stated location, in time order, so a switch\ninside a workout shows as two consecutive runs of one source. A sample that stated nothing is `not_stated`,\nnever assumed to be the wrist.",
+        "operationId": "get_heart_rate_sensors_api_v1_users__user_id__timeseries_heart_rate_sensors_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days.",
+              "examples": [
+                "2023-11-07T05:31:56Z",
+                "2023-11-07"
+              ],
+              "format": "date-time",
+              "title": "Start Time"
+            },
+            "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days."
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days.",
+              "examples": [
+                "2023-11-07T05:31:56Z",
+                "2023-11-07"
+              ],
+              "format": "date-time",
+              "title": "End Time"
+            },
+            "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days."
+          },
+          {
+            "name": "data_source_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this data source.",
+              "title": "Data Source Id"
+            },
+            "description": "Only this data source."
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeartRateSensorsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblem"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/timeseries": {
       "get": {
         "tags": [
@@ -23302,6 +23438,196 @@
           "provider"
         ],
         "title": "HealthScoreResponse"
+      },
+      "HeartRateSensorRun": {
+        "properties": {
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "sensor_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Location",
+            "description": "Where the sample says it was measured (HKMetadataKeyHeartRateSensorLocation): chest, wrist, finger, hand, ear_lobe, foot or other. Null when the sample did not say, which is not the same as wrist.",
+            "examples": [
+              "chest"
+            ]
+          },
+          "sensor_location_raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Location Raw",
+            "description": "The stored value, verbatim."
+          },
+          "first_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First At"
+          },
+          "last_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last At"
+          },
+          "samples": {
+            "type": "integer",
+            "title": "Samples"
+          },
+          "sedentary": {
+            "type": "integer",
+            "title": "Sedentary",
+            "description": "Samples whose motion context says sedentary."
+          },
+          "active": {
+            "type": "integer",
+            "title": "Active",
+            "description": "Samples whose motion context says active."
+          },
+          "context_not_stated": {
+            "type": "integer",
+            "title": "Context Not Stated",
+            "description": "Samples with no motion context, or 'not set'."
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_source_id",
+          "first_at",
+          "last_at",
+          "samples",
+          "sedentary",
+          "active",
+          "context_not_stated"
+        ],
+        "title": "HeartRateSensorRun",
+        "description": "A stretch of one source's heart-rate samples that share a stated sensor location."
+      },
+      "HeartRateSensorSource": {
+        "properties": {
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "device_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Model"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "samples": {
+            "type": "integer",
+            "title": "Samples"
+          },
+          "by_location": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By Location",
+            "description": "Samples per stated location; `not_stated` counts samples that carried no location.",
+            "examples": [
+              {
+                "chest": 1840,
+                "not_stated": 12,
+                "wrist": 512
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_source_id",
+          "provider",
+          "samples",
+          "by_location"
+        ],
+        "title": "HeartRateSensorSource",
+        "description": "One data source's heart-rate samples in the window, counted by stated sensor location."
+      },
+      "HeartRateSensorsResponse": {
+        "properties": {
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Time"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/HeartRateSensorSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/HeartRateSensorRun"
+            },
+            "type": "array",
+            "title": "Runs",
+            "description": "In time order. Consecutive runs of one source with different locations mark a switch."
+          }
+        },
+        "type": "object",
+        "required": [
+          "start_time",
+          "end_time",
+          "sources",
+          "runs"
+        ],
+        "title": "HeartRateSensorsResponse",
+        "description": "Heart-rate samples in a window, by source and by the sensor each one says it came from.\n\nBuilt for the case no data source can show: a chest strap paired to an Apple Watch is written\nunder the Watch's own source, so only the per-sample sensor location tells strap from wrist.\nOnly what the platform stored is reported: samples synced before metadata was kept, or through\nthe Apple Health XML import (which drops it), count as `not_stated`."
       },
       "HeartRateStats": {
         "properties": {
