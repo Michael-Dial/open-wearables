@@ -62,6 +62,7 @@ For one Oura ring:
 | Route | Identifier available | Stable per unit? |
 |---|---|---|
 | Oura API (direct) | `ring_configuration.id` | Yes — a real per-ring id |
+| Oura API (direct), per night | `sleep.ring_id` ("encrypted identifier of the ring that produced this sleep data") | Yes — but whether it equals `ring_configuration.id` is not stated by Oura |
 | Oura → Apple Health | `HKSource.bundleIdentifier` (`com.ouraring.oura`) | No — names the app |
 | Oura → Google Health | `DataOrigin.packageName` | No — names the app |
 
@@ -202,6 +203,28 @@ the first sync that does.
 
 Read them with `GET /users/{user_id}/devices/source-observations`, optionally filtered by
 `data_source_id` or `device_id`.
+
+### Which Oura ring was worn when
+
+Oura's direct API keeps one data source per account, so a participant who changes rings
+writes both rings' nights to one stream. Every sleep document names its ring
+(`ring_id`), and the Oura sync records each one as an observation with `source_name`
+`Oura` and `device_local_identifier` set to the ring id, dated by the bedtimes of the
+nights that named it. A ring change is one span ending and the next beginning. The night
+itself carries `provider_metadata.ring_ids` (a list: a night merged from two documents
+keeps both), and its in-sleep heart-rate and HRV samples carry `ring_id`. A history
+re-pull stamps nights stored before the field was read.
+
+Only what the night states is recorded. Generation, size and firmware come from
+`ring_configuration`, which describes each ring as it is *now*; dated onto past nights
+it would claim firmware those nights never ran, so it stays on the ring's own device.
+Oura does not say whether `sleep.ring_id` and `ring_configuration.id` share a namespace,
+so a night's ring is not joined to a configured ring by id. Each ring-configuration fetch
+logs `oura_ring_id_namespace` with how many ids appear in both, which settles it.
+
+Daytime heart rate and readiness carry no ring id. Which ring they came from is not
+inferred here: a consumer that needs it asks the participant, using this record to know
+when a change happened.
 
 ## A strap paired to the Watch: the sample says, the source does not
 

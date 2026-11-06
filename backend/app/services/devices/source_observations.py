@@ -1,5 +1,8 @@
 """Record what each sync said about the hardware and software behind its data sources.
 
+The SDK route describes a source with HealthKit's or Health Connect's fields; a cloud
+provider route records what its own payload states (Oura: the ``ring_id`` on each sleep).
+
 ``data_source`` keeps one current value of the few fields it is keyed or typed by. The
 rest of what HealthKit and Health Connect attach to every record - the accessory's own
 name, its manufacturer, hardware, firmware and software versions, the writing app's
@@ -93,6 +96,13 @@ class _Group:
             if self.last is None or moment > self.last:
                 self.last = moment
 
+    def absorb(self, other: "_Group") -> None:
+        self.count += other.count
+        for moment in (other.first, other.last):
+            if moment is not None:
+                self.first = moment if self.first is None or moment < self.first else self.first
+                self.last = moment if self.last is None or moment > self.last else self.last
+
 
 def record_sdk_observations(
     db_session: DbSession,
@@ -124,8 +134,7 @@ def record_sdk_observations(
     if not groups:
         return 0
 
-    now = datetime.now(UTC)
-    written = 0
+    resolved: dict[tuple[UUID, str], _Group] = {}
     try:
         for (device_model, source_name, provider_device_id, source_app_id, digest), group in groups.items():
             data_source = find_sdk_data_source(
@@ -133,11 +142,61 @@ def record_sdk_observations(
             )
             if data_source is None:
                 continue
+            # Two keys can name one data source; their records are one observation.
+            key = (data_source.id, digest)
+            if key in resolved:
+                resolved[key].absorb(group)
+            else:
+                resolved[key] = group
+    except Exception:
+        db_session.rollback()
+        log.exception("Failed to resolve SDK source observations", user_id=str(user_id), provider=provider)
+        return 0
+    return _upsert(db_session, user_id, resolved, provider=provider)
+
+
+def blank_values() -> dict[str, str | None]:
+    """Every observation column, unsaid. A provider route fills only what its payload states."""
+    return {column: None for column, _ in _FIELDS}
+
+
+def record_provider_observations(
+    db_session: DbSession,
+    user_id: UUID,
+    provider: str,
+    records: Iterable[tuple[UUID, dict[str, str | None], datetime | None, datetime | None]],
+) -> int:
+    """Upsert observations for a cloud provider route, whose records already name their data source.
+
+    ``records`` is each stored record's data source id, its observation values (from
+    ``blank_values``, filled with what the payload said) and its start and end. Same
+    grouping, dating and best-effort rule as the SDK pass.
+    """
+    groups: dict[tuple[UUID, str], _Group] = {}
+    for data_source_id, raw_values, start, end in records:
+        values = {column: _text(raw_values.get(column)) for column, _ in _FIELDS}
+        if not any(values.values()):
+            continue
+        key = (data_source_id, fingerprint(values))
+        group = groups.get(key)
+        if group is None:
+            group = groups[key] = _Group(values=values)
+        group.add(start, end)
+    return _upsert(db_session, user_id, groups, provider=provider)
+
+
+def _upsert(db_session: DbSession, user_id: UUID, groups: dict[tuple[UUID, str], _Group], *, provider: str) -> int:
+    if not groups:
+        return 0
+    now = datetime.now(UTC)
+    written = 0
+    try:
+        for (data_source_id, digest), group in groups.items():
             obs = DataSourceObservation
             stmt = insert(obs).values(
                 id=uuid4(),
                 user_id=user_id,
-                data_source_id=data_source.id,
+                data_source_id=data_source_id,
                 fingerprint=digest,
                 first_recorded_at=group.first,
                 last_recorded_at=group.last,
@@ -162,6 +221,6 @@ def record_sdk_observations(
         db_session.commit()
     except Exception:
         db_session.rollback()
-        log.exception("Failed to record SDK source observations", user_id=str(user_id), provider=provider)
+        log.exception("Failed to record source observations", user_id=str(user_id), provider=provider)
         return 0
     return written
