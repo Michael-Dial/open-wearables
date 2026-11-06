@@ -1831,3 +1831,19 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   is in webhook mode. After a new `SECRET_KEY` or `API_BASE_URL`, re-register by hand with
   `POST /api/v1/providers/strava/webhooks/subscriptions`.
 
+
+## Heart-rate samples by the sensor each one states
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours. Upstream file touched: `app/api/routes/v1/timeseries.py` (one route,
+  `/users/{user_id}/timeseries/heart-rate-sensors`, declared before `/timeseries`); the rest is new files
+  (`repositories/heart_rate_sensor_repository.py`, `services/heart_rate_sensor_service.py`,
+  `schemas/responses/activity/heart_rate_sensors.py`).
+- **Why**: A chest strap paired to an Apple Watch is written under the Watch's source, so strap and wrist heart
+  rate share one data source and nothing on the row tells them apart. The SDK route already stores each
+  sample's HealthKit metadata (`series_sample.provider_metadata`), which states the sensor location; nothing
+  read it. The endpoint counts a window's heart-rate samples by source and stated location and returns the
+  runs of one source's samples that share a location (one gaps-and-islands statement), so a switch inside a
+  workout is visible. Values are mapped from HealthKit's raw `HKHeartRateSensorLocation` codes; an unknown
+  code is kept verbatim and a sample with none is `not_stated`.

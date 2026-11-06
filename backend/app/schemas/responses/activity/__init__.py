@@ -16,6 +16,7 @@ from .events import (
     Workout,
     WorkoutTotals,
 )
+from .heart_rate_sensors import HeartRateSensorRun, HeartRateSensorSource, HeartRateSensorsResponse
 from .resilience import (
     DailyHrvScore,
     HrvCvScoreResult,
@@ -38,6 +39,9 @@ from .summaries import (
 )
 
 __all__ = [
+    "HeartRateSensorRun",
+    "HeartRateSensorSource",
+    "HeartRateSensorsResponse",
     # Resilience scores
     "DailyHrvScore",
     "HrvCvScoreResult",

@@ -8,9 +8,9 @@ from pydantic import BeforeValidator
 from app.database import DbSession, StreamingDbSession
 from app.schemas.enums import PERIOD_RESOLUTIONS, ProviderName, Resolution, SeriesType, SourceSelection
 from app.schemas.model_crud.activities import TimeSeriesQueryParams
-from app.schemas.responses.activity import TimeSeriesSample
+from app.schemas.responses.activity import HeartRateSensorsResponse, TimeSeriesSample
 from app.schemas.utils import PaginatedResponse
-from app.services import ApiKeyDep, timeseries_service
+from app.services import ApiKeyDep, heart_rate_sensor_service, timeseries_service
 from app.services.series_export_service import MEDIA_TYPES, ExportFormat, body_for
 from app.utils.dates import DateTimeQueryParam, parse_query_datetime, parse_query_end_datetime
 from app.utils.pagination import DEFAULT_PAGE_SIZE, PageLimitQueryParam
@@ -29,6 +29,35 @@ def split_comma_types(value: object) -> object:
     if isinstance(value, list):
         return [part.strip() for item in value for part in str(item).split(",") if part.strip()]
     return value
+
+
+@router.get(
+    "/users/{user_id}/timeseries/heart-rate-sensors",
+    summary="Heart-rate samples by the sensor each one says it came from",
+)
+def get_heart_rate_sensors(
+    user_id: UUID,
+    start_time: DateTimeQueryParam,
+    end_time: DateTimeQueryParam,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+    data_source_id: Annotated[UUID | None, Query(description="Only this data source.")] = None,
+) -> HeartRateSensorsResponse:
+    """Every heart-rate sample in the window (at most 7 days), counted by source and by the sensor location it states.
+
+    A chest strap paired to an Apple Watch is written under the Watch's own source, so a data source cannot
+    tell strap from wrist; the sample's HealthKit metadata (`HKMetadataKeyHeartRateSensorLocation`) can.
+    `runs` lists each stretch of one source's samples that share a stated location, in time order, so a switch
+    inside a workout shows as two consecutive runs of one source. A sample that stated nothing is `not_stated`,
+    never assumed to be the wrist.
+    """
+    return heart_rate_sensor_service.heart_rate_sensors(
+        db,
+        user_id,
+        parse_query_datetime(start_time),
+        parse_query_end_datetime(end_time),
+        data_source_id,
+    )
 
 
 @router.get("/users/{user_id}/timeseries")
