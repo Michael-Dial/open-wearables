@@ -738,6 +738,7 @@ class Oura247Data(Base247DataTemplate):
                     "heart_rate": sleep.heart_rate,
                     "hrv": sleep.hrv,
                     "oura_sleep_id": sleep.id,
+                    "ring_id": sleep.ring_id or None,
                     "raw": raw_sleep,
                 }
             )
@@ -753,8 +754,11 @@ class Oura247Data(Base247DataTemplate):
         """Save normalized sleep data to database as EventRecord with SleepDetails."""
         provider_user_id, trace_id = log_ctx or LogContext()
         count = 0
+        # (data source, ring id, start, end) per stored night that named its ring
+        rings_seen: list[tuple[UUID, str, datetime, datetime]] = []
         for normalized_sleep in normalized_items:
             sleep_id = normalized_sleep["id"]
+            ring_id: str | None = normalized_sleep.get("ring_id")
 
             start_dt = None
             end_dt = None
@@ -803,6 +807,8 @@ class Oura247Data(Base247DataTemplate):
                 else None,
                 source=self.provider_name,
                 user_id=user_id,
+                # A list, so a night merged from two sleep documents keeps every ring it names.
+                provider_metadata={"ring_ids": [ring_id]} if ring_id else None,
             )
 
             stages = normalized_sleep.get("stages", {})
@@ -833,6 +839,8 @@ class Oura247Data(Base247DataTemplate):
                 )
                 sleep_record_id = stored.id
                 count += 1
+                if ring_id and stored.data_source_id is not None:
+                    rings_seen.append((stored.data_source_id, ring_id, start_dt, end_dt))
             except Exception as e:
                 db.rollback()
                 logger.error(
@@ -873,7 +881,8 @@ class Oura247Data(Base247DataTemplate):
                             # Each item summarises one interval (300 s for sleep HRV/HR).
                             # Stated so /timeseries can say so: without it a consumer
                             # cannot tell a 5-minute RMSSD from Apple's ~1-minute SDNN.
-                            provider_metadata={"interval_seconds": interval_data.interval},
+                            provider_metadata={"interval_seconds": interval_data.interval}
+                            | ({"ring_id": ring_id} if ring_id else {}),
                         )
                         for i, value in enumerate(interval_data.items)
                         if value is not None
@@ -927,7 +936,34 @@ class Oura247Data(Base247DataTemplate):
                             trace_id=trace_id,
                         )
 
+        self._record_rings_worn(db, user_id, rings_seen)
         return count
+
+    def _record_rings_worn(
+        self, db: DbSession, user_id: UUID, rings_seen: list[tuple[UUID, str, datetime, datetime]]
+    ) -> None:
+        """Date each ring by the nights that named it: the record of which ring was worn when.
+
+        One observation per (data source, ring id), spanning the earliest bedtime to the
+        latest wake of the nights carrying that id, so a ring change shows as one span
+        ending and the next beginning. Only the id the night states is recorded. The
+        ring's generation, size and firmware come from ring_configuration, which says
+        what each ring is *now*; written onto past nights it would date today's firmware
+        back to nights it never ran, so it stays on the ring's device record.
+        """
+        if not rings_seen:
+            return
+        from app.services.devices.source_observations import blank_values, record_provider_observations
+
+        def described(ring_id: str) -> dict[str, str | None]:
+            return blank_values() | {"source_name": "Oura", "device_local_identifier": ring_id}
+
+        record_provider_observations(
+            db,
+            user_id,
+            self.provider_name,
+            [(source_id, described(ring_id), start, end) for source_id, ring_id, start, end in rings_seen],
+        )
 
     # -------------------------------------------------------------------------
     # Daily Sleep Score - /v2/usercollection/daily_sleep
@@ -1370,6 +1406,7 @@ class Oura247Data(Base247DataTemplate):
         """
         raw_config = self.get_ring_configuration(db, user_id)
         self._record_ring_identities(db, user_id, raw_config)
+        self._compare_ring_ids(db, user_id, raw_config)
 
         model = self._derive_ring_model(raw_config)
         if not model:
@@ -1435,6 +1472,42 @@ class Oura247Data(Base247DataTemplate):
         except Exception:
             db.rollback()
             logger.exception("Failed to record Oura ring identities", user_id=str(user_id))
+
+    def _compare_ring_ids(self, db: DbSession, user_id: UUID, raw_config: dict[str, Any]) -> None:
+        """Log how ring_configuration's ids compare with the ring_ids the nights carried.
+
+        Oura does not say whether ``ring_configuration.id`` and ``sleep.ring_id`` are one
+        namespace. Until real accounts settle it, a night's ring is never joined to a
+        configured ring (its generation, firmware) by id; this line is the evidence.
+        """
+        from app.models import DataSourceObservation
+
+        items = raw_config.get("data") if isinstance(raw_config, dict) else None
+        config_ids = {str(r["id"]) for r in items or [] if isinstance(r, dict) and r.get("id")}
+        try:
+            night_ids = {
+                row[0]
+                for row in db.query(DataSourceObservation.device_local_identifier)
+                .filter(
+                    DataSourceObservation.user_id == user_id,
+                    DataSourceObservation.source_name == "Oura",
+                    DataSourceObservation.device_local_identifier.isnot(None),
+                )
+                .distinct()
+            }
+        except Exception:
+            db.rollback()
+            return
+        if not config_ids or not night_ids:
+            return
+        logger.info(
+            "Oura ring ids: ring_configuration vs sleep",
+            action="oura_ring_id_namespace",
+            user_id=str(user_id),
+            configured=len(config_ids),
+            on_nights=len(night_ids),
+            in_both=len(config_ids & night_ids),
+        )
 
     @staticmethod
     def _ring_model_raw(ring: dict[str, Any]) -> str | None:

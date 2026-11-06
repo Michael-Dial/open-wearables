@@ -72,6 +72,10 @@ class OuraSleepJSON(BaseModel):
     type: str | None = None  # long_sleep / sleep / late_nap / rest / deleted
     heart_rate: OuraIntervalData | None = None  # heart rate values at 5-min intervals
     hrv: OuraIntervalData | None = None  # RMSSD values at 5-min intervals
+    # "Encrypted identifier of the ring that produced this sleep data" (PublicModifiedSleepModel).
+    # Per night, so a participant's history says which ring recorded each one. Whether it
+    # equals ring_configuration.id is not stated by Oura and is checked, not assumed.
+    ring_id: str | None = None
 
 
 class OuraSleepCollectionJSON(BaseModel):

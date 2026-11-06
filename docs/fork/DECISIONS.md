@@ -1847,3 +1847,19 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   runs of one source's samples that share a location (one gaps-and-islands statement), so a switch inside a
   workout is visible. Values are mapped from HealthKit's raw `HKHeartRateSensorLocation` codes; an unknown
   code is kept verbatim and a sample with none is `not_stated`.
+
+## Oura nights name the ring that recorded them
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours. Upstream files touched: `app/schemas/providers/oura/imports.py`
+  (`OuraSleepJSON.ring_id`), `app/services/providers/oura/data_247.py` (sleep save stamps the ring and
+  records it; ring-configuration fetch logs the id comparison) and `app/services/event_record_service.py`
+  (`merge_provider_metadata` on the three sleep merge paths, which had kept only one side's
+  `provider_metadata`).
+- **Why**: A participant who changes rings writes both rings' nights to one Oura data source, and nothing
+  said which night came from which. Oura stamps `ring_id` on every sleep document; it was parsed away. It
+  is now kept on the night, on its in-sleep HR/HRV samples, and as a `data_source_observation` per ring
+  dated by its nights: the record of which ring was worn when. `ring_configuration` firmware is not dated
+  onto past nights (it is the ring's current firmware), and the two Oura id namespaces are compared in a
+  log line rather than assumed equal. See `docs/dev-guides/device-registry.mdx`.

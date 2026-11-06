@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -140,6 +141,27 @@ def _stored_stages(raw: object) -> list[SleepStage] | None:
 def _first_number(*values: Decimal | None) -> float | None:
     """The first value that is set, so a provider's 0 kcal is kept rather than skipped."""
     return next((float(value) for value in values if value is not None), None)
+
+
+def merge_provider_metadata(old: dict[str, Any] | None, new: dict[str, Any] | None) -> dict[str, Any] | None:
+    """One record's provider_metadata after a merge or a re-ingest of the same session.
+
+    A list is unioned, first-seen order, so a night merged from two documents keeps
+    everything either said (Oura's ``ring_ids``: two rings on one night stay two). Any
+    other key takes the newer payload's value, as the rest of the record does.
+    """
+    if not old:
+        return dict(new) if new else old
+    if not new:
+        return old
+    merged = dict(old)
+    for key, value in new.items():
+        prior = merged.get(key)
+        if isinstance(prior, list) and isinstance(value, list):
+            merged[key] = prior + [v for v in value if v not in prior]
+        else:
+            merged[key] = value
+    return merged
 
 
 class EventRecordService(
@@ -476,6 +498,9 @@ class EventRecordService(
                     if new_val is not None:
                         setattr(adjacent, field, new_val)
                 adjacent.duration_seconds = int((adjacent.end_datetime - adjacent.start_datetime).total_seconds())
+                adjacent.provider_metadata = merge_provider_metadata(
+                    adjacent.provider_metadata, record.provider_metadata
+                )
                 if adjacent.end_datetime != old_end:
                     # Its provider score sits at the old end, which a shortened night leaves outside its window.
                     self.health_score_repo.drop_provider_sleep_score(db_session, adjacent.data_source_id, old_end)
@@ -639,6 +664,9 @@ class EventRecordService(
             )
 
             if same_window:
+                adjacent.provider_metadata = merge_provider_metadata(
+                    adjacent.provider_metadata, record.provider_metadata
+                )
                 self.event_record_detail_repo.delete_by_record_id(db_session, adjacent.id, EventCategory.SLEEP)
                 self.event_record_detail_repo.create_and_flush(
                     db_session,
@@ -659,6 +687,7 @@ class EventRecordService(
                     "start_datetime": merged_start,
                     "end_datetime": merged_end,
                     "duration_seconds": int((merged_end - merged_start).total_seconds()),
+                    "provider_metadata": merge_provider_metadata(adjacent.provider_metadata, record.provider_metadata),
                 }
             )
             created_record = self.crud.create_and_flush(db_session, record)
@@ -666,6 +695,7 @@ class EventRecordService(
             if created_record.id == adjacent.id:
                 # data_source_id was None (resolved at insert time) and the
                 # constraint returned the existing row — treat as same_window.
+                adjacent.provider_metadata = record.provider_metadata
                 self.event_record_detail_repo.delete_by_record_id(db_session, adjacent.id, EventCategory.SLEEP)
                 self.event_record_detail_repo.create_and_flush(
                     db_session,
