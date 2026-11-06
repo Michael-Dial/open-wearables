@@ -11,6 +11,7 @@ from app.schemas.model_crud.activities import (
     EventRecordDetailCreate,
     EventRecordMetrics,
 )
+from app.services.devices.source_observations import blank_values, record_provider_observations
 from app.services.event_record_service import event_record_service
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.utils.structured_logging import get_logger
@@ -166,12 +167,17 @@ class FitbitWorkouts(BaseWorkoutsTemplate):
 
         activities = self.get_workouts(db, user_id, start_date, end_date)
 
+        seen: list[tuple[UUID, dict[str, str | None], datetime, datetime]] = []
         for raw in activities:
             try:
                 record, detail = self._normalize_workout(raw, user_id)
                 created_record = event_record_service.create(db, record)
                 detail_for_record = detail.model_copy(update={"record_id": created_record.id})
                 event_record_service.create_detail(db, detail_for_record)
+                values = self._source_values(raw.get("source"))
+                if values is not None and created_record.data_source_id is not None:
+                    span = (created_record.start_datetime, created_record.end_datetime)
+                    seen.append((created_record.data_source_id, values, *span))
             except Exception as e:
                 logger.error(
                     "Failed to save Fitbit activity",
@@ -181,4 +187,25 @@ class FitbitWorkouts(BaseWorkoutsTemplate):
                 )
                 continue
 
+        record_provider_observations(db, user_id, self.provider_name, seen)
         return True
+
+    @staticmethod
+    def _source_values(source: Any) -> dict[str, str | None] | None:
+        """What an activity log's ``source`` says recorded it, for the dated device record.
+
+        ``source`` is ``{id, name, type, url}``: ``type`` "tracker" makes ``id`` the
+        tracker's own id, "app" makes it the logging app's. Only ``name`` was kept, as the
+        model, so two trackers of one model were indistinguishable.
+        """
+        if not isinstance(source, dict):
+            return None
+        kind = source.get("type")
+        source_id = source.get("id")
+        values = blank_values() | {
+            "source_name": source.get("name"),
+            "device_type_reported": kind,
+            "device_local_identifier": source_id if kind == "tracker" else None,
+            "source_bundle_id": source_id if kind == "app" else None,
+        }
+        return values if any(values.values()) else None

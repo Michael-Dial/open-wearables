@@ -55,9 +55,13 @@ class DataSourceObservation(BaseDbModel):
     device_hardware_version: Mapped[str_255 | None]
     device_firmware_version: Mapped[str_255 | None]
     device_software_version: Mapped[str_255 | None]
-    # HKDevice.localIdentifier: scoped to the HealthKit store that wrote it and not
-    # stable across a restore or re-pair, so recorded as evidence and never as identity.
+    # The route's own identifier for the unit, as the route words it: HKDevice.localIdentifier
+    # (scoped to one HealthKit store, not stable across a restore), Oura's sleep.ring_id,
+    # Withings' deviceid, Fitbit's tracker id, Polar's device id. Recorded as evidence and
+    # never as identity: each is meaningful only on its own route.
     device_local_identifier: Mapped[str_255 | None]
+    # A manufacturer serial number (Suunto gear.serialNumber): printed on the unit itself.
+    device_serial_number: Mapped[str_255 | None]
     device_udi: Mapped[str_255 | None]
     device_type_reported: Mapped[str_255 | None]
 

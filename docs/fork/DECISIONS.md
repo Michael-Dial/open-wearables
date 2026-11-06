@@ -1863,3 +1863,17 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   dated by its nights: the record of which ring was worn when. `ring_configuration` firmware is not dated
   onto past nights (it is the ring's current firmware), and the two Oura id namespaces are compared in a
   log line rather than assumed equal. See `docs/dev-guides/device-registry.mdx`.
+
+## Every provider route records the unit it names
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours. Upstream files touched: `suunto/workouts.py`, `withings/data_247.py`,
+  `fitbit/workouts.py`, `polar/data_247.py` (each records a source observation after saving), the Suunto
+  gear schema (`productType`), `data_source_observation` (`device_serial_number`, migration 5d2e8a1c7b90).
+- **Why**: Device identifiers that providers send were parsed and dropped: Suunto's watch serial number and
+  hardware version, Withings' per-measurement `deviceid` (a scale and a cuff on one account share a data
+  source), Fitbit's tracker id, Polar Elixir's `source_device_id`. Each is now a dated source observation, as
+  Oura's `ring_id` is. Nothing is re-keyed, so no stream's history is split; the record says which unit
+  wrote which span. A failure while recording never costs the sync its data. See the per-route table in
+  `docs/dev-guides/device-registry.mdx`.

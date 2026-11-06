@@ -204,6 +204,27 @@ the first sync that does.
 Read them with `GET /users/{user_id}/devices/source-observations`, optionally filtered by
 `data_source_id` or `device_id`.
 
+### What each route says about the unit
+
+Every route records what it states, in the same table, so a consumer reads one list per
+data source whatever the provider. None of these re-key a data source: a stream that was
+one source stays one source, and the record says which unit wrote which span.
+
+| Route | Kept per record | Column |
+|---|---|---|
+| Apple Health (SDK) | HKDevice name, manufacturer, model, hardware/firmware/software versions, `localIdentifier`, UDI; HKSourceRevision version, product type, OS | as named |
+| Health Connect (SDK) | `Device` manufacturer, model, type; recording method; writing package | as named. Health Connect has no device id, name or firmware. |
+| Samsung Health (SDK) | Samsung's device id (keys the source), name, manufacturer, model, type | as named |
+| Oura | `sleep.ring_id` per night | `device_local_identifier` |
+| Suunto | `gear.serialNumber`, name, manufacturer, hardware/software version, `productType` per workout | `device_serial_number`, `device_model`, `device_hardware_version`, `device_software_version`, `device_type_reported` |
+| Withings | measure group `deviceid` and `model`; activity `deviceid`; sleep `model_id` and `model` (verbatim numbers) | `device_local_identifier`, `device_model`, `device_type_reported` |
+| Fitbit | activity log `source.id` (`type` tracker: the tracker; `type` app: the app) and `source.name` | `device_local_identifier` or `source_bundle_id`, `source_name` |
+| Polar | Elixir `source_device_id` on body temperature, SpO2 and wrist ECG (also on each sample's `provider_metadata`). Sleep and heart rate were already keyed by Polar's device id. | `device_local_identifier` |
+| Garmin, WHOOP, Google Health, Ultrahuman, Sensor Bio | nothing per unit in what OW receives. Garmin names the device on activities only (already the model); Google Health's `dataSource.device` has display name, manufacturer and form factor (already used) but no id | - |
+
+Columns added after the first release (`device_serial_number`) enter the fingerprint only
+when set, so rows stored before them are not duplicated by the next sync.
+
 ### Which Oura ring was worn when
 
 Oura's direct API keeps one data source per account, so a participant who changes rings
