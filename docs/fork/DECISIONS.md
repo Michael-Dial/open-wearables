@@ -1902,3 +1902,26 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   source. Research note: a shift worker's daytime sleep under 3 h is a nap by this rule and leaves the
   main-sleep summary; 3 h or more never is.
 
+
+## Polar exercise samples are read by both key spellings
+
+- **Area**: backend
+- **Status**: active; upstreamable (upstream's `HRSamplesJSON` carries the same kebab-case aliases)
+- **On conflict**: keep ours (`HRSamplesJSON`'s `AliasChoices` and `_type_as_text`, and
+  `PolarWorkouts._report_no_rr`)
+- **Why**: the published AccessLink spec writes an exercise's sample arrays as
+  `{"recording-rate": 5, "sample-type": "1"}`, and `HRSamplesJSON` read only those keys. `/v3/exercises`
+  sends `{"recording_rate": 1, "sample_type": 11}`: snake_case keys, integer type (live payload,
+  2026-11-12, all 38 listed exercises of an H10 account). Every sample therefore parsed with no type, the
+  search for type 11 found nothing, and every chest-strap session stored its workout and no RR beat. Nothing
+  failed and nothing was logged: the result looked exactly like a session recorded without a strap. Both
+  spellings are read now and an integer type is kept as text. The tests had passed throughout because their
+  fixtures were written from the spec; the new ones use the live shape.
+  An exercise that yields no RR now says why: sample arrays with no readable type are an error with
+  `alert=True` (the mapping no longer matches the payload), typed arrays without type 11 are logged as a
+  strapless session. `PolarV4Data.rr_rows_for_session` likewise logs how many v4 sessions it listed and
+  matched when it returns nothing, since the v3 fallback hides it: the account that showed this holds a v4
+  grant and no v4 beat had landed either.
+  Stored workouts are not touched. The next pull re-lists the last 30 days of exercises, finds each already
+  stored, and writes its beats (upserted on source, type and `recorded_at`); older sessions need the v4
+  backfill or the Flow RR CSV import.

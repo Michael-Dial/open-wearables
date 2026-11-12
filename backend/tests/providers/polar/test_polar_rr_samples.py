@@ -183,6 +183,67 @@ class TestBuildRrSamples:
         assert lookup.call_args.args[2] == datetime(2026, 9, 22, 23, 0)
 
 
+def _live_samples(rr: str | None = "927,1019,1060") -> list[dict]:
+    """Sample arrays as /v3/exercises?samples=true sent them on 2026-11-12.
+
+    Snake_case keys and integer sample types, not the published spec's ``sample-type: "11"``:
+    heart rate (0), speed (1), temperature (9) and distance (10) at 1 Hz, then RR (11) from
+    the H10 paired to a Grit X2 Pro, whose overnight session stored no beat at all.
+    """
+    arrays = [
+        {"recording_rate": 1, "sample_type": 0, "data": "66,66,65"},
+        {"recording_rate": 1, "sample_type": 1, "data": "0,0,0"},
+        {"recording_rate": 1, "sample_type": 9, "data": "20.3,20.3,20.5"},
+        {"recording_rate": 1, "sample_type": 10, "data": "0,0,0"},
+    ]
+    if rr is not None:
+        arrays.append({"recording_rate": 1, "sample_type": 11, "data": rr})
+    return arrays
+
+
+class TestLiveSampleShape:
+    """The exercise list's samples as AccessLink actually sends them."""
+
+    def test_rr_is_read_from_the_live_payload(self, workouts: PolarWorkouts) -> None:
+        samples = workouts._rr_samples_for(MagicMock(), _exercise(_live_samples(), duration="PT3S"), uuid4())
+
+        assert [int(s.value) for s in samples] == [927, 1019, 1060]
+
+    def test_the_sample_type_is_kept_as_text_in_both_shapes(self) -> None:
+        live = _exercise(_live_samples())
+        spec = _exercise([{"recording-rate": 5, "sample-type": "11", "data": "1000"}])
+
+        assert [s.sample_type for s in live.samples or []] == ["0", "1", "9", "10", "11"]
+        assert [s.recording_rate for s in live.samples or []] == [1, 1, 1, 1, 1]
+        assert (spec.samples or [])[0].sample_type == "11"
+
+    def test_a_strapless_session_is_reported_as_one(self, workouts: PolarWorkouts) -> None:
+        with patch("app.services.providers.polar.workouts.logger") as log:
+            samples = workouts._rr_samples_for(MagicMock(), _exercise(_live_samples(rr=None)), uuid4())
+
+        assert samples == []
+        log.info.assert_any_call(
+            "Polar exercise has no RR sample (recorded without a chest strap)",
+            raw_workout_id="2AC312F",
+            sample_types=["0", "1", "9", "10"],
+        )
+        log.error.assert_not_called()
+
+    def test_samples_whose_type_cannot_be_read_are_an_alert_not_a_strapless_session(
+        self, workouts: PolarWorkouts
+    ) -> None:
+        """A mapping that parses to nothing must not read as a session without a strap."""
+        unreadable = [{"recordingRate": 1, "sampleType": 11, "data": "927,1019,1060"}]
+
+        with patch("app.services.providers.polar.workouts.logger") as log:
+            samples = workouts._rr_samples_for(MagicMock(), _exercise(unreadable), uuid4())
+
+        assert samples == []
+        assert log.error.call_args.args[0] == "Polar exercise samples have no readable sample type"
+        assert log.error.call_args.kwargs["alert"] is True
+        assert log.error.call_args.kwargs["arrays"] == 1
+
+
 class TestRrSurvivesThePull:
     """Through load_data against the database, as a scheduled pull runs it."""
 
@@ -226,6 +287,17 @@ class TestRrSurvivesThePull:
             workouts.load_data(db, user.id)
 
         assert self._stored_rr(db, user.id) == [1000, 900, 1100]
+
+    def test_a_live_payload_stores_its_rr(self, db: Session, workouts: PolarWorkouts) -> None:
+        """The 2026-11-07 H10 night: the workout was stored and not one of its beats."""
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        night = self._raw("0Rngjg9n", "2026-11-07T23:23:09", _live_samples())
+        night["start_time_utc_offset"] = -300
+        with patch.object(workouts, "_make_api_request", return_value=[night]):
+            workouts.load_data(db, user.id)
+
+        assert self._stored_rr(db, user.id) == [927, 1019, 1060]
 
 
 class TestSamplesAreRequested:

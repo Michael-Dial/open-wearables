@@ -215,10 +215,12 @@ class PolarV4Data:
         if not sessions:
             sessions = sessions_on(naive_start.date() - timedelta(days=1))
 
+        matched = 0
         for session in sessions:
             session_start = self._session_start(session)
             if session_start is None or abs(session_start - naive_start) > SESSION_MATCH_TOLERANCE:
                 continue
+            matched += 1
             rows = [
                 (beat.duration_millis, beat.offline)
                 for exercise in (session.exercises or [])
@@ -227,6 +229,16 @@ class PolarV4Data:
             ]
             if rows:
                 return rows
+        # The caller falls back to v3 either way; this line is what tells "v4 does not list
+        # the session" (a matching or parsing problem) from "v4 lists it without beats".
+        self.logger.info(
+            "Polar v4 has no RR for session",
+            user_id=str(user_id),
+            local_start=naive_start.isoformat(),
+            sessions_listed=len(sessions),
+            sessions_matched=matched,
+            listed_starts=[session.start_time for session in sessions][:10],
+        )
         return None
 
     # -------------------------------------------------------------------------

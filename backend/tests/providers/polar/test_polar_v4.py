@@ -69,6 +69,33 @@ class TestRrRowsForSession:
         with patch.object(v4, "is_connected", return_value=True), patch.object(v4, "_get", return_value=strapless):
             assert v4.rr_rows_for_session(MagicMock(), uuid4(), datetime(2024, 1, 15, 22)) is None
 
+    @pytest.mark.parametrize(
+        ("local_start", "matched"),
+        [
+            # v4 lists the day but nothing near this start: a matching or parsing problem.
+            (datetime(2024, 1, 15, 20), 0),
+            # v4 lists this session but without beats: recorded without a strap.
+            (datetime(2024, 1, 15, 22), 1),
+        ],
+    )
+    def test_says_whether_the_session_was_listed_when_it_has_no_rr(
+        self, v4: PolarV4Data, local_start: datetime, matched: int
+    ) -> None:
+        """The v3 fallback hides v4's silence, so the log must tell the two apart."""
+        strapless = {"trainingSessions": [{"startTime": "2024-01-15T22:00:00", "exercises": [{"samples": {}}]}]}
+        with (
+            patch.object(v4, "is_connected", return_value=True),
+            patch.object(v4, "_get", return_value=strapless),
+            patch.object(v4, "logger") as log,
+        ):
+            assert v4.rr_rows_for_session(MagicMock(), uuid4(), local_start) is None
+
+        kwargs = log.info.call_args.kwargs
+        assert log.info.call_args.args[0] == "Polar v4 has no RR for session"
+        assert kwargs["sessions_listed"] == 1
+        assert kwargs["sessions_matched"] == matched
+        assert kwargs["listed_starts"] == ["2024-01-15T22:00:00"]
+
     def test_features_request_is_scoped_to_a_single_day(self, v4: PolarV4Data) -> None:
         """v4 caps the range at one day whenever a feature is asked for."""
         with patch.object(v4, "is_connected", return_value=True), patch.object(v4, "_get", return_value=SESSION) as get:

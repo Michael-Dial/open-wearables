@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 
 class HeartRateJSON(BaseModel):
@@ -7,11 +7,25 @@ class HeartRateJSON(BaseModel):
 
 
 class HRSamplesJSON(BaseModel):
+    """One sample array of an exercise.
+
+    The published spec writes these keys kebab-case with a string type
+    (``"sample-type": "11"``), but /v3/exercises sends snake_case with an integer
+    (``"sample_type": 11``), as seen live on 2026-11-12. Reading only the spec's keys left
+    every sample untyped, so no chest-strap session stored a single RR beat and nothing
+    failed. Both spellings are read and the type is kept as text.
+    """
+
     # AccessLink sends this null on RR (sample type 11), which has no fixed rate. As a
     # required int it rejected every chest-strap exercise, and every RR beat with it.
-    recording_rate: int | None = Field(None, alias="recording-rate")
-    sample_type: str | None = Field(None, alias="sample-type")
+    recording_rate: int | None = Field(None, validation_alias=AliasChoices("recording_rate", "recording-rate"))
+    sample_type: str | None = Field(None, validation_alias=AliasChoices("sample_type", "sample-type"))
     data: str | None = None
+
+    @field_validator("sample_type", mode="before")
+    @classmethod
+    def _type_as_text(cls, value: object) -> object:
+        return str(value) if isinstance(value, int) and not isinstance(value, bool) else value
 
 
 class HRZoneJSON(BaseModel):
