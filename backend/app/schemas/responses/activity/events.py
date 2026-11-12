@@ -155,7 +155,13 @@ class SleepSession(BaseModel):
             "or none is scored as sleep. Served whether or not include=stages is requested."
         ),
     )
-    is_nap: bool = False
+    is_nap: bool = Field(
+        False,
+        description=(
+            "Whether the session is a nap: from the provider when it flags naps, else derived by Open Wearables "
+            "(see Data types)"
+        ),
+    )
     is_final: bool = Field(
         ...,
         description="Whether no more data is expected for this session; until then the provider may still extend it",

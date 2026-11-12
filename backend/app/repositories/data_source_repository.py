@@ -17,10 +17,10 @@ from app.constants.devices_map import (
     is_host_model,
     reconcile_device_type,
 )
-from app.constants.devices_map.device_types import SINGLE_DEVICE_PROVIDER_TYPE
+from app.constants.devices_map.device_types import APPLE_SOURCE_APP_PREFIX, SINGLE_DEVICE_PROVIDER_TYPE
 from app.constants.sdk_providers import SDK_PROVIDERS
 from app.database import DbSession
-from app.models import DataSource, HealthScore, ProviderPriority, UserConnection
+from app.models import DataSource, EventRecord, HealthScore, ProviderPriority, UserConnection
 from app.repositories.data_type_coverage_repository import data_type_coverage_repository
 from app.repositories.provider_priority_repository import ProviderPriorityRepository
 from app.repositories.repositories import CrudRepository
@@ -28,6 +28,7 @@ from app.repositories.series_reconcile_repository import NOT_RECONCILED_SOURCE
 from app.schemas.enums import (
     DeviceModelOrigin,
     DeviceType,
+    EventCategory,
     ProviderName,
 )
 from app.schemas.model_crud.data_priority import DataSourceCreate, DataSourceUpdate
@@ -1489,6 +1490,30 @@ class DataSourceRepository(
             group = by_writer.get((row.user_id, str(row.provider), row.user_connection_id, name), []) if name else []
             result[row.id] = tuple(other.id for other in group if other.id != row.id and _same_unit(row, other))
         return result
+
+    def sleep_sources(
+        self, db_session: DbSession, providers: Iterable[ProviderName], after: UUID | None, limit: int
+    ) -> list[tuple[UUID, UUID]]:
+        """(id, user id) of the providers' data sources that hold sleep, by id after ``after``."""
+        has_sleep = (
+            select(EventRecord.id)
+            .where(EventRecord.data_source_id == self.model.id, EventRecord.category == EventCategory.SLEEP)
+            .exists()
+        )
+        query = select(self.model.id, self.model.user_id).where(self.model.provider.in_(list(providers)), has_sleep)
+        if after is not None:
+            query = query.where(self.model.id > after)
+        return [(row.id, row.user_id) for row in db_session.execute(query.order_by(self.model.id).limit(limit))]
+
+    def apple_app_sources(self, db_session: DbSession, after: UUID | None, limit: int) -> list[tuple[UUID, UUID, str]]:
+        """(id, user id, source app id) of the data sources Apple's own apps wrote, by id after ``after``."""
+        query = select(self.model.id, self.model.user_id, self.model.source_app_id).where(
+            self.model.source_app_id.like(f"{APPLE_SOURCE_APP_PREFIX}%")
+        )
+        if after is not None:
+            query = query.where(self.model.id > after)
+        rows = db_session.execute(query.order_by(self.model.id).limit(limit))
+        return [(row.id, row.user_id, row.source_app_id) for row in rows]
 
     def get_user_data_sources(
         self,

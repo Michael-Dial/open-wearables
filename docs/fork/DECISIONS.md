@@ -1883,3 +1883,22 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   don't repair). `users/me/pairedDevices` (scope already requested, never called) registers each paired unit by
   Google's id; written from the spec, logged as `oauth_google_paired_devices` until a live account confirms the
   shape; the MAC address is not stored.
+
+## HealthKit condensed series and inferred naps (upstream #2061, #2059): taken as is
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: take upstream
+- **Why**: HealthKit merges a first-party workout's heart rate, energy and distance samples more than
+  about a month old into one series sample and deletes the originals on the phone; uploaded again, it
+  counted them twice and overwrote the first original at its key. Ingest now drops such a series when
+  the originals are held, and `repair_condensed_series` (background, once) restores an overwritten
+  original or deletes the stored series. It only touches heart rate, active/basal energy and
+  walking/cycling distance from Apple's own sources, so HRV and beat-to-beat series are untouched.
+  Deletions are permanent: dry-run it on a deployment first.
+  Sleep from providers that send no nap flag (SDK providers, SensorBio, Ultrahuman, Withings) is now
+  flagged as a nap when it is 15 min to under 3 h, starts 06:00-20:00 local time and sits away from
+  the day's main sleep; `classify_sleep_naps` (background, once) reclassifies stored sleep per data
+  source. Research note: a shift worker's daytime sleep under 3 h is a nap by this rule and leaves the
+  main-sleep summary; 3 h or more never is.
+
