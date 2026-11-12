@@ -246,11 +246,10 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         non-positive (e.g. a paused session) the median valid interval is used instead.
         Only real beats are stored; the estimate is a clock, never a value.
         """
-        sample = next(
-            (s for s in (raw_workout.samples or []) if s.sample_type == RR_INTERVAL_SAMPLE_TYPE),
-            None,
-        )
+        arrays = raw_workout.samples or []
+        sample = next((s for s in arrays if s.sample_type == RR_INTERVAL_SAMPLE_TYPE), None)
         if sample is None or not sample.data:
+            self._report_no_rr(raw_workout)
             return []
 
         values = self._parse_rr_sample_data(sample.data)
@@ -293,6 +292,31 @@ class PolarWorkouts(BaseWorkoutsTemplate):
                 )
             )
         return samples
+
+    @staticmethod
+    def _report_no_rr(raw_workout: PolarExerciseJSON) -> None:
+        """Say why an exercise yielded no RR, so an unread payload never reads as no strap.
+
+        Sample arrays whose type cannot be read mean the mapping no longer matches what
+        AccessLink sends: every exercise then stores no beat, exactly as a strapless one
+        would. That is an alert. Typed arrays without type 11 are a session recorded
+        without a chest strap.
+        """
+        arrays = raw_workout.samples or []
+        untyped = sum(1 for s in arrays if s.sample_type is None and s.data)
+        if untyped:
+            logger.error(
+                "Polar exercise samples have no readable sample type",
+                raw_workout_id=str(raw_workout.id),
+                arrays=untyped,
+                alert=True,
+            )
+        elif arrays:
+            logger.info(
+                "Polar exercise has no RR sample (recorded without a chest strap)",
+                raw_workout_id=str(raw_workout.id),
+                sample_types=[s.sample_type for s in arrays],
+            )
 
     def _rr_samples_for(
         self,
