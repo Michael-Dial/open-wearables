@@ -6,8 +6,12 @@ Flux repo names.
 
 ```
 push to main ──► build.yml ──► ghcr.io/michael-dial/open-wearables-{platform,frontend}:sha-<7>
+                                 and :latest (the homelab pulls this)
                                               │
-merge request in flux_pit changing the tag ◄──┘
+"Promote to OSU" (promote-osu.yml) ──► :osu ◄─┘
+                                              │
+release.sh in flux_pit, every 15 min ◄────────┘
+  opens and merges an MR changing the sha- tags
         │
         ▼
 Flux reconciles namespace pit
@@ -20,9 +24,11 @@ first `flux_pit` merge request after the move changes the image path as well as 
 packages start private, and the cluster pulls GHCR anonymously, so set each package's visibility
 to public (org package settings) before that merge request.
 
-Images build automatically. Changing the tag is a manual merge request on purpose: the
-API runs Alembic and data migrations every time it starts, so every tag change migrates
-the production database. That step should have a person checking it and leave a record.
+Images build automatically, and the homelab follows `:latest`. OSU follows `:osu` instead,
+which moves only when someone runs **Promote to OSU**; that click is the approval step. The
+API runs Alembic and data migrations every time it starts, so every promotion of a new
+platform build migrates the production database: promote when you can watch the `ow-api`
+logs. Each deploy still lands as a merge request in `flux_pit`, which is the record.
 
 ## Where things live
 
@@ -117,11 +123,26 @@ service; there is no Postgres container.
 
 ## Updating
 
-1. Merge to `main`; wait for `build.yml` to finish.
-2. Open a merge request in `flux_pit` that changes the `sha-` tag. Use the same platform tag in
-   `ow-api`, `ow-worker` and `ow-beat` (all three must run the same code against the same
-   migrated schema), and change `ow-web` if the frontend changed.
-3. After merge, Flux rolls the Deployments. Watch `ow-api` logs for the migration output.
+1. Merge to `main`; wait for `build.yml` to finish. Portainer's "Pull and redeploy" puts it on
+   the homelab.
+2. When it works there, run **Actions → Promote to OSU → Run workflow** with `latest`, or with the
+   `sha-<7>` tag the homelab is running if `main` has moved on since.
+3. Within 15 minutes, `release.sh` (pipeline schedule #6 in `flux_pit`, on the `dial-mac` GitLab
+   runner) opens a merge request that sets `ow-api`, `ow-worker` and `ow-beat` to the platform
+   tag and `ow-web` to the frontend tag, and merges it. The Mac has to be awake and on VPN.
+4. Flux rolls the Deployments within about 5 minutes. Watch `ow-api` logs for the migration output.
+
+To roll back, promote the earlier `sha-` tag; don't revert across a migration without checking
+the migration first. Editing a tag in `production/ow-*.yaml` by hand doesn't stick: the next run
+sets it back to whatever `:osu` points at.
+
+The schedule's variables control this: `GHCR_SOURCE_TAG=osu` (which tag to deploy; `release.sh`
+defaults to `latest`), `AUTO_MERGE=1` (merge without waiting for a person; `0` leaves the merge
+request open) and `GHCR_OWNER=michael-dial`. A run that can't merge fails the pipeline and
+leaves the merge request open for you.
+
+Promotion only moves image tags. A release that needs a new environment variable, ConfigMap
+or Secret value still needs that change in `flux_pit/production/` first, before you promote.
 
 A ConfigMap or Secret change doesn't reach running pods (`envFrom` is read at start, and the
 proxy's `local.conf` is a `subPath` mount). Delete the affected pods in the GUI after the
