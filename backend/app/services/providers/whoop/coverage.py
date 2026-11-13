@@ -9,9 +9,17 @@ RECOVERY_SERIES: dict[str, SeriesType] = {
     "skin_temp_celsius": SeriesType.skin_temperature,
 }
 
+# Per-sleep scalars on /v2/activity/sleep's score, filed as the provider's figure for that sleep (fork).
+# respiratory_rate was kept only inside the sleep score's components, which no summary reads: every Whoop
+# night reached the sleep summary with no respiratory rate although Whoop states one for every scored sleep.
+SLEEP_SCALAR_SERIES: dict[str, SeriesType] = {
+    "respiratory_rate": SeriesType.respiratory_rate,
+}
+
 TIMESERIES: frozenset[SeriesType] = frozenset(
     {
         *RECOVERY_SERIES.values(),  # /v2/recovery
+        *SLEEP_SCALAR_SERIES.values(),  # /v2/activity/sleep (score)
         SeriesType.height,  # /v2/user/measurement/body
         SeriesType.weight,  # /v2/user/measurement/body
         SeriesType.total_energy,  # /v2/cycle, daily total from kilojoule (includes BMR)

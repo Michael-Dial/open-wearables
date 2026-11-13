@@ -1925,3 +1925,27 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   Stored workouts are not touched. The next pull re-lists the last 30 days of exercises, finds each already
   stored, and writes its beats (upserted on source, type and `recorded_at`); older sessions need the v4
   backfill or the Flow RR CSV import.
+
+
+## Whoop's sleep respiratory rate is filed as its figure for the sleep
+
+- **Area**: backend
+- **Status**: active; upstreamable (upstream keeps `score.respiratory_rate` only in the sleep score's
+  components too)
+- **On conflict**: keep ours (`SLEEP_SCALAR_SERIES` in `whoop/coverage.py`, `Whoop247Data._save_sleep_scalars`,
+  and `scripts/data_migrations/resync_whoop_sleep_respiratory_rate.py` in `scripts/start/app.sh`)
+- **Why**: Whoop states a respiratory rate on every scored sleep (`/v2/activity/sleep`, `score.respiratory_rate`).
+  It was kept only in the sleep health score's `components`, which no summary reads, so every Whoop night
+  reached `/summaries/sleep` with `avg_respiratory_rate` empty, while the same strap's direct road in the sleep
+  hub carried it (night of 2026-11-13: 12.5 br/min direct, nothing through OW). It is now written as a
+  `respiratory_rate` sample stamped at the sleep's start and tied to the stored record, so the summary reads it
+  as the provider's figure with scope `sleep`, the way Oura's `average_breath` arrives. A sleep merged into a
+  longer record contributes only when it ends that record, so the merged night carries the figure of the sleep
+  its recovery is scored on whatever order the segments sync in. The resting HR needed no change here: the
+  recovery's `resting_heart_rate` was already filed on the sleep and published as `resting_heart_rate_bpm`
+  (`avg_heart_rate_bpm` stays empty for Whoop, which sends no heart-rate samples).
+  Stored nights are not filled from the score components: Whoop sleep scores carry no data source, so on a
+  profile with two Whoop accounts a score cannot be told apart from the other strap's at the same wake time.
+  Instead the startup migration queues one historical `sync_vendor_data` per active Whoop connection that holds
+  sleep, from a day before its earliest stored sleep, so each night goes through the live path under its own
+  account. Runs once per instance (data_migration).
