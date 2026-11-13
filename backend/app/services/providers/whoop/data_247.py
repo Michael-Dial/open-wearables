@@ -34,7 +34,7 @@ from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.sync_247_result import Sync247Result
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
-from app.services.providers.whoop.coverage import RECOVERY_SERIES
+from app.services.providers.whoop.coverage import RECOVERY_SERIES, SLEEP_SCALAR_SERIES
 from app.services.raw_payload_storage import store_raw_payload
 from app.services.timeseries_service import timeseries_service
 from app.utils.conversion import kilojoules_to_kcal, seconds_to_minutes
@@ -403,7 +403,9 @@ class Whoop247Data(Base247DataTemplate):
         )
 
         try:
-            event_record_service.create_or_merge_sleep(db, user_id, record, detail, settings.sleep_end_gap_minutes)
+            saved = event_record_service.create_or_merge_sleep(
+                db, user_id, record, detail, settings.sleep_end_gap_minutes
+            )
         except Exception as e:
             logger.error(
                 "Error saving sleep record",
@@ -411,6 +413,63 @@ class Whoop247Data(Base247DataTemplate):
                 task="save_sleep_data",
                 user_id=str(user_id),
                 sleep_id=str(sleep_id),
+                error=str(e),
+            )
+            return
+
+        self._save_sleep_scalars(db, user_id, normalized_sleep, saved, start_dt, end_dt)
+
+    def _save_sleep_scalars(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        normalized_sleep: dict[str, Any],
+        saved: EventRecord,
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> None:
+        """File the sleep score's per-sleep figures (respiratory rate) as Whoop's figure for that sleep (fork).
+
+        Stamped at the sleep's start, inside it, and tied to the stored record, so the sleep summary reads it
+        as the provider's value for the night, as it reads Oura's ``average_breath``. A sleep merged into a
+        longer record contributes only when it is the segment that ends that record: the record then carries
+        the figure of the sleep its recovery is scored on, whatever order the segments are synced in, rather
+        than whichever segment happened to be saved last.
+        """
+        if saved.end_datetime != end_dt:
+            return
+        samples: list[TimeSeriesSampleCreate] = []
+        for field_name, series_type in SLEEP_SCALAR_SERIES.items():
+            value = normalized_sleep.get(field_name)
+            if value is None:
+                continue
+            samples.append(
+                TimeSeriesSampleCreate(
+                    route=SampleRoute.WHOOP_DAILY,
+                    id=uuid4(),
+                    user_id=user_id,
+                    source=self.provider_name,
+                    recorded_at=start_dt,
+                    zone_offset=normalized_sleep.get("zone_offset"),
+                    value=Decimal(str(value)),
+                    series_type=series_type,
+                    session=SessionValue(record_id=saved.id),
+                )
+            )
+        if not samples:
+            return
+        try:
+            # A savepoint, so a failure here loses these figures and never the sleep saved above.
+            with db.begin_nested():
+                timeseries_service.bulk_create_samples(db, samples)
+            db.commit()
+        except Exception as e:
+            logger.warning(
+                "Failed to save sleep scalar series",
+                provider="whoop",
+                task="save_sleep_data",
+                user_id=str(user_id),
+                record_id=str(saved.id),
                 error=str(e),
             )
 

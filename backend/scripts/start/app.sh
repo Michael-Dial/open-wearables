@@ -212,6 +212,13 @@ echo 'Queueing HealthKit condensed series repair...'
 uv run python scripts/data_migrations/repair_condensed_series.py \
     || echo "Warning: HealthKit condensed series repair not queued — will retry on next startup."
 
+# TODO: Remove this after ~2027-05-01 once all deployments have migrated.
+# Queues a historical re-pull of every Whoop account's stored sleep, so nights stored before Whoop's sleep
+# respiratory rate was filed gain it, each under its own account. Runs once per instance (data_migration).
+echo 'Queueing Whoop sleep respiratory rate re-pull...'
+uv run python scripts/data_migrations/resync_whoop_sleep_respiratory_rate.py \
+    || echo "Warning: Whoop sleep re-pull not queued — will retry on next startup."
+
 # Initialize archival settings
 echo 'Initializing archival settings...'
 uv run python scripts/init/seed_archival_settings.py
