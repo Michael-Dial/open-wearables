@@ -1949,3 +1949,18 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   Instead the startup migration queues one historical `sync_vendor_data` per active Whoop connection that holds
   sleep, from a day before its earliest stored sleep, so each night goes through the live path under its own
   account. Runs once per instance (data_migration).
+
+## Polar late nights (upstream #2066): checked by the fork's night id, within one account
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (`Polar247Data._unstored_late_nights`, `user_connection_id` on
+  `EventRecordRepository.sleep_windows`)
+- **Why**: Polar lists a night as available only after the watch syncs, often once its date has left
+  the sync window; upstream now fetches those late nights unless one is already stored. Upstream checks
+  `sleep-<date>`, and fork nights carry the bare date, so the check never matched and a night Polar
+  lists without times would be fetched on every sync. Both its checks (by id, then by overlap) also read
+  every Polar night of the user: with two Polar accounts worn the same night, one account's stored night
+  would stop the other's late night from ever being fetched. Both checks now use the bare date and stay
+  within the account being synced.
+
