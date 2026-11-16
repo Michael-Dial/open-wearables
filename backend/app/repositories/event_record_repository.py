@@ -114,15 +114,32 @@ _NIGHT_FROM_SAMPLES = text("""
              WHERE a.data_source_id = er.data_source_id AND a.series_type_definition_id = m.type_id
                 AND a.period_kind = 'day' AND a.computed_by = 'provider'
                 AND a.period_start <= er.end_datetime AND a.period_end > er.end_datetime)
-        ) END AS day_avg
+        ) END AS day_avg,
+        -- Fork: a day value the provider writes as a SAMPLE, for the local day the sleep ended in. Apple writes one
+        -- RestingHeartRate sample a day, stamped minutes after local midnight, so it lands inside the sleep only
+        -- when the person fell asleep before midnight; read for the series in _DAY_VALUE_SAMPLES only.
+        CASE WHEN m.need_day_sample THEN (
+            SELECT avg(s.value) FROM series_sample s
+            WHERE s.data_source_id = er.data_source_id AND s.series_type_definition_id = m.type_id
+                AND s.is_daily_total IS NOT TRUE
+                AND s.recorded_at >= wake.midnight AND s.recorded_at < wake.midnight + interval '1 day'
+        ) END AS day_sample_avg
         -- Fork: no fallback to the user's other data sources. Averaging another device's samples into this night
         -- made an Oura night report a Whoop HRV, and with two accounts on one provider another person's device;
         -- a night whose own source recorded nothing reports nothing.
     FROM unnest(
         CAST(:record_ids AS uuid[]), CAST(:type_ids AS integer[]),
-        CAST(:need_samples AS boolean[]), CAST(:need_day AS boolean[])
-    ) AS m(record_id, type_id, need_samples, need_day)
+        CAST(:need_samples AS boolean[]), CAST(:need_day AS boolean[]), CAST(:need_day_sample AS boolean[])
+    ) AS m(record_id, type_id, need_samples, need_day, need_day_sample)
     JOIN event_record er ON er.id = m.record_id
+    -- The UTC instant of local midnight on the day the sleep ended, by the sleep's own offset (UTC without one).
+    CROSS JOIN LATERAL (
+        SELECT (
+            date_trunc('day', (er.end_datetime AT TIME ZONE 'UTC')
+                + CAST(coalesce(er.zone_offset, '+00:00') AS interval))
+            - CAST(coalesce(er.zone_offset, '+00:00') AS interval)
+        ) AT TIME ZONE 'UTC' AS midnight
+    ) wake
     -- Lateral, so it stays one index range per row: joined plainly, the planner hashes the whole sample table.
     LEFT JOIN LATERAL (
         SELECT avg(s.value) AS avg, count(*) AS n FROM series_sample s
@@ -158,6 +175,14 @@ _NIGHTLY_DAY_VALUE = frozenset(
         SeriesType.oxygen_saturation,
     }
 )
+
+
+# Fork: series a provider writes as one sample per day rather than as a day aggregate, read for the sleep's wake-up
+# day when the sleep holds no sample of its own. Apple's RestingHeartRate is stamped minutes after local midnight
+# (an Ultra 4, 2026-10-20 to 10-26: 00:00:42 to 00:05:16), so a night that began after it had no resting HR at all
+# and one that began before it had one - the same watch, "sometimes". It is Apple's daily figure, not a mean of the
+# night, so it is reported as the provider's day value; a sample inside the sleep still comes first, as before.
+_DAY_VALUE_SAMPLES = frozenset({SeriesType.resting_heart_rate})
 
 
 def _weighted(values: list[tuple[float, int]]) -> float | None:
@@ -1739,7 +1764,9 @@ class EventRecordRepository(
         type_ids = {get_series_type_id(series_type): key for key, series_type in _SLEEP_PHYSIOLOGY.items()}
         provider_sleep: dict[tuple[UUID, int], float] = {}
         provider_day: dict[tuple[UUID, int], float] = {}
+        day_sample: dict[tuple[UUID, int], float] = {}
         ours: dict[tuple[UUID, int], tuple[float, int]] = {}
+        day_sample_types = {get_series_type_id(series_type) for series_type in _DAY_VALUE_SAMPLES}
         if record_ids:
             rows = db_session.query(EventRecordAggregate).filter(
                 EventRecordAggregate.record_id.in_(record_ids),
@@ -1765,6 +1792,9 @@ class EventRecordRepository(
                 "type_ids": [t for _, t in pairs],
                 "need_samples": [pair not in ours for pair in pairs],
                 "need_day": [pair not in provider_sleep for pair in pairs],
+                "need_day_sample": [
+                    pair[1] in day_sample_types and pair not in ours and pair not in provider_sleep for pair in pairs
+                ],
             }
             for row in db_session.execute(_NIGHT_FROM_SAMPLES, params):
                 pair = (row.record_id, row.type_id)
@@ -1772,6 +1802,8 @@ class EventRecordRepository(
                     ours[pair] = (float(row.sample_avg), int(row.sample_count))
                 if row.day_avg is not None:
                     provider_day[pair] = float(row.day_avg)
+                if row.day_sample_avg is not None:
+                    day_sample[pair] = float(row.day_sample_avg)
 
         physiology: dict[tuple, dict] = {}
         for key, sleeps in main_sleeps_by_key.items():
@@ -1788,6 +1820,10 @@ class EventRecordRepository(
                 own = [(ours[(r, type_id)], w) for r, w in weights if (r, type_id) in ours]
                 own_mean = _weighted([(value, w) for (value, _), w in own])
                 own_count = sum(count for (_, count), _ in own)
+                if by_day is None and own_mean is None:
+                    by_day = _weighted(
+                        [(day_sample[(r, type_id)], w) for r, w in weights if (r, type_id) in day_sample]
+                    )
 
                 provider_value, scope = (by_sleep, "sleep") if by_sleep is not None else (by_day, "day")
                 provider = {"value": provider_value, "scope": scope} if provider_value is not None else None

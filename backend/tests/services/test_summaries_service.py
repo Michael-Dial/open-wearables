@@ -320,6 +320,77 @@ class TestGetSleepSummaries:
 
         assert [night.avg_spo2_percent for night in result.data] == [96.5]
 
+    def _apple_night_with_resting_pulse(self, db: Session, start: str, end: str, stamped: str) -> Any:
+        """An Apple Watch sleep in New York and the watch's one RestingHeartRate sample of a day (fork)."""
+        user = UserFactory()
+        watch = DataSourceFactory(user=user, provider=ProviderName.APPLE, source="apple_health_sdk")
+        record = EventRecordFactory(
+            data_source=watch,
+            category="sleep",
+            type="sleep",
+            start_datetime=_dt(start),
+            end_datetime=_dt(end),
+            duration_seconds=int((_dt(end) - _dt(start)).total_seconds()),
+            zone_offset="-04:00",
+        )
+        SleepDetailsFactory(event_record=record)
+        DataPointSeriesFactory(
+            data_source=watch,
+            series_type=SeriesTypeDefinitionFactory.get_or_create_resting_heart_rate(),
+            value=58,
+            recorded_at=_dt(stamped),
+        )
+        return user
+
+    def _resting(self, db: Session, service: SummariesService, user: Any) -> tuple[Any, Any]:
+        night = service.get_sleep_summaries(
+            db, user.id, _dt("2026-10-24T00:00:00+00:00"), _dt("2026-10-28T00:00:00+00:00"), cursor=None, limit=10
+        ).data
+        assert len(night) == 1
+        provenance = night[0].vitals_provenance
+        return night[0].resting_heart_rate_bpm, provenance.resting_heart_rate_bpm if provenance else None
+
+    def test_an_apple_resting_pulse_stamped_before_a_sleep_that_began_after_midnight_counts(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        """Apple stamps its daily resting HR minutes after local midnight; asleep at 00:04:38, it was 21 s too early."""
+        user = self._apple_night_with_resting_pulse(
+            db, "2026-10-26T04:04:38+00:00", "2026-10-26T11:46:20+00:00", stamped="2026-10-26T04:04:17+00:00"
+        )
+
+        value, provenance = self._resting(db, service, user)
+
+        assert value == 58
+        assert provenance.computed_by == ComputedBy.PROVIDER
+        assert provenance.provider.scope == "day"
+        assert provenance.open_wearables is None
+
+    def test_an_apple_resting_pulse_inside_the_sleep_counts_as_before(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        user = self._apple_night_with_resting_pulse(
+            db, "2026-10-25T03:31:29+00:00", "2026-10-25T10:15:07+00:00", stamped="2026-10-25T04:01:31+00:00"
+        )
+
+        value, provenance = self._resting(db, service, user)
+
+        assert value == 58
+        assert provenance.computed_by == ComputedBy.OPEN_WEARABLES
+        assert provenance.open_wearables.sample_count == 1
+
+    def test_a_resting_pulse_from_another_local_day_is_not_the_nights(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        """The day before the wake-up day (local) is another day's figure: no value, never a neighbour's."""
+        user = self._apple_night_with_resting_pulse(
+            db, "2026-10-26T04:04:38+00:00", "2026-10-26T11:46:20+00:00", stamped="2026-10-25T04:05:16+00:00"
+        )
+
+        value, provenance = self._resting(db, service, user)
+
+        assert value is None
+        assert provenance is None
+
     def test_does_not_return_other_users_data(self, db: Session, service: SummariesService) -> None:
         user_a = UserFactory()
         user_b = UserFactory()

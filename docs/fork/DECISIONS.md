@@ -1786,6 +1786,24 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   sample count. Consumers reading `avg_hrv_rmssd_ms` through OW (the validation hubs) now get the
   vendor's nightly figure where the vendor publishes one, which is what a validation scores.
 
+## Apple's resting HR is read for the night's wake-up day, not only inside the sleep
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (`_DAY_VALUE_SAMPLES`, `day_sample_avg` in `_NIGHT_FROM_SAMPLES`,
+  `event_record_repository.py`)
+- **Why**: Apple writes one `HKQuantityTypeIdentifierRestingHeartRate` sample a day, stamped minutes after
+  local midnight (an Ultra 4, 2026-10-20 to 10-26: 00:00:42 to 00:05:16 EDT), and the SDK files it as a
+  sample, not a day aggregate. A night's resting HR was the mean of the source's samples inside the
+  sleep, so it was present when the wearer fell asleep before that stamp and absent when they fell
+  asleep after it: on 2026-10-26 sleep began at 00:04:38 and the sample was at 00:04:17, 21 seconds
+  early, and the night had none. The same watch reported a resting HR "sometimes". When a sleep holds
+  no sample of its own, the source's resting-HR sample(s) stamped on the local day the sleep ended
+  (by the sleep's `zone_offset`, UTC without one) are now its day value, reported as the provider's
+  with scope `day`. Never another day's and never another source's. A sample inside the sleep still
+  comes first and is unchanged, so no night that had a value changes. It is Apple's daily figure,
+  not a mean of the night; consumers scoring an overnight mean read `avg_heart_rate_bpm`.
+
 ## Apple's Bluetooth accessory services, the bundle id as writer, and dated source observations
 
 - **Area**: backend
