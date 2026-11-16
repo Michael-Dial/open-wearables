@@ -1,4 +1,6 @@
 name: Promote to OSU
+# Shown in the runs list, so each run says which build it promoted.
+run-name: Promote ${{ inputs.tag }} to OSU
 
 # Deploys a build to OSU Container Services. The homelab follows :latest; OSU
 # follows :osu. This workflow points :osu at a build you've tried on the
@@ -63,8 +65,16 @@ jobs:
       - name: Point :osu at the build
         run: |
           set -euo pipefail
+          # The commit the platform image was built from (build.yml's metadata-action
+          # labels it), so 'latest' shows which build it meant. Best effort.
+          rev="$(docker buildx imagetools inspect "$REGISTRY/open-wearables-platform:$TAG" \
+                   --format '{{json .Image}}' 2>/dev/null \
+                 | jq -r '(.config.Labels // (.[]?.config.Labels)) // {} | ."org.opencontainers.image.revision" // empty' 2>/dev/null \
+                 | head -n1 | cut -c1-7 || true)"
+          title="# Promoted \`$TAG\` to OSU"
+          [ -n "$rev" ] && [ "$TAG" != "sha-$rev" ] && title="$title (commit \`$rev\`)"
           {
-            echo "## Promoted \`$TAG\` to \`:osu\`"
+            echo "$title"
             echo
             echo "| Image | Digest |"
             echo "|---|---|"
