@@ -6,11 +6,11 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-11-12 17:09 UTC |
-| Our ref | `HEAD` — 425bae44 (2026-11-12) Merge upstream: condensed HealthKit series, inferred naps, 1.0 |
-| Upstream `main` | 7ca121dd (2026-11-06) chore: update OW to 1.0 (#2065) |
-| Last common commit | 7ca121dd (2026-11-06) chore: update OW to 1.0 (#2065) |
-| Commits we are ahead | 245 |
+| Generated | 2026-11-16 13:58 UTC |
+| Our ref | `HEAD` — 6017c89b (2026-11-16) Merge upstream: Polar late nights, previous_day_activity, dependency updates |
+| Upstream `main` | 7702bd9e (2026-11-16) feat: add the previous_day_activity health score category (#2070) |
+| Last common commit | 7702bd9e (2026-11-16) feat: add the previous_day_activity health score category (#2070) |
+| Commits we are ahead | 255 |
 | Upstream commits not merged | 0 |
 | Latest sync tag | upstream-sync/2026-11-04 |
 
@@ -28,14 +28,14 @@ git diff upstream-sync/2026-11-04..HEAD
 git show upstream/main:<path>
 
 # which of our commits touched a file
-git log --oneline 7ca121dd4e483ec2f397f141a326e2bc81a960bd..HEAD -- <path>
+git log --oneline 7702bd9e9e4314cea2cd44c96fa7726f5ae89766..HEAD -- <path>
 ```
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
 
 ## Diverged files
 
-713 files: 3 deleted, 464 fork-only, 246 modified.
+718 files: 3 deleted, 468 fork-only, 247 modified.
 
 ### `backend`
 
@@ -103,7 +103,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/repositories/data_point_series_repository.py` | modified | +335/-82 |
 | `backend/app/repositories/data_source_repository.py` | modified | +1398/-343 |
 | `backend/app/repositories/device_repository.py` | fork-only | — |
-| `backend/app/repositories/event_record_repository.py` | modified | +621/-152 |
+| `backend/app/repositories/event_record_repository.py` | modified | +634/-154 |
 | `backend/app/repositories/health_score_repository.py` | modified | +164/-34 |
 | `backend/app/repositories/heart_rate_sensor_repository.py` | fork-only | — |
 | `backend/app/repositories/provider_credential_repository.py` | fork-only | — |
@@ -145,7 +145,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/schemas/providers/mobile_sdk/sync_request.py` | modified | +6/-0 |
 | `backend/app/schemas/providers/oura/imports.py` | modified | +16/-0 |
 | `backend/app/schemas/providers/polar/__init__.py` | modified | +15/-0 |
-| `backend/app/schemas/providers/polar/exercise_import.py` | modified | +8/-4 |
+| `backend/app/schemas/providers/polar/exercise_import.py` | modified | +23/-5 |
 | `backend/app/schemas/providers/polar/v4.py` | fork-only | — |
 | `backend/app/schemas/providers/strava/activity_import.py` | modified | +25/-0 |
 | `backend/app/schemas/providers/suunto/workout_import.py` | modified | +2/-0 |
@@ -205,7 +205,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/providers/oura/webhook_handler.py` | modified | +9/-4 |
 | `backend/app/services/providers/oura/webhook_service.py` | modified | +7/-7 |
 | `backend/app/services/providers/polar/coverage.py` | modified | +4/-1 |
-| `backend/app/services/providers/polar/data_247.py` | modified | +454/-92 |
+| `backend/app/services/providers/polar/data_247.py` | modified | +481/-97 |
 | `backend/app/services/providers/polar/oauth.py` | modified | +52/-11 |
 | `backend/app/services/providers/polar/strategy.py` | modified | +3/-0 |
 | `backend/app/services/providers/polar/v4_data.py` | fork-only | — |
@@ -213,7 +213,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/providers/polar/v4_strategy.py` | fork-only | — |
 | `backend/app/services/providers/polar/webhook_handler.py` | modified | +16/-12 |
 | `backend/app/services/providers/polar/webhook_service.py` | modified | +3/-3 |
-| `backend/app/services/providers/polar/workouts.py` | modified | +418/-17 |
+| `backend/app/services/providers/polar/workouts.py` | modified | +442/-17 |
 | `backend/app/services/providers/sensorbio/data_247.py` | modified | +4/-1 |
 | `backend/app/services/providers/sensorbio/oauth.py` | modified | +6/-7 |
 | `backend/app/services/providers/strava/coverage.py` | modified | +1/-0 |
@@ -229,7 +229,8 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/providers/templates/base_oauth.py` | modified | +126/-3 |
 | `backend/app/services/providers/ultrahuman/data_247.py` | modified | +3/-1 |
 | `backend/app/services/providers/ultrahuman/oauth.py` | modified | +5/-7 |
-| `backend/app/services/providers/whoop/data_247.py` | modified | +65/-14 |
+| `backend/app/services/providers/whoop/coverage.py` | modified | +8/-0 |
+| `backend/app/services/providers/whoop/data_247.py` | modified | +126/-16 |
 | `backend/app/services/providers/whoop/oauth.py` | modified | +11/-7 |
 | `backend/app/services/providers/whoop/webhook_handler.py` | modified | +50/-27 |
 | `backend/app/services/providers/withings/data_247.py` | modified | +89/-6 |
@@ -311,13 +312,14 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/scripts/data_migrations/reclassify_data_source_device_type.py` | fork-only | — |
 | `backend/scripts/data_migrations/relabel_apple_wrist_temp_to_skin_temp.py` | fork-only | — |
 | `backend/scripts/data_migrations/restamp_provider_sleep_scores.py` | modified | +9/-0 |
+| `backend/scripts/data_migrations/resync_whoop_sleep_respiratory_rate.py` | fork-only | — |
 | `backend/scripts/data_migrations/scale_apple_xml_percentages.py` | modified | +11/-4 |
 | `backend/scripts/data_migrations/scope_strava_model_claims_by_account.py` | fork-only | — |
 | `backend/scripts/data_migrations/split_host_relayed_devices.py` | fork-only | — |
 | `backend/scripts/data_migrations/split_oura_sources_by_ring_setup.py` | fork-only | — |
 | `backend/scripts/init/create_svix_db.py` | modified | +10/-8 |
 | `backend/scripts/init_provider_settings.py` | modified | +2/-2 |
-| `backend/scripts/start/app.sh` | modified | +17/-15 |
+| `backend/scripts/start/app.sh` | modified | +24/-15 |
 | `backend/scripts/start/worker.sh` | modified | +23/-6 |
 | `backend/scripts/validate_garmin_summary_prefix.py` | fork-only | — |
 | `backend/tests/algorithms/test_sleep_onset.py` | fork-only | — |
@@ -376,7 +378,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/providers/google_health/test_google_vo2_estimate.py` | fork-only | — |
 | `backend/tests/providers/oura/test_oura_ring_record.py` | fork-only | — |
 | `backend/tests/providers/oura/test_ring_configuration.py` | fork-only | — |
-| `backend/tests/providers/polar/test_polar_247.py` | modified | +171/-58 |
+| `backend/tests/providers/polar/test_polar_247.py` | modified | +190/-60 |
 | `backend/tests/providers/polar/test_polar_day_offset_fallback.py` | fork-only | — |
 | `backend/tests/providers/polar/test_polar_oauth.py` | modified | +53/-0 |
 | `backend/tests/providers/polar/test_polar_recharge_hrv.py` | fork-only | — |
@@ -395,6 +397,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/providers/test_oauth_account_resolution.py` | fork-only | — |
 | `backend/tests/providers/whoop/test_whoop_recovery_source.py` | fork-only | — |
 | `backend/tests/providers/whoop/test_whoop_sleep_record_id.py` | fork-only | — |
+| `backend/tests/providers/whoop/test_whoop_sleep_vitals.py` | fork-only | — |
 | `backend/tests/providers/whoop/test_whoop_webhook_fan_out.py` | fork-only | — |
 | `backend/tests/providers/withings/test_withings_device_record.py` | fork-only | — |
 | `backend/tests/providers/withings/test_withings_ingestion.py` | modified | +8/-0 |
@@ -418,6 +421,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/scripts/test_fix_polar_workout_utc_offset.py` | deleted | +0/-338 |
 | `backend/tests/scripts/test_merge_duplicate_data_sources.py` | modified | +153/-1 |
 | `backend/tests/scripts/test_relabel_apple_wrist_temp_to_skin_temp.py` | fork-only | — |
+| `backend/tests/scripts/test_resync_whoop_sleep_respiratory_rate.py` | fork-only | — |
 | `backend/tests/scripts/test_scale_apple_xml_percentages.py` | modified | +28/-4 |
 | `backend/tests/scripts/test_split_host_relayed_devices.py` | fork-only | — |
 | `backend/tests/scripts/test_worker_start_script.py` | modified | +9/-11 |
@@ -465,7 +469,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `docs/developer-portal/settings/providers.mdx` | modified | +36/-6 |
 | `docs/docs.json` | modified | +20/-1 |
 | `docs/openapi.json` | modified | +19187/-9901 |
-| `docs/providers/coverage.mdx` | modified | +9/-3 |
+| `docs/providers/coverage.mdx` | modified | +11/-5 |
 | `docs/providers/fitbit-api-integration.mdx` | modified | +1/-1 |
 | `docs/providers/garmin-api-integration.mdx` | modified | +1/-1 |
 | `docs/providers/google-api-integration.mdx` | modified | +4/-4 |
@@ -776,5 +780,6 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `.ai/skills/upstream-sync/SKILL.md` | fork-only | — |
 | `.github/workflows/build.yml` | fork-only | — |
 | `.github/workflows/ci.yml` | modified | +105/-0 |
+| `.github/workflows/promote-osu.yml` | fork-only | — |
 | `.github/workflows/publish-images.yml` | deleted | +0/-221 |
 | `.gitignore` | modified | +12/-0 |

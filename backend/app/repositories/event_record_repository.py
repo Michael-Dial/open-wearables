@@ -344,6 +344,35 @@ class EventRecordRepository(
             query = query.filter(DataSource.provider == provider)
         return {record.external_id: record for record in query if record.external_id}
 
+    def sleep_windows(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        start: datetime,
+        end: datetime,
+        provider: str,
+        user_connection_id: UUID | None = None,
+    ) -> list[tuple[datetime, datetime]]:
+        """Start and end of the user's sleep sessions from this provider that overlap [start, end].
+
+        Fork: with ``user_connection_id``, only that account's sessions: a second account's night at
+        the same time is another device's, and must not stand in for this one's.
+        """
+        rows = (
+            db_session.query(self.model.start_datetime, self.model.end_datetime)
+            .join(DataSource, self.model.data_source_id == DataSource.id)
+            .filter(
+                DataSource.user_id == user_id,
+                DataSource.provider == provider,
+                *([DataSource.user_connection_id == user_connection_id] if user_connection_id else []),
+                self.model.category == EventCategory.SLEEP,
+                self.model.start_datetime < end,
+                self.model.end_datetime > start,
+            )
+            .all()
+        )
+        return [(row.start_datetime, row.end_datetime) for row in rows]
+
     def main_sleep_ended_before(
         self, db_session: DbSession, user_id: UUID, at: datetime, within: timedelta, provider: str
     ) -> EventRecord | None:
@@ -795,7 +824,7 @@ class EventRecordRepository(
         if not query_params.cursor and query_params.offset:
             query = query.offset(query_params.offset)
 
-        return query.limit(limit + 1).all(), total_count  # ty:ignore[invalid-return-type]
+        return query.limit(limit + 1).all(), total_count  # ty:ignore[invalid-explicit-return]
 
     def get_workout_totals(
         self,
@@ -1610,7 +1639,7 @@ class EventRecordRepository(
         local_end = cast(
             func.timezone("UTC", EventRecord.end_datetime)
             + cast(func.coalesce(EventRecord.zone_offset, "+00:00"), Interval),
-            Date,
+            Date(),
         )
         rows = (
             db_session.query(

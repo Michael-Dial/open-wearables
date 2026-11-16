@@ -50,7 +50,7 @@ class UserService(AppService[UserRepository, User, UserCreateInternal, UserUpdat
         """Get count of users created within a date range."""
         return self.crud.get_count_in_range(db_session, start_date, end_date)
 
-    def create(  # ty: ignore[invalid-method-override] - fork: every creation path must name its creator
+    def create(  # ty: ignore[incompatible-method-override] - fork: every creation path must name its creator
         self, db_session: DbSession, creator: UserCreate, created_by: RequestCreator
     ) -> User:
         """Create a user with server-generated id and created_at.

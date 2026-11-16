@@ -19,6 +19,7 @@ from app.constants.series_types.polar import (
     SLEEP_INERTIA_LABELS,
 )
 from app.database import DbSession
+from app.models import DataSource
 from app.repositories.data_point_series_repository import WriteCounts
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.enums import (
@@ -182,10 +183,61 @@ class Polar247Data(Base247DataTemplate):
     # Sleep - GET /v3/users/sleep, GET /v3/users/sleep/{date} and GET /v3/users/sleep/available
     # -------------------------------------------------------------------------
 
-    def _get_available_sleep_dates(self, db: DbSession, user_id: UUID) -> set[date]:
+    @staticmethod
+    def _night_window(night: dict[str, Any]) -> tuple[datetime, datetime] | None:
+        try:
+            start, end = datetime.fromisoformat(night["start_time"]), datetime.fromisoformat(night["end_time"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return (start, end) if start.tzinfo and end.tzinfo else None
+
+    def _get_available_sleep(self, db: DbSession, user_id: UUID) -> dict[date, tuple[datetime, datetime] | None]:
+        """Dates with sleep in the last 28 days, with the night's start and end when Polar gives them."""
         response = self._make_api_request(db, user_id, "/v3/users/sleep/available")
         nights = (response or {}).get("available", [])
-        return {date.fromisoformat(night["date"]) for night in nights if night.get("date")}
+        return {date.fromisoformat(night["date"]): self._night_window(night) for night in nights if night.get("date")}
+
+    @staticmethod
+    def _unstored_late_nights(
+        db: DbSession, user_id: UUID, late: dict[date, tuple[datetime, datetime] | None]
+    ) -> set[date]:
+        """Late nights with no stored Polar sleep by id or, as after a merge with the next night, by overlap.
+
+        Fork: nights are keyed by the bare date (not upstream's ``sleep-<date>``), and both checks stay within
+        the account being synced, so a second Polar account's night never hides this one's.
+        """
+        connection_id = get_active_connection_id()
+        stored = event_record_service.crud.get_by_external_ids(
+            db, user_id, [d.isoformat() for d in late], provider=ProviderName.POLAR
+        )
+        if connection_id is not None and stored:
+            # Only this account's nights count as stored
+            own_sources = {
+                source_id
+                for (source_id,) in db.query(DataSource.id).filter(
+                    DataSource.id.in_({record.data_source_id for record in stored.values()}),
+                    DataSource.user_connection_id == connection_id,
+                )
+            }
+            stored = {key: record for key, record in stored.items() if record.data_source_id in own_sources}
+        stored_ids = set(stored)
+        late = {d: window for d, window in late.items() if d.isoformat() not in stored_ids}
+        windows = [window for window in late.values() if window]
+        if not windows:
+            return set(late)
+        stored = event_record_service.crud.sleep_windows(
+            db,
+            user_id,
+            min(s for s, _ in windows),
+            max(e for _, e in windows),
+            ProviderName.POLAR,
+            connection_id,
+        )
+        return {
+            d
+            for d, window in late.items()
+            if window is None or not any(s < window[1] and e > window[0] for s, e in stored)
+        }
 
     def get_sleep_data(
         self,
@@ -197,9 +249,12 @@ class Polar247Data(Base247DataTemplate):
         date_range = {
             start_time.date() + timedelta(days=i) for i in range((end_time.date() - start_time.date()).days + 1)
         }
-        available_dates = self._get_available_sleep_dates(db, user_id)
+        available = self._get_available_sleep(db, user_id)
+        # Nights show up in /sleep/available after the watch syncs, often after their date left the window
+        late = {d: window for d, window in available.items() if d not in date_range}
+        late_dates = self._unstored_late_nights(db, user_id, late) if late else set()
         sleep_data = []
-        for d in date_range.intersection(available_dates):
+        for d in sorted(date_range.intersection(available) | late_dates):
             response = self._make_api_request(db, user_id, f"/v3/users/sleep/{d.isoformat()}")
             if response:
                 sleep_data.append(response)
@@ -263,7 +318,7 @@ class Polar247Data(Base247DataTemplate):
         self,
         raw_items: list[dict[str, Any]],
         user_id: UUID,
-    ) -> list[SleepNormalized]:  # ty:ignore[invalid-method-override]
+    ) -> list[SleepNormalized]:  # ty:ignore[incompatible-method-override]
         results: list[Polar247Data.SleepNormalized] = []
         for raw in raw_items:
             if (parsed := self._parse(raw, SleepJSON, user_id, "sleep")) is None:
@@ -397,7 +452,7 @@ class Polar247Data(Base247DataTemplate):
         user_id: UUID,
         sleep_starts: dict[str, datetime] | None = None,
         utc_offsets: Mapping[date, int] | None = None,
-    ) -> list[TimeSeriesSampleCreate]:  # ty:ignore[invalid-method-override]
+    ) -> list[TimeSeriesSampleCreate]:  # ty:ignore[incompatible-method-override]
         """The day's totals, plus its intraday step samples where they can be placed in time.
 
         ``sleep_starts`` (night date -> sleep start with its offset), else ``utc_offsets``
