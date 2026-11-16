@@ -242,7 +242,11 @@ Only what the night states is recorded. Generation, size and firmware come from
 it would claim firmware those nights never ran, so it stays on the ring's own device.
 Oura does not say whether `sleep.ring_id` and `ring_configuration.id` share a namespace,
 so a night's ring is not joined to a configured ring by id. Each ring-configuration fetch
-logs `oura_ring_id_namespace` with how many ids appear in both, which settles it.
+logs `oura_ring_id_namespace` with how many ids appear in both, which settles it; it is
+logged when no night named a ring too (`on_nights=0`). Every sync that stores nights
+also logs `oura_sleep_ring_ids` (nights stored, how many named a ring, how many rings):
+a night without `ring_id` writes no record, and without that line an account whose
+sleep documents carry none would look the same as a mapping that never read the field.
 
 Daytime heart rate and readiness carry no ring id. Which ring they came from is not
 inferred here: a consumer that needs it asks the participant, using this record to know

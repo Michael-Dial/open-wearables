@@ -936,6 +936,20 @@ class Oura247Data(Base247DataTemplate):
                             trace_id=trace_id,
                         )
 
+        if count:
+            # Said on every sync that stored nights, including when none named a ring:
+            # nights with no ring_id write no ring record, and an absent record reads
+            # exactly like a field that was never parsed.
+            logger.info(
+                "Oura nights and the rings they named",
+                action="oura_sleep_ring_ids",
+                user_id=str(user_id),
+                nights=count,
+                naming_a_ring=len(rings_seen),
+                rings=len({ring for _, ring, _, _ in rings_seen}),
+                provider_user_id=provider_user_id,
+                trace_id=trace_id,
+            )
         self._record_rings_worn(db, user_id, rings_seen)
         return count
 
@@ -1498,8 +1512,10 @@ class Oura247Data(Base247DataTemplate):
         except Exception:
             db.rollback()
             return
-        if not config_ids or not night_ids:
+        if not config_ids:
             return
+        # Logged when no night named a ring too (on_nights=0): that is the answer for an
+        # account whose sleep documents carry no ring_id, not a reason to stay silent.
         logger.info(
             "Oura ring ids: ring_configuration vs sleep",
             action="oura_ring_id_namespace",
