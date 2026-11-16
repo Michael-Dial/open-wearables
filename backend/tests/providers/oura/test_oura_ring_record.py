@@ -120,3 +120,40 @@ class TestMergeProviderMetadata:
         assert merge_provider_metadata(None, None) is None
         assert merge_provider_metadata(None, {"ring_ids": ["A"]}) == {"ring_ids": ["A"]}
         assert merge_provider_metadata({"ring_ids": ["A"]}, None) == {"ring_ids": ["A"]}
+
+
+def test_a_sync_says_how_many_nights_named_a_ring_even_when_none_did(db: Session) -> None:
+    """Nights without ring_id write no ring record; the log line is what says so."""
+    from unittest.mock import patch
+
+    user = UserFactory()
+    with patch("app.services.providers.oura.data_247.logger") as log:
+        _save(
+            db,
+            user,
+            [
+                _night("n1", "2026-10-01T23:00:00+00:00", "2026-10-02T07:00:00+00:00", None),
+                _night("n2", "2026-10-02T23:00:00+00:00", "2026-10-03T07:00:00+00:00", None),
+            ],
+        )
+    lines = [c for c in log.info.call_args_list if c.kwargs.get("action") == "oura_sleep_ring_ids"]
+    assert len(lines) == 1
+    assert lines[0].kwargs["nights"] == 2
+    assert lines[0].kwargs["naming_a_ring"] == 0
+    assert lines[0].kwargs["rings"] == 0
+    assert _rings(db, user) == []
+
+
+def test_the_namespace_line_is_logged_when_no_night_named_a_ring(db: Session) -> None:
+    from unittest.mock import patch
+
+    user = UserFactory()
+    data_247 = OuraStrategy().data_247
+    assert isinstance(data_247, Oura247Data)
+    with patch("app.services.providers.oura.data_247.logger") as log:
+        data_247._compare_ring_ids(db, user.id, {"data": [{"id": "cfg-1"}, {"id": "cfg-2"}]})
+    lines = [c for c in log.info.call_args_list if c.kwargs.get("action") == "oura_ring_id_namespace"]
+    assert len(lines) == 1
+    assert lines[0].kwargs["configured"] == 2
+    assert lines[0].kwargs["on_nights"] == 0
+    assert lines[0].kwargs["in_both"] == 0
