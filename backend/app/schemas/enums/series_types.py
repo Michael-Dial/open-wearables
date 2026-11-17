@@ -81,6 +81,14 @@ class SeriesType(str, Enum):
     vo2_max = "vo2_max"
     six_minute_walk_test_distance = "six_minute_walk_test_distance"
     cardiovascular_age = "cardiovascular_age"
+    # One value per workout, from the activity's FIT file (session and zone messages): what the
+    # device reported for that workout. The thresholds are the settings in effect when it was
+    # recorded (auto-detected or typed in, the file does not say), not a test result.
+    aerobic_training_effect = "aerobic_training_effect"  # FIT session.total_training_effect (0-5)
+    anaerobic_training_effect = "anaerobic_training_effect"  # FIT session.total_anaerobic_training_effect (0-5)
+    training_load_peak = "training_load_peak"  # FIT session.training_load_peak (Garmin's activity Training Load)
+    threshold_heart_rate = "threshold_heart_rate"  # FIT time_in_zone / zones_target threshold_heart_rate
+    functional_threshold_power = "functional_threshold_power"  # FIT time_in_zone / zones_target FTP
 
     # =========================================================================
     # ACTIVITY - Basic (IDs 80-99)
@@ -173,6 +181,26 @@ class SeriesType(str, Enum):
     # series, not vo2_max: both arrive on one data source for one calendar day, so as one
     # series the second would overwrite the first, and a mean over both is neither estimate.
     garmin_vo2_max_cycling = "garmin_vo2_max_cycling"
+
+    # =========================================================================
+    # POLAR-SPECIFIC METRICS (IDs 250-259)
+    # =========================================================================
+    # Settings from the user's Polar profile (GET /v3/users/physical-info), stamped at the
+    # profile's last modification. Polar does not say whether a value was measured (fitness
+    # test, detection), typed in by the user or left at an age-based default, so none of them
+    # shares a series with a measured or estimated value: polar_profile_resting_heart_rate is
+    # not resting_heart_rate, and polar_profile_vo2_max is not vo2_max.
+    polar_aerobic_threshold = "polar_aerobic_threshold"
+    polar_anaerobic_threshold = "polar_anaerobic_threshold"
+    polar_profile_vo2_max = "polar_profile_vo2_max"
+    polar_profile_max_heart_rate = "polar_profile_max_heart_rate"
+    polar_profile_resting_heart_rate = "polar_profile_resting_heart_rate"
+    # One value per exercise (GET /v3/exercises), filed against the workout it describes.
+    polar_running_index = "polar_running_index"  # Polar's VO2max-like estimate from a run's HR and speed
+    polar_training_load = "polar_training_load"  # exercise training_load (Polar's legacy load figure)
+    polar_cardio_load = "polar_cardio_load"  # Training Load Pro cardio load (TRIMP-based)
+    polar_muscle_load = "polar_muscle_load"  # Training Load Pro muscle load: mechanical work from power
+    polar_perceived_load = "polar_perceived_load"  # Training Load Pro perceived load: session RPE x minutes
 
     # =========================================================================
     # WITHINGS-SPECIFIC METRICS (IDs 240-249)
@@ -306,6 +334,11 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (60, SeriesType.vo2_max, "ml_kg_min"),
     (61, SeriesType.six_minute_walk_test_distance, "meters"),
     (62, SeriesType.cardiovascular_age, "years"),
+    (63, SeriesType.aerobic_training_effect, "score"),
+    (64, SeriesType.anaerobic_training_effect, "score"),
+    (65, SeriesType.training_load_peak, "score"),
+    (66, SeriesType.threshold_heart_rate, "bpm"),
+    (67, SeriesType.functional_threshold_power, "watts"),
     # -------------------------------------------------------------------------
     # ACTIVITY - Basic (IDs 80-99)
     # -------------------------------------------------------------------------
@@ -387,6 +420,19 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (223, SeriesType.garmin_body_battery, "percent"),
     (224, SeriesType.garmin_vo2_max_cycling, "ml_kg_min"),
     # -------------------------------------------------------------------------
+    # POLAR-SPECIFIC METRICS (IDs 250-259)
+    # -------------------------------------------------------------------------
+    (250, SeriesType.polar_aerobic_threshold, "bpm"),
+    (251, SeriesType.polar_anaerobic_threshold, "bpm"),
+    (252, SeriesType.polar_profile_vo2_max, "ml_kg_min"),
+    (253, SeriesType.polar_profile_max_heart_rate, "bpm"),
+    (254, SeriesType.polar_profile_resting_heart_rate, "bpm"),
+    (255, SeriesType.polar_running_index, "score"),
+    (256, SeriesType.polar_training_load, "score"),
+    (257, SeriesType.polar_cardio_load, "score"),
+    (258, SeriesType.polar_muscle_load, "kJ"),
+    (259, SeriesType.polar_perceived_load, "score"),
+    # -------------------------------------------------------------------------
     # WITHINGS-SPECIFIC METRICS (IDs 240-249)
     # -------------------------------------------------------------------------
     (240, SeriesType.withings_pulse_wave_velocity, "m_per_s"),
@@ -467,6 +513,21 @@ SERIES_TYPE_DESCRIPTION_BY_ENUM: dict[SeriesType, str] = {
     SeriesType.garmin_body_battery: "Intraday body battery readings (0-100), one sample per measurement",
     SeriesType.distance: "Distance of a whole workout, whatever its type; per-sport distance samples have own types",
     SeriesType.elevation_gain: "Total ascent of a whole workout; elevation holds the altitude itself",
+    SeriesType.aerobic_training_effect: "Aerobic Training Effect of one workout, from its FIT file",
+    SeriesType.anaerobic_training_effect: "Anaerobic Training Effect of one workout, from its FIT file",
+    SeriesType.training_load_peak: "Training load of one workout as the device reports it, from its FIT file",
+    SeriesType.threshold_heart_rate: "Threshold HR setting in effect for one workout (FIT); not a test result",
+    SeriesType.functional_threshold_power: "FTP setting in effect for one workout (FIT); not a test result",
+    SeriesType.polar_aerobic_threshold: "Polar profile setting, as of the profile's last change; source not stated",
+    SeriesType.polar_anaerobic_threshold: "Polar profile setting, as of the profile's last change; source not stated",
+    SeriesType.polar_profile_vo2_max: "Polar profile setting (test result or typed in, not stated), not an estimate",
+    SeriesType.polar_profile_max_heart_rate: "Polar profile setting, as of the last profile change; source not stated",
+    SeriesType.polar_profile_resting_heart_rate: "Polar profile setting, not a measured resting heart rate",
+    SeriesType.polar_running_index: "Polar Running Index of one run, filed against that workout",
+    SeriesType.polar_training_load: "Polar training load of one exercise, filed against that workout",
+    SeriesType.polar_cardio_load: "Training Load Pro cardio load of one exercise; the daily figure is a health score",
+    SeriesType.polar_muscle_load: "Training Load Pro muscle load of one exercise (needs a power sensor)",
+    SeriesType.polar_perceived_load: "Training Load Pro perceived load of one exercise: RPE x duration",
 }
 
 
@@ -506,7 +567,7 @@ _CATEGORY_RANGES: list[tuple[range, str]] = [
     (range(160, 180), "Activity - Swimming"),
     (range(180, 200), "Activity - Generic"),
     (range(200, 220), "Environmental"),
-    (range(220, 250), "Provider-Specific"),  # 220-239 Garmin, 240-249 Withings
+    (range(220, 260), "Provider-Specific"),  # 220-239 Garmin, 240-249 Withings, 250-259 Polar
     (range(260, 302), "Nutrition"),
     (range(500, 600), "Other"),
 ]

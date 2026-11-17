@@ -26,6 +26,23 @@ Through the Garmin Connect platform, you can access data from:
 - Training API
 - Courses API
 
+### What Open Wearables reads from activity FIT files
+
+Each `activityFiles` FIT file is parsed when it arrives, and its figures are attached to the workout it belongs to:
+
+| From the FIT file | Where it lands |
+|---|---|
+| Per-second record data (HR, speed, power, cadence, running dynamics, GPS) | Time series, when workout samples are ingested |
+| Laps, splits, swim lengths | The workout's `segments` |
+| Time in HR and power zones, with max, resting and threshold HR, FTP, and what the zones are a percentage of (`calc_type`: `percent_max_hr`, `percent_hrr`, `percent_lthr`, `percent_ftp`, `custom`) | The workout's `hr_zones` and `power_zones` (`include=zones`) |
+| Aerobic and anaerobic Training Effect, training load (`training_load_peak`), and the threshold HR and FTP in effect | Session values in the workout's `provider_metrics` |
+
+The thresholds are the device's settings when the activity was recorded. They are not test results, and the file does not say whether a value was auto-detected or typed in. When HR zones are set on % LTHR, `threshold_heart_rate` is the watch's lactate threshold heart rate. A multisport file (several sessions) contributes no per-workout figures, since each leg carries its own.
+
+<Note>
+Garmin's physiological metrics (lactate threshold pace, recovery time, VO2max) sit in messages the FIT profile does not document, and are reported to be removed from files delivered to partners. Open Wearables does not decode them. It logs which undocumented messages and fields each file carried (`undocumented_messages` on the "Parsed FIT file" line, numbers only), so you can check what your files actually contain.
+</Note>
+
 Once you get access to the Developer Portal, you’ll find the full docs, including the [FAQ page](https://developerportal.garmin.com/developer-programs/faqs) and [specification documents](https://developerportal.garmin.com/developer-programs/programs-docs).
 
 ## Access tiers

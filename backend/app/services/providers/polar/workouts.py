@@ -16,12 +16,14 @@ from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
     EventRecordMetrics,
+    SessionValue,
     TimeSeriesSampleCreate,
 )
 from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
 from app.schemas.providers.polar.v4 import TrainingSessionJSON
 from app.services.event_record_service import event_record_service
 from app.services.polar_rr_import_service import polar_rr_import_service
+from app.services.providers.polar.coverage import EXERCISE_SESSION_SERIES, TRAINING_LOAD_PRO_SERIES
 from app.services.providers.polar.v4_data import polar_v4_data
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.raw_payload_storage import store_raw_payload
@@ -375,6 +377,64 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             int((end_date - start_date).total_seconds()),
         )
 
+    # -------------------------------------------------------------------------
+    # Per-exercise figures — running index, training load, Training Load Pro
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _session_values(
+        raw_workout: PolarExerciseJSON, user_id: UUID, record_id: UUID, start: datetime, zone_offset: str | None
+    ) -> list[TimeSeriesSampleCreate]:
+        """Polar's figures for one exercise, each filed against the workout record they describe.
+
+        Stamped at the workout's start, inside it, as other providers' session values are. A
+        figure Polar left out is left out: an exercise without a power sensor has no muscle
+        load, a non-run no running index, an unrated one no perceived load, and none of them
+        is zero. Polar's ``*-interpretation`` labels and ``user-rpe`` are not kept: a session value
+        is one number in event_record_aggregate, which has nowhere to hold them, and the RPE is
+        perceived load over the session's minutes.
+        """
+        figures: list[tuple[SeriesType, float | int | None]] = [
+            (series_type, getattr(raw_workout, field_name))
+            for field_name, series_type in EXERCISE_SESSION_SERIES.items()
+        ]
+        if (pro := raw_workout.training_load_pro) is not None:
+            loads = [(series_type, getattr(pro, name)) for name, series_type in TRAINING_LOAD_PRO_SERIES.items()]
+            if pro.model_extra and all(value is None for _, value in loads):
+                # Keys only, never values: the line reaches Sentry.
+                logger.error(
+                    "Polar Training Load Pro read no load; its keys no longer match the mapping",
+                    alert=True,
+                    exercise_id=raw_workout.id,
+                    unread_keys=sorted(pro.model_extra),
+                )
+            figures += loads
+        return [
+            TimeSeriesSampleCreate(
+                route=SampleRoute.POLAR_EXERCISE_SUMMARY,
+                id=uuid4(),
+                user_id=user_id,
+                provider=ProviderName.POLAR,
+                source=ProviderName.POLAR,
+                device_model=raw_workout.device,
+                external_id=raw_workout.id,
+                recorded_at=start,
+                zone_offset=zone_offset,
+                value=Decimal(str(value)),
+                series_type=series_type,
+                session=SessionValue(record_id=record_id),
+            )
+            for series_type, value in figures
+            if value is not None
+        ]
+
+    def _save_session_values(
+        self, db: DbSession, raw_workout: PolarExerciseJSON, user_id: UUID, record: EventRecordCreate, record_id: UUID
+    ) -> None:
+        values = self._session_values(raw_workout, user_id, record_id, record.start_datetime, record.zone_offset)
+        if values:
+            timeseries_service.bulk_create_samples(db, values)
+
     def _save_rr_samples(self, db: DbSession, samples: list[TimeSeriesSampleCreate]) -> int:
         """Persist reconstructed RR beats. Re-syncs upsert on (source, type, recorded_at)."""
         if not samples:
@@ -424,6 +484,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             created_record = event_record_service.create(db, record)
             detail_for_record = detail.model_copy(update={"record_id": created_record.id})
             event_record_service.create_detail(db, detail_for_record)
+            self._save_session_values(db, raw_workout, user_id, record, created_record.id)
             # Flushed per exercise: a night on a chest strap is ~30k beats, so holding
             # every session's beats until the end of a backfill is a lot of memory.
             self._save_rr_samples(db, self._rr_samples_for(db, raw_workout, user_id, day_cache))
@@ -620,6 +681,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         for record, detail in self._build_bundles([exercise], user_id):
             created = event_record_service.create(db, record)
             event_record_service.create_detail(db, detail.model_copy(update={"record_id": created.id}))
+            self._save_session_values(db, exercise, user_id, record, created.id)
             count += 1
         self._save_rr_samples(db, self._rr_samples_for(db, exercise, user_id))
         return count

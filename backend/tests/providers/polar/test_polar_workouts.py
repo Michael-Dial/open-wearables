@@ -484,6 +484,8 @@ class TestPolarWorkoutsAPIRequests:
 class TestPolarWorkoutsDataLoading:
     """Tests for loading workout data from Polar API."""
 
+    # Records are mocked, so there is no workout to file the per-exercise figures against.
+    @patch.object(PolarWorkouts, "_save_session_values")
     @patch("app.services.providers.templates.base_workouts.make_authenticated_request")
     @patch("app.services.event_record_service.event_record_service.create")
     @patch("app.services.event_record_service.event_record_service.create_detail")
@@ -492,6 +494,7 @@ class TestPolarWorkoutsDataLoading:
         mock_create_detail: MagicMock,
         mock_create: MagicMock,
         mock_request: MagicMock,
+        mock_session_values: MagicMock,  # noqa: ARG002
         db: Session,
         sample_polar_exercise: dict,
     ) -> None:
@@ -571,6 +574,8 @@ class TestPolarWorkoutsDataLoading:
         # Assert
         assert result == 0
 
+    # Records are mocked, so there is no workout to file the per-exercise figures against.
+    @patch.object(PolarWorkouts, "_save_session_values")
     @patch("app.services.providers.templates.base_workouts.make_authenticated_request")
     @patch("app.services.event_record_service.event_record_service.create")
     @patch("app.services.event_record_service.event_record_service.create_detail")
@@ -579,6 +584,7 @@ class TestPolarWorkoutsDataLoading:
         mock_create_detail: MagicMock,
         mock_create: MagicMock,
         mock_request: MagicMock,
+        mock_session_values: MagicMock,  # noqa: ARG002
         db: Session,
         sample_polar_exercise: dict,
     ) -> None:
@@ -593,6 +599,8 @@ class TestPolarWorkoutsDataLoading:
         assert result == 1
         assert mock_create_detail.call_args.args[1].distance == Decimal("1600.2")
 
+    # Records are mocked, so there is no workout to file the per-exercise figures against.
+    @patch.object(PolarWorkouts, "_save_session_values")
     @patch("app.services.providers.templates.base_workouts.make_authenticated_request")
     @patch("app.services.event_record_service.event_record_service.create")
     @patch("app.services.event_record_service.event_record_service.create_detail")
@@ -601,6 +609,7 @@ class TestPolarWorkoutsDataLoading:
         mock_create_detail: MagicMock,
         mock_create: MagicMock,
         mock_request: MagicMock,
+        mock_session_values: MagicMock,  # noqa: ARG002
         db: Session,
         sample_polar_exercise: dict,
     ) -> None:

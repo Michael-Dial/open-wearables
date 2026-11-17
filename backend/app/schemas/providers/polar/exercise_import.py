@@ -1,4 +1,4 @@
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class HeartRateJSON(BaseModel):
@@ -43,15 +43,28 @@ class RoutePointJSON(BaseModel):
     fix: int | None = None
 
 
+def _both(name: str) -> AliasChoices:
+    """A key in either spelling: the spec writes kebab-case, /v3/exercises has sent snake_case (see HRSamplesJSON)."""
+    return AliasChoices(name, name.replace("_", "-"))
+
+
 class TrainingLoadProJSON(BaseModel):
+    """An exercise's Training Load Pro figures. Keys read in both spellings, as HRSamplesJSON's are.
+
+    Unread keys are kept (``extra="allow"``) so an object whose loads all parse to nothing can
+    be told apart from one Polar sent empty: the first is a mapping that no longer matches.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
     date: str | None = None
-    cardio_load: float | None = Field(None, alias="cardio-load")
-    muscle_load: float | None = Field(None, alias="muscle-load")
-    perceived_load: float | None = Field(None, alias="perceived-load")
-    cardio_load_interpretation: str | None = Field(None, alias="cardio-load-interpretation")
-    muscle_load_interpretation: str | None = Field(None, alias="muscle-load-interpretation")
-    perceived_load_interpretation: str | None = Field(None, alias="perceived-load-interpretation")
-    user_rpe: str | None = Field(None, alias="user-rpe")
+    cardio_load: float | None = Field(None, validation_alias=_both("cardio_load"))
+    muscle_load: float | None = Field(None, validation_alias=_both("muscle_load"))
+    perceived_load: float | None = Field(None, validation_alias=_both("perceived_load"))
+    cardio_load_interpretation: str | None = Field(None, validation_alias=_both("cardio_load_interpretation"))
+    muscle_load_interpretation: str | None = Field(None, validation_alias=_both("muscle_load_interpretation"))
+    perceived_load_interpretation: str | None = Field(None, validation_alias=_both("perceived_load_interpretation"))
+    user_rpe: str | None = Field(None, validation_alias=_both("user_rpe"))
 
 
 class ExerciseJSON(BaseModel):
@@ -76,13 +89,13 @@ class ExerciseJSON(BaseModel):
     heart_rate_zones: list[HRZoneJSON] | None = None
 
     training_load: float | None = None
-    training_load_pro: TrainingLoadProJSON | None = None
+    training_load_pro: TrainingLoadProJSON | None = Field(None, validation_alias=_both("training_load_pro"))
     has_route: bool | None = None
 
     fat_percentage: int | None = None
     carbohydrate_percentage: int | None = None
     protein_percentage: int | None = None
-    running_index: int | None = Field(None, alias="running-index")
+    running_index: int | None = Field(None, validation_alias=_both("running_index"))
 
     club_id: int | None = None
     club_name: str | None = None

@@ -67,6 +67,19 @@ _RECORD_FIELD_MAP: tuple[_FieldMapping, ...] = (
 # ---------------------------------------------------------------------------
 
 
+# session message field → the series of the workout's own figure.
+_SESSION_FIELD_MAP: tuple[tuple[str, SeriesType], ...] = (
+    ("total_training_effect", SeriesType.aerobic_training_effect),
+    ("total_anaerobic_training_effect", SeriesType.anaerobic_training_effect),
+    ("training_load_peak", SeriesType.training_load_peak),
+)
+# time_in_zone / zones_target field → the threshold setting in effect for the workout.
+_THRESHOLD_FIELD_MAP: tuple[tuple[str, SeriesType], ...] = (
+    ("threshold_heart_rate", SeriesType.threshold_heart_rate),
+    ("functional_threshold_power", SeriesType.functional_threshold_power),
+)
+
+
 @dataclass
 class FitParseResult:
     samples: list[TimeSeriesSampleCreate] = field(default_factory=list)
@@ -74,6 +87,14 @@ class FitParseResult:
     developer_fields_found: list[str] = field(default_factory=list)
     hr_zones: HRZones | None = None
     power_zones: PowerZones | None = None
+    # The workout's own figures (Training Effect, training load, thresholds in effect). Empty for a
+    # multisport file: its sessions each carry their own, and the workout record is one of them or none.
+    session_metrics: dict[SeriesType, Decimal] = field(default_factory=dict)
+    session_count: int = 0
+    # Messages the FIT profile does not define, by message number, with the field numbers they carried.
+    # Garmin's physiological metrics (lactate threshold, recovery time) are reported to sit in one of
+    # these (140); kept as an inventory, never decoded, until a live file shows what arrives.
+    undocumented_messages: dict[int, list[int]] = field(default_factory=dict)
 
 
 def parse_fit_file(
@@ -85,6 +106,10 @@ def parse_fit_file(
     result = FitParseResult()
     dev_fields_seen: set[str] = set()
     _seg_counters: dict[str, int] = {k: 0 for k in _SEGMENT_KINDS}
+    session_figures: dict[SeriesType, Decimal] = {}
+    zone_thresholds: dict[SeriesType, Decimal] = {}
+    target_thresholds: dict[SeriesType, Decimal] = {}
+    undocumented: dict[int, set[int]] = {}
 
     with fitdecode.FitReader(io.BytesIO(data)) as fit:
         for frame in fit:
@@ -122,6 +147,19 @@ def parse_fit_file(
                 if ref == "session":
                     result.hr_zones = _parse_hr_zones(frame)
                     result.power_zones = _parse_power_zones(frame)
+                    zone_thresholds = _figures(frame, _THRESHOLD_FIELD_MAP)
+
+            elif frame.name == "session":
+                result.session_count += 1
+                session_figures = _figures(frame, _SESSION_FIELD_MAP)
+
+            elif frame.name == "zones_target":
+                target_thresholds = _figures(frame, _THRESHOLD_FIELD_MAP)
+
+            elif frame.name.startswith("unknown_") and frame.global_mesg_num is not None:
+                undocumented.setdefault(frame.global_mesg_num, set()).update(
+                    f.field_def.def_num for f in frame.fields if f.field_def is not None
+                )
 
             elif frame.name in _SEGMENT_KINDS:
                 numeric, enums = _SEGMENT_KINDS[frame.name]
@@ -132,12 +170,18 @@ def parse_fit_file(
                 _seg_counters[frame.name] = idx + 1
 
     result.developer_fields_found = sorted(dev_fields_seen)
+    result.undocumented_messages = {num: sorted(fields) for num, fields in sorted(undocumented.items())}
+    if result.session_count == 1:
+        # The session's own time-in-zone thresholds are the sport's; zones_target is the file-wide fallback.
+        result.session_metrics = {**session_figures, **(zone_thresholds or target_thresholds)}
     logger.debug(
         "FIT parsed",
         sample_count=len(result.samples),
         segment_count=len(result.segments),
         developer_fields=result.developer_fields_found,
     )
+    if result.session_count > 1:
+        logger.info("FIT file has several sessions; per-workout figures not taken", sessions=result.session_count)
     return result
 
 
@@ -272,6 +316,22 @@ def _build_zone_entries(seconds_tuple: tuple, boundaries: tuple | None) -> list[
     return entries
 
 
+def _figures(frame: fitdecode.FitDataMessage, mapping: tuple[tuple[str, SeriesType], ...]) -> dict[SeriesType, Decimal]:
+    """The mapped fields the message carries. Absent, invalid (decoded as None) and zero are left out:
+    a Training Effect of 0 is a session the device did not score, and a threshold of 0 is no setting."""
+    figures: dict[SeriesType, Decimal] = {}
+    for field_name, series_type in mapping:
+        value = _field_val(frame, field_name)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            figures[series_type] = Decimal(str(round(float(value), 4)))
+    return figures
+
+
+def _calc_type(frame: fitdecode.FitDataMessage, name: str) -> str | None:
+    value = _field_val(frame, name)
+    return None if value is None else str(value)
+
+
 def _parse_hr_zones(frame: fitdecode.FitDataMessage) -> HRZones | None:
     entries = _build_zone_entries(
         _field_val(frame, "time_in_hr_zone") or (),
@@ -281,10 +341,13 @@ def _parse_hr_zones(frame: fitdecode.FitDataMessage) -> HRZones | None:
         return None
     raw_max_hr = _field_val(frame, "max_heart_rate")
     raw_threshold = _field_val(frame, "threshold_heart_rate")
+    raw_resting = _field_val(frame, "resting_heart_rate")
     return HRZones(
         zones=[HRZone(zone=i, seconds=s, max_bpm=b) for i, (s, b) in enumerate(entries)],
         max_hr=int(raw_max_hr) if raw_max_hr else None,
         threshold_hr=int(raw_threshold) if raw_threshold else None,
+        resting_hr=int(raw_resting) if raw_resting else None,
+        calc_type=_calc_type(frame, "hr_calc_type"),
     )
 
 
@@ -299,6 +362,7 @@ def _parse_power_zones(frame: fitdecode.FitDataMessage) -> PowerZones | None:
     return PowerZones(
         zones=[PowerZone(zone=i, seconds=s, max_watts=b) for i, (s, b) in enumerate(entries)],
         ftp_watts=int(raw_ftp) if raw_ftp else None,
+        calc_type=_calc_type(frame, "pwr_calc_type"),
     )
 
 

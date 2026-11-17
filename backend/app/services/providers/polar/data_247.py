@@ -44,6 +44,7 @@ from app.schemas.providers.polar import (
     ContinuousHeartRateJSON,
     DailyActivityJSON,
     NightlyRechargeJSON,
+    PhysicalInfoJSON,
     PolarWebhookEventType,
     SleepJSON,
 )
@@ -65,7 +66,7 @@ from app.services.devices.source_observations import blank_values, record_provid
 from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.providers.api_client import make_authenticated_request
-from app.services.providers.polar.coverage import ACTIVITY_SERIES
+from app.services.providers.polar.coverage import ACTIVITY_SERIES, PHYSICAL_INFO_SERIES
 from app.services.providers.polar.v4_data import polar_v4_data
 from app.services.providers.sync_247_result import Sync247Result
 from app.services.providers.templates.base_247_data import Base247DataTemplate
@@ -1255,6 +1256,54 @@ class Polar247Data(Base247DataTemplate):
         return samples
 
     # -------------------------------------------------------------------------
+    # Physical info: GET /v3/users/physical-info
+    # -------------------------------------------------------------------------
+
+    def get_physical_info(self, db: DbSession, user_id: UUID) -> dict[str, Any] | None:
+        """The user's current profile. The endpoint has no history and takes no date range."""
+        response = self._make_api_request(db, user_id, "/v3/users/physical-info")
+        return response if isinstance(response, dict) else None
+
+    def normalize_physical_info(self, raw: dict[str, Any] | None, user_id: UUID) -> list[TimeSeriesSampleCreate]:
+        """One sample per profile figure, stamped at the profile's last modification.
+
+        ``modified`` dates the profile, not the field: a weight change re-stamps an unchanged
+        threshold at the new time, so a row says "the setting as of then", never "set then".
+        A profile with neither ``modified`` nor ``created`` gives nothing rather than a guessed
+        time. A heart rate or VO2max of zero is no setting, so it is left out like a missing one.
+        """
+        if raw is None or (parsed := self._parse(raw, PhysicalInfoJSON, user_id, "physical_info")) is None:
+            return []
+        stamp = parsed.modified or parsed.created
+        try:
+            recorded_at = datetime.fromisoformat(stamp) if stamp else None
+        except ValueError:
+            recorded_at = None
+        if recorded_at is None:
+            logger.warning("Polar physical info has no usable timestamp, skipped", user_id=str(user_id))
+            return []
+        if recorded_at.tzinfo is None:
+            recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+        samples: list[TimeSeriesSampleCreate] = []
+        for field_name, series_type in PHYSICAL_INFO_SERIES.items():
+            value = getattr(parsed, field_name)
+            if not value or value <= 0:
+                continue
+            samples.append(
+                TimeSeriesSampleCreate(
+                    route=SampleRoute.POLAR_PHYSICAL_INFO,
+                    id=uuid4(),
+                    user_id=user_id,
+                    provider=ProviderName.POLAR,
+                    source=ProviderName.POLAR,
+                    recorded_at=recorded_at,
+                    value=value,
+                    series_type=series_type,
+                )
+            )
+        return samples
+
+    # -------------------------------------------------------------------------
     # Persistence helpers
     # -------------------------------------------------------------------------
 
@@ -1607,6 +1656,10 @@ class Polar247Data(Base247DataTemplate):
             ),
             "wrist_ecg": lambda: self._save_timeseries(
                 db, self.normalize_wrist_ecg(self.get_wrist_ecg_data(db, user_id, start_time, end_time), user_id)
+            ),
+            # The profile as it is now: one request, whatever the sync window.
+            "physical_info": lambda: self._save_timeseries(
+                db, self.normalize_physical_info(self.get_physical_info(db, user_id), user_id)
             ),
             # AccessLink v4, and a no-op for users who have not authorised it. A full day of
             # optical beats is tens of thousands of rows, so this is the heaviest task here

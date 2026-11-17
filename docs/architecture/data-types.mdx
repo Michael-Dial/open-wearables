@@ -170,6 +170,21 @@ The `types` parameter in the timeseries endpoint accepts the following values:
 | `garmin_fitness_age` | years | Garmin fitness age estimate |
 | `garmin_body_battery` | % | Garmin body battery (0-100) |
 | `garmin_vo2_max_cycling` | mL/kg/min | Garmin cycling VO2max estimate (`vo2_max` holds the running one) |
+| `aerobic_training_effect` | score | Aerobic Training Effect (0–5) of one workout, from its FIT file (session value) |
+| `anaerobic_training_effect` | score | Anaerobic Training Effect (0–5) of one workout, from its FIT file (session value) |
+| `training_load_peak` | score | The workout's training load as the device reports it (FIT `training_load_peak`; Garmin's activity Training Load) |
+| `threshold_heart_rate` | bpm | Threshold HR setting in effect for the workout (FIT); Garmin's lactate threshold HR when zones are on %LTHR. A setting, not a test result |
+| `functional_threshold_power` | W | FTP setting in effect for the workout (FIT). A setting, not a test result |
+| `polar_aerobic_threshold` | bpm | Polar profile aerobic threshold, as of the profile's last change; whether measured or typed in is not stated |
+| `polar_anaerobic_threshold` | bpm | Polar profile anaerobic threshold, same caveat |
+| `polar_profile_vo2_max` | mL/kg/min | Polar profile VO2max setting (fitness test or typed in); not `vo2_max` |
+| `polar_profile_max_heart_rate` | bpm | Polar profile maximum heart rate setting |
+| `polar_profile_resting_heart_rate` | bpm | Polar profile resting heart rate setting; not `resting_heart_rate` |
+| `polar_running_index` | score | Polar Running Index of one run (session value) |
+| `polar_training_load` | score | Polar training load of one exercise (session value) |
+| `polar_cardio_load` | score | Training Load Pro cardio load of one exercise (session value) |
+| `polar_muscle_load` | kJ | Training Load Pro muscle load of one exercise; needs a power sensor (session value) |
+| `polar_perceived_load` | score | Training Load Pro perceived load, RPE × minutes (session value) |
 | `withings_pulse_wave_velocity` | m/s | Withings pulse wave velocity (arterial stiffness) |
 | `withings_metabolic_age` | years | Withings metabolic age |
 

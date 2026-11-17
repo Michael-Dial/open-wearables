@@ -2001,3 +2001,50 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   platform, so the reads that cannot apply it (period resolutions, priority selections, per-night sleep) refuse
   it with a 400 rather than return every platform's rows or an empty series. Nothing is re-keyed and no data
   source is split; the split itself is left as upstream made it.
+
+## Polar profile thresholds and per-exercise loads are kept, each in its own series
+
+- **Area**: backend, docs
+- **Status**: active; upstreamable
+- **On conflict**: keep ours (`polar_*` series ids 250-259, `PHYSICAL_INFO_SERIES`,
+  `EXERCISE_SESSION_SERIES` and `TRAINING_LOAD_PRO_SERIES` in `polar/coverage.py`,
+  `Polar247Data.normalize_physical_info`, `PolarWorkouts._session_values`, routes 31 and 32, and the
+  workout's `provider_metrics` with `WORKOUT_PROVIDER_METRICS` and `get_workout_provider_metrics`)
+- **Why**: AccessLink states the user's aerobic and anaerobic thresholds, VO2max and maximum and resting
+  heart rate (`GET /v3/users/physical-info`), and per exercise a running index, a training load and Training
+  Load Pro's cardio, muscle and perceived load (`/v3/exercises`). None was stored: the exercise schema parsed
+  the per-exercise figures and dropped them, and physical info was never fetched.
+  The profile figures are settings, not measurements. Polar dates the profile (`modified`), not the field,
+  and states no source for any of them (only `weight_source`), so a threshold from a fitness test and one
+  typed in or left at an age default are indistinguishable. Each therefore has its own `polar_*` series and
+  never shares one with a measured value: `polar_profile_resting_heart_rate` is not `resting_heart_rate`,
+  `polar_profile_vo2_max` is not `vo2_max`. Each row is stamped at `modified`, so an unchanged threshold is
+  re-stamped when the weight changes; a row means "the setting as of then".
+  The per-exercise figures are session values of the workout they describe, in event_record_aggregate.
+  Nothing returned a provider's session value outside the fixed workout_details statistics, so the workout
+  response gains `provider_metrics` (additive): the provider's own figure per series, absent when not
+  reported. The interpretation labels and `user-rpe` are not kept, as an aggregate row holds one number.
+  Keys are read in both spellings, as the exercise samples are (entry above): the spec writes kebab-case and
+  `/v3/exercises` has sent snake_case. A Training Load Pro object whose loads all parse to nothing while it
+  holds unread keys logs an error with `alert=True`, naming the keys. Written against the spec; not yet seen
+  in a live payload. An exercise skipped because a v4 session holds it files no figures.
+
+## FIT files: per-workout figures, the thresholds in effect, and the zone basis are kept
+
+- **Area**: backend, docs
+- **Status**: active; upstreamable
+- **On conflict**: keep ours (`_SESSION_FIELD_MAP`, `_THRESHOLD_FIELD_MAP`, `session_metrics` and
+  `undocumented_messages` in `fit_parser.py`, `calc_type`/`resting_hr` on `HRZones`/`PowerZones`,
+  `Garmin247Data._save_fit_session_values`, route 14, series ids 63-67)
+- **Why**: Garmin's activity FIT files carry each workout's aerobic and anaerobic Training Effect and training
+  load (session 24, 137, 168), and the threshold heart rate and FTP the zones were computed from (time_in_zone,
+  zones_target). Only the zone times and two of the thresholds were kept, inside `hr_zones`/`power_zones`, and
+  nothing said what the zones were a percentage of, so a %LTHR zone set and a %max-HR one read the same.
+  The figures are now session values of the workout (`provider_metrics`), so the threshold in effect can be
+  followed across a participant's activities, and the zones carry `calc_type` and the resting HR. The session's
+  own time_in_zone wins over the file-wide zones_target (the sport's thresholds over the default). A multisport
+  file gives no per-workout figure: its sessions each carry their own and the workout record is one of them or
+  none. Zero is left out: a Training Effect of 0 is an unscored session.
+  Garmin's physiological metrics message (140, lactate threshold pace, recovery time) is not in the FIT profile
+  and is reported stripped from partner files. It is not decoded; each parse logs which undocumented messages
+  and field numbers arrived, so a live file settles whether anything is there to decode.

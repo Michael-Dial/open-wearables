@@ -61,6 +61,7 @@ from app.schemas.responses.activity import (
     SleepStagesSummary,
     SleepTotals,
     Workout,
+    WorkoutMetricValue,
     WorkoutTotals,
 )
 from app.schemas.sync_status import DataTypeKind
@@ -1123,6 +1124,7 @@ class EventRecordService(
                     previous_cursor = encode_cursor(first_record.start_datetime, first_record.id, "prev")
 
         statistics = self.crud.get_workout_statistics(db_session, [r.id for r, _ in records])
+        provider_metrics = self.crud.get_workout_provider_metrics(db_session, [r.id for r, _ in records])
         computed_hr = self._resolve_avg_hr(db_session, [r for r, _ in records], statistics)
 
         data = []
@@ -1170,6 +1172,10 @@ class EventRecordService(
                 power_zones=as_model(PowerZones, details.power_zones) if details and with_zones else None,
                 has_fit_file=bool(details.fit_file_key) if details else False,
                 segments=as_dict_list(details.segments) if details and with_segments else None,
+                provider_metrics={
+                    series_type.value: WorkoutMetricValue(value=float(value), unit=get_series_type_unit(series_type))
+                    for series_type, value in sorted(provider_metrics.get(record.id, {}).items())
+                },
             )
             data.append(workout)
 

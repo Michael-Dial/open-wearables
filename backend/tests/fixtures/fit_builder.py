@@ -229,3 +229,88 @@ def make_swimming_fit(n_records: int = 10) -> bytes:
     for i in range(n_records):
         messages += _data_msg(fields, [start_ts + i, 140 + i % 8])
     return _fit_file(messages)
+
+
+# ---------------------------------------------------------------------------
+# Per-workout figures: session (18), time_in_zone (216), zones_target (7) and an
+# undocumented message. Field numbers, base types and scales from the FIT profile
+# (fitdecode 0.11): session 24/137 uint8 scale 10, 168 sint32 scale 65536;
+# hr_zone_calc 3 = percent_lthr, pwr_zone_calc 1 = percent_ftp.
+# ---------------------------------------------------------------------------
+
+_ENUM: int = 0x00
+
+
+def _message(global_num: int, local_type: int, fields: list[tuple[int, int, bytes]]) -> bytes:
+    """One definition and one data message. Each field is (def_num, base_type, packed bytes); arrays are
+    several packed values, sized by their bytes."""
+    definition = bytes([0x40 | local_type]) + struct.pack("<BBHB", 0x00, 0x00, global_num, len(fields))
+    for def_num, base_type, packed in fields:
+        definition += struct.pack("BBB", def_num, len(packed), base_type)
+    return definition + bytes([local_type]) + b"".join(packed for _, _, packed in fields)
+
+
+def _session(local_type: int, aerobic_te: float, anaerobic_te: float, load: float) -> bytes:
+    return _message(
+        18,
+        local_type,
+        [
+            (24, _UINT8, struct.pack("<B", round(aerobic_te * 10))),
+            (137, _UINT8, struct.pack("<B", round(anaerobic_te * 10))),
+            (168, _SINT32, struct.pack("<i", round(load * 65536))),
+        ],
+    )
+
+
+def make_performance_fit(
+    *,
+    sessions: int = 1,
+    time_in_zone: bool = True,
+    zones_target: bool = True,
+    undocumented: bool = True,
+    aerobic_te: float = 3.4,
+    anaerobic_te: float = 1.2,
+    load: float = 142.0,
+) -> bytes:
+    """Synthetic activity carrying the per-workout figures and thresholds a Garmin file can hold.
+
+    time_in_zone (session 0): threshold HR 168, FTP 265, max HR 191, resting HR 48, zones on % LTHR.
+    zones_target: threshold HR 160, FTP 250 (a different value, so a test can tell which was read).
+    The undocumented message is 140 with fields 4 and 14, values meaningless.
+    """
+    out = b""
+    for index in range(sessions):
+        out += _session(local_type=2, aerobic_te=aerobic_te, anaerobic_te=anaerobic_te, load=load + index)
+    if zones_target:
+        out += _message(
+            7,
+            3,
+            [
+                (1, _UINT8, struct.pack("<B", 191)),
+                (2, _UINT8, struct.pack("<B", 160)),
+                (3, _UINT16, struct.pack("<H", 250)),
+                (5, _ENUM, struct.pack("<B", 3)),
+            ],
+        )
+    if time_in_zone:
+        out += _message(
+            216,
+            4,
+            [
+                (0, _UINT16, struct.pack("<H", 18)),
+                (1, _UINT16, struct.pack("<H", 0)),
+                (2, _UINT32, struct.pack("<3I", 600_000, 1_200_000, 300_000)),
+                (6, _UINT8, struct.pack("<3B", 140, 160, 180)),
+                (5, _UINT32, struct.pack("<2I", 900_000, 1_200_000)),
+                (9, _UINT16, struct.pack("<2H", 200, 300)),
+                (10, _ENUM, struct.pack("<B", 3)),
+                (11, _UINT8, struct.pack("<B", 191)),
+                (12, _UINT8, struct.pack("<B", 48)),
+                (13, _UINT8, struct.pack("<B", 168)),
+                (14, _ENUM, struct.pack("<B", 1)),
+                (15, _UINT16, struct.pack("<H", 265)),
+            ],
+        )
+    if undocumented:
+        out += _message(140, 5, [(4, _UINT8, struct.pack("<B", 34)), (14, _UINT8, struct.pack("<B", 168))])
+    return _fit_file(out)

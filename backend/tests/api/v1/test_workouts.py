@@ -41,13 +41,20 @@ _FIT_HR = {
     "zones": [{"zone": 0, "seconds": 812.0, "max_bpm": 130}, {"zone": 1, "seconds": 240.5, "max_bpm": 150}],
     "max_hr": 189,
     "threshold_hr": 165,
+    "resting_hr": 47,
+    "calc_type": "percent_lthr",
 }
-_FIT_POWER = {"zones": [{"zone": 0, "seconds": 900.0, "max_watts": 150}], "ftp_watts": 250}
+_FIT_POWER = {"zones": [{"zone": 0, "seconds": 900.0, "max_watts": 150}], "ftp_watts": 250, "calc_type": "percent_ftp"}
+# Stored before zones said what they are a percentage of: the basis reads back unknown, never guessed.
+_FIT_HR_LEGACY = {k: v for k, v in _FIT_HR.items() if k not in ("resting_hr", "calc_type")}
+_FIT_HR_LEGACY_OUT = {**_FIT_HR_LEGACY, "resting_hr": None, "calc_type": None}
 _WHOOP_HR = {"zones": [{"zone": 0, "seconds": 812.0}, {"zone": 1, "seconds": 120.5}]}
 _WHOOP_HR_OUT = {
     "zones": [{"zone": 0, "seconds": 812.0, "max_bpm": None}, {"zone": 1, "seconds": 120.5, "max_bpm": None}],
     "max_hr": None,
     "threshold_hr": None,
+    "resting_hr": None,
+    "calc_type": None,
 }
 
 
@@ -464,6 +471,7 @@ class TestWorkoutsEndpoints:
         ("stored_hr", "stored_power", "expected_hr", "expected_power"),
         [
             pytest.param(_FIT_HR, _FIT_POWER, _FIT_HR, _FIT_POWER, id="fit-full-boundaries"),
+            pytest.param(_FIT_HR_LEGACY, None, _FIT_HR_LEGACY_OUT, None, id="fit-stored-before-zone-basis"),
             pytest.param(_WHOOP_HR, None, _WHOOP_HR_OUT, None, id="whoop-durations-only"),
             pytest.param(None, None, None, None, id="details-without-zones"),
             pytest.param({"garbage": True}, {"zones": "not-a-list"}, None, None, id="malformed-blob"),

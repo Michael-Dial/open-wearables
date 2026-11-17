@@ -26,6 +26,11 @@ class WorkoutTotals(BaseModel):
     )
 
 
+class WorkoutMetricValue(BaseModel):
+    value: float
+    unit: str
+
+
 class Workout(BaseModel):
     id: UUID
     type: str  # Should be WorkoutType enum ideally
@@ -80,6 +85,13 @@ class Workout(BaseModel):
         "at /users/{user_id}/events/workouts/{workout_id}/fit (Garmin only).",
     )
     segments: list[dict] | None = None
+    provider_metrics: dict[str, WorkoutMetricValue] = Field(
+        default_factory=dict,
+        description="Figures the provider computed for this workout that have no field above, keyed by series "
+        "type, as the provider reported them (Polar: running index, training load, cardio, muscle and "
+        "perceived load). A figure the provider did not report is absent, never zero.",
+        example={"polar_running_index": {"value": 51, "unit": "score"}},
+    )
 
 
 class Macros(BaseModel):

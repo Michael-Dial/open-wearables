@@ -142,6 +142,11 @@ class WebhookEventType(StrEnum):
     SERIES_CARDIOVASCULAR_AGE = "series.cardiovascular_age.created"
     SERIES_GARMIN_FITNESS_AGE = "series.garmin_fitness_age.created"
     SERIES_GARMIN_VO2_MAX_CYCLING = "series.garmin_vo2_max_cycling.created"
+    SERIES_POLAR_AEROBIC_THRESHOLD = "series.polar_aerobic_threshold.created"
+    SERIES_POLAR_ANAEROBIC_THRESHOLD = "series.polar_anaerobic_threshold.created"
+    SERIES_POLAR_PROFILE_VO2_MAX = "series.polar_profile_vo2_max.created"
+    SERIES_POLAR_PROFILE_MAX_HEART_RATE = "series.polar_profile_max_heart_rate.created"
+    SERIES_POLAR_PROFILE_RESTING_HEART_RATE = "series.polar_profile_resting_heart_rate.created"
 
     # Steps & calories
     SERIES_STEPS = "series.steps.created"
@@ -296,6 +301,11 @@ EVENT_TYPE_DESCRIPTIONS: dict[WebhookEventType, str] = {
     WebhookEventType.SERIES_CARDIOVASCULAR_AGE: "Cardiovascular age samples were ingested.",
     WebhookEventType.SERIES_GARMIN_FITNESS_AGE: "Garmin fitness age estimates were ingested.",
     WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING: "Garmin cycling VO2 max estimates were ingested.",
+    WebhookEventType.SERIES_POLAR_AEROBIC_THRESHOLD: "Polar aerobic threshold profile settings were ingested.",
+    WebhookEventType.SERIES_POLAR_ANAEROBIC_THRESHOLD: "Polar anaerobic threshold profile settings were ingested.",
+    WebhookEventType.SERIES_POLAR_PROFILE_VO2_MAX: "Polar profile VO2 max settings were ingested.",
+    WebhookEventType.SERIES_POLAR_PROFILE_MAX_HEART_RATE: "Polar profile maximum heart rate settings were ingested.",
+    WebhookEventType.SERIES_POLAR_PROFILE_RESTING_HEART_RATE: "Polar profile resting HR settings were ingested.",
     WebhookEventType.SERIES_STEPS: "Step count samples were ingested.",
     WebhookEventType.SERIES_ACTIVE_ENERGY: (
         "Active energy (calories) samples were ingested. Not total energy - basal is a separate series and event."
@@ -419,6 +429,11 @@ EVENT_TYPE_GROUPS: dict[str, list[str]] = {
         WebhookEventType.SERIES_CARDIOVASCULAR_AGE,
         WebhookEventType.SERIES_GARMIN_FITNESS_AGE,
         WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING,
+        WebhookEventType.SERIES_POLAR_AEROBIC_THRESHOLD,
+        WebhookEventType.SERIES_POLAR_ANAEROBIC_THRESHOLD,
+        WebhookEventType.SERIES_POLAR_PROFILE_VO2_MAX,
+        WebhookEventType.SERIES_POLAR_PROFILE_MAX_HEART_RATE,
+        WebhookEventType.SERIES_POLAR_PROFILE_RESTING_HEART_RATE,
     ],
     WebhookEventType.STEPS_CREATED: [
         WebhookEventType.SERIES_STEPS,

@@ -58,6 +58,12 @@ TIMESERIES: frozenset[SeriesType] = frozenset(
         SeriesType.garmin_fitness_age,  # /wellness-api/rest/userMetrics
         SeriesType.garmin_vo2_max_cycling,  # /wellness-api/rest/userMetrics (vo2MaxCycling)
         SeriesType.skin_temperature_deviation,  # /wellness-api/rest/skinTemp (avgDeviationCelsius)
+        # activityFiles FIT: one value per workout, filed against it (session and time_in_zone/zones_target)
+        SeriesType.aerobic_training_effect,
+        SeriesType.anaerobic_training_effect,
+        SeriesType.training_load_peak,
+        SeriesType.threshold_heart_rate,
+        SeriesType.functional_threshold_power,
     }
 )
 

@@ -14,6 +14,7 @@ from .events import (
     SleepSession,
     SleepTotals,
     Workout,
+    WorkoutMetricValue,
     WorkoutTotals,
 )
 from .heart_rate_sensors import HeartRateSensorRun, HeartRateSensorSource, HeartRateSensorsResponse
@@ -53,6 +54,7 @@ __all__ = [
     "IntensityMinutesResult",
     # Events
     "Workout",
+    "WorkoutMetricValue",
     "WorkoutTotals",
     "Meal",
     "Macros",

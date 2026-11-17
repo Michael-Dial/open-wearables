@@ -28,7 +28,10 @@ Polar provides access to exercise, daily activity, sleep, and heart rate data fr
 | Daily activity (steps, calories) | Yes, plus timestamped step samples within the day |
 | Continuous heart rate | Yes |
 | Nightly Recharge / Recovery | Yes — recovery score, plus overnight HRV (RMSSD) and breathing rate as one day value per night (`resolution=1day`) |
-| Cardio Load | Yes |
+| Cardio Load | Yes — the daily figure (strain, tolerance, ratio) as a health score |
+| Per-exercise load | Yes — `polar_training_load`, and Training Load Pro's `polar_cardio_load`, `polar_muscle_load` (kJ, needs a power sensor) and `polar_perceived_load` (RPE × minutes), each a session value of its workout returned in the workout's `provider_metrics`. Polar's interpretation labels and the RPE category are not kept (the RPE is perceived load over minutes) |
+| Running Index | Yes — `polar_running_index`, a session value of the run it was computed for, in that workout's `provider_metrics` |
+| Profile settings (physical info) | Yes — aerobic and anaerobic threshold, VO2max, maximum and resting heart rate from `/v3/users/physical-info`, each its own `polar_*` series stamped at the profile's last change. Polar does not say whether a value was measured, typed in or defaulted, so none of them shares a series with a measured value |
 | Sleepwise Alertness | Yes (requires Polar Sleepwise subscription) |
 | Sleepwise Circadian Bedtime | Yes (requires Polar Sleepwise subscription) |
 | Body Temperature | Yes (requires Polar Elixir device) |
@@ -43,7 +46,7 @@ Polar provides access to exercise, daily activity, sleep, and heart rate data fr
 | Method | Description |
 |--------|-------------|
 | **Polling (pull) — Exercises** | Open Wearables fetches exercises via the AccessLink v3 API (`/v3/exercises?samples=true`). Returns all exercises available in Polar Flow for the connected user, along with their sample arrays. |
-| **Polling (pull) — 24/7 data** | Sleep, daily activity, continuous HR, Nightly Recharge, cardio load, and Elixir/Sleepwise metrics are fetched via range endpoints covering the last 90 days. |
+| **Polling (pull) — 24/7 data** | Sleep, daily activity, continuous HR, Nightly Recharge, cardio load, and Elixir/Sleepwise metrics are fetched via range endpoints covering the last 90 days. The profile (`/v3/users/physical-info`) has no history: each sync reads it as it is now. |
 | **Webhooks (push)** | Polar sends a lightweight notification on each event (exercise, sleep, activity, etc.). Open Wearables acknowledges immediately and enqueues a targeted sync for the affected data type. |
 
 <Note>

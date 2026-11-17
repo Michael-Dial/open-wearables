@@ -31,7 +31,7 @@ from sqlalchemy.orm import Query, aliased, defer, selectinload
 
 from app.config import settings
 from app.constants.devices_map.device_types import APPLE_SOURCE_APP_PREFIX, is_apple_own_source
-from app.constants.series_types.workout_detail_stats import WORKOUT_DETAIL_STATS
+from app.constants.series_types.workout_detail_stats import WORKOUT_DETAIL_STATS, WORKOUT_PROVIDER_METRICS
 from app.database import DbSession
 from app.integrations.rollup_queue import mark_dirty_days
 from app.models import DataSource, EventRecord, EventRecordAggregate, SeriesSample, SleepDetails, WorkoutDetails
@@ -54,6 +54,7 @@ from app.schemas.enums import (
     TimelineBucket,
     get_series_type_id,
 )
+from app.schemas.enums.aggregation_method import get_aggregation_method
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordQueryParams,
@@ -891,6 +892,30 @@ class EventRecordRepository(
             .one()
         )
         return int(row[0]), int(row[1] or 0), row[2], row[3]
+
+    def get_workout_provider_metrics(
+        self, db_session: DbSession, record_ids: list[UUID]
+    ) -> dict[UUID, dict[SeriesType, Decimal]]:
+        """Per workout, the provider's own figure for each WORKOUT_PROVIDER_METRICS series it reported.
+
+        Only ``computed_by = provider``: these are the provider's numbers or nothing, never ours.
+        A series the provider left out is absent, not zero.
+        """
+        if not record_ids:
+            return {}
+        by_id = {get_series_type_id(series_type): series_type for series_type in WORKOUT_PROVIDER_METRICS}
+        rows = db_session.query(EventRecordAggregate).filter(
+            EventRecordAggregate.record_id.in_(record_ids),
+            EventRecordAggregate.series_type_definition_id.in_(by_id),
+            EventRecordAggregate.computed_by == ComputedBy.PROVIDER,
+        )
+        metrics: dict[UUID, dict[SeriesType, Decimal]] = {}
+        for row in rows:
+            series_type = by_id[row.series_type_definition_id]
+            value = getattr(row, get_aggregation_method(series_type).value)
+            if value is not None:
+                metrics.setdefault(row.record_id, {})[series_type] = value
+        return metrics
 
     def get_workout_statistics(
         self, db_session: DbSession, record_ids: list[UUID]
