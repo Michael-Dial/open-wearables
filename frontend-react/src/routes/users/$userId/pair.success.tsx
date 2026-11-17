@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Navigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Check, ArrowRight, ExternalLink } from 'lucide-react';
@@ -12,13 +12,54 @@ export const Route = createFileRoute('/users/$userId/pair/success')({
   validateSearch: (search: Record<string, unknown>) => ({
     provider: (search.provider as string) || undefined,
     redirect_url: (search.redirect_url as string) || undefined,
+    // Set by the backend's OAuth callback, which returns here on failure too.
+    status: (search.status as string) || undefined,
+    message: (search.message as string) || undefined,
   }),
 });
 
 function PairSuccessPage() {
   const { userId } = Route.useParams();
-  const { provider: providerId, redirect_url: redirectUrl } = Route.useSearch();
+  const {
+    provider: providerId,
+    redirect_url: redirectUrl,
+    status,
+    message,
+  } = Route.useSearch();
 
+  if (status !== 'success') {
+    return (
+      <Navigate
+        to="/users/$userId/pair/error"
+        params={{ userId }}
+        search={{
+          provider: providerId,
+          error: message,
+          redirect_url: redirectUrl,
+        }}
+        replace
+      />
+    );
+  }
+
+  return (
+    <PairSuccessContent
+      userId={userId}
+      providerId={providerId}
+      redirectUrl={redirectUrl}
+    />
+  );
+}
+
+function PairSuccessContent({
+  userId,
+  providerId,
+  redirectUrl,
+}: {
+  userId: string;
+  providerId?: string;
+  redirectUrl?: string;
+}) {
   useEffect(() => {
     queryClient.invalidateQueries({
       queryKey: queryKeys.connections.all(userId),

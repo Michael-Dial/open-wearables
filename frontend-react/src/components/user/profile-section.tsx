@@ -1,3 +1,5 @@
+import { fetchPairingLink } from '@/lib/pairing/links';
+import { toast } from 'sonner';
 import { useState, useEffect, useMemo } from 'react';
 import { Link as LinkIcon, Check, Copy, Pencil } from 'lucide-react';
 import { useUserConnections } from '@/hooks/api/use-health';
@@ -97,7 +99,13 @@ export function ProfileSection({ userId, activeRuns }: ProfileSectionProps) {
   };
 
   const handleCopyPairLink = async () => {
-    const pairLink = `${window.location.origin}/users/${userId}/pair`;
+    let pairLink: string;
+    try {
+      pairLink = await fetchPairingLink(userId);
+    } catch {
+      toast.error('Could not create a pairing link');
+      return;
+    }
     const success = await copyToClipboard(
       pairLink,
       'Pairing link copied to clipboard'

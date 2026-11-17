@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { useState, useRef, useMemo, type ReactNode } from 'react';
+import { useEffect, useState, useRef, useMemo, type ReactNode } from 'react';
+import { toast } from 'sonner';
 import {
   ArrowLeft,
   Link as LinkIcon,
@@ -81,6 +82,14 @@ import {
 
 export const Route = createFileRoute('/_authenticated/users/$userId')({
   component: UserDetailPage,
+  // The OAuth callback returns here from "add account" with the outcome.
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { status?: string; message?: string; provider?: string } => ({
+    status: typeof search.status === 'string' ? search.status : undefined,
+    message: typeof search.message === 'string' ? search.message : undefined,
+    provider: typeof search.provider === 'string' ? search.provider : undefined,
+  }),
 });
 
 interface TabConfig {
@@ -92,6 +101,13 @@ interface TabConfig {
 
 function UserDetailPage() {
   const { userId } = Route.useParams();
+  const { status: oauthStatus, message: oauthMessage } = Route.useSearch();
+
+  useEffect(() => {
+    if (oauthStatus === 'error') {
+      toast.error(oauthMessage || 'The provider sign-in did not complete');
+    }
+  }, [oauthStatus, oauthMessage]);
   // Keep the user's stream mounted regardless of the selected tab so background XML
   // completion always refreshes the active health queries.
   const { activeRuns } = useSyncStatusStream(userId);

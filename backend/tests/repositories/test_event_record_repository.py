@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.models import EventRecord
 from app.repositories.event_record_repository import EventRecordRepository
 from app.schemas.model_crud.activities import EventRecordCreate, EventRecordQueryParams
-from tests.factories import DataSourceFactory, EventRecordFactory, UserFactory
+from tests.factories import DataSourceFactory, EventRecordFactory, UserConnectionFactory, UserFactory
 
 
 class TestEventRecordRepository:
@@ -67,6 +67,84 @@ class TestEventRecordRepository:
         db_event = event_repo.get(db, event_data.id)
         assert db_event is not None
         assert db_event.data_source_id == mapping.id
+
+    def test_create_matches_workout_on_external_id(self, db: Session, event_repo: EventRecordRepository) -> None:
+        """A workout re-delivered with a slightly different end and a new device is matched by external_id (#1607)."""
+        user = UserFactory()
+        start = datetime(2026, 9, 9, 6, 42, 14, 550000, tzinfo=timezone.utc)
+
+        def workout(end_ms: int, device_model: str | None) -> EventRecordCreate:
+            return EventRecordCreate(
+                id=uuid4(),
+                user_id=user.id,
+                source="suunto",
+                provider="suunto",
+                device_model=device_model,
+                category="workout",
+                type="running",
+                source_name="Suunto",
+                duration_seconds=3426,
+                start_datetime=start,
+                end_datetime=start + timedelta(milliseconds=end_ms),
+                external_id="6aa10da139e69418a2fa8db1",
+            )
+
+        first = event_repo.create(db, workout(3426173, None))
+        second = event_repo.create(db, workout(3426080, "Suunto Race 2"))
+
+        assert second.id == first.id
+        assert second.end_datetime == start + timedelta(milliseconds=3426080)
+        assert db.query(EventRecord).filter(EventRecord.external_id == "6aa10da139e69418a2fa8db1").count() == 1
+
+        # Bulk: two more deliveries in one batch resolve to the same row, the last one's times winning
+        earlier, latest = workout(3426000, None), workout(3425900, None)
+        stored = event_repo.bulk_create(db, [earlier, latest])
+        db.commit()
+
+        assert stored == {earlier.id: first.id, latest.id: first.id}
+        db.refresh(first)
+        assert first.end_datetime == start + timedelta(milliseconds=3425900)
+        assert db.query(EventRecord).filter(EventRecord.external_id == "6aa10da139e69418a2fa8db1").count() == 1
+
+    def test_external_id_match_stays_within_the_account(self, db: Session, event_repo: EventRecordRepository) -> None:
+        """Fork: two accounts of one provider never retime each other's workouts through a shared id."""
+        user = UserFactory()
+        first_account = UserConnectionFactory(user=user, provider="garmin")
+        second_account = UserConnectionFactory(user=user, provider="garmin")
+        start = datetime(2026, 9, 9, 6, 0, tzinfo=timezone.utc)
+
+        def workout(account_id: Any, minutes: int) -> EventRecordCreate:
+            return EventRecordCreate(
+                id=uuid4(),
+                user_id=user.id,
+                source="garmin",
+                provider="garmin",
+                user_connection_id=account_id,
+                category="workout",
+                type="running",
+                source_name="Garmin",
+                duration_seconds=minutes * 60,
+                start_datetime=start,
+                end_datetime=start + timedelta(minutes=minutes),
+                external_id="shared-id",
+            )
+
+        first = event_repo.create(db, workout(first_account.id, 30))
+        other = event_repo.create(db, workout(second_account.id, 45))
+
+        assert other.id != first.id
+        db.refresh(first)
+        assert first.end_datetime == start + timedelta(minutes=30)
+
+        # The same account's re-delivery still refreshes its own row
+        again = workout(first_account.id, 32)
+        stored = event_repo.bulk_create(db, [again])
+        db.commit()
+        assert stored == {again.id: first.id}
+        db.refresh(first)
+        db.refresh(other)
+        assert first.end_datetime == start + timedelta(minutes=32)
+        assert other.end_datetime == start + timedelta(minutes=45)
 
     def test_create_auto_creates_mapping(self, db: Session, event_repo: EventRecordRepository) -> None:
         """Test that create automatically creates a mapping if it doesn't exist."""

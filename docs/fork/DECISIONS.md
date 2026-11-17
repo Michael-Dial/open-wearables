@@ -2048,3 +2048,33 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   Garmin's physiological metrics message (140, lactate threshold pace, recovery time) is not in the FIT profile
   and is reported stripped from partner files. It is not decoded; each parse logs which undocumented messages
   and field numbers arrived, so a live file settles whether anything is there to decode.
+
+## Workouts matched on external_id stay within their account
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (`_workout_key` and `_fetch_workouts_by_external_id` in
+  `event_record_repository.py` carry the account; `DataSourceRepository.provider_of` is upstream's helper,
+  added here because the fork's repository did not have it)
+- **Why**: upstream #2078 matches a re-delivered workout to the stored one by user, provider and
+  `external_id`, and moves the stored row to the newest times. Here a user can hold several accounts of one
+  provider, each its own recorder; an id one of them happens to share must not retime the other's workout.
+  The key adds the account the record files under (its own `user_connection_id`, else the active one, the
+  same fallback `ensure_data_source` uses), so the match never crosses accounts. The startup dedupe script
+  is upstream's unchanged: it groups by data source, which in the fork is already per account.
+
+## OAuth authorize needs a caller; the React dashboard sends one
+
+- **Area**: backend, frontend-react
+- **Status**: active
+- **On conflict**: merge both (upstream's auth, provider-enabled and redirect allowlist checks run first,
+  then the fork's `connection_id`/`new_account`/`account_*` handling and Polar v4 chaining; on a provider
+  error the fork's declined-chained-grant continuation runs before upstream's error redirect)
+- **Why**: upstream #2098/#2093 close the open redirect and make `/oauth/{provider}/authorize` take an API
+  key, developer token, SDK token or connect token. The React dashboard called it with no credentials, so
+  every Connect button would have answered 401. `useOAuthConnect` now sends the signed-in developer's
+  bearer token, or a pairing link's connect token as `X-Open-Wearables-Connect-Token`. "Copy pairing link"
+  mints a token (`POST /users/{id}/connect-token`) and adds it as `?t=`; the pair page keeps it for the tab so
+  "connect another" still works. Links copied before this release carry no token and stop working. The
+  callback now returns to `redirect_uri` with `status`, so the React success page shows the error page
+  unless `status=success`, and the user page toasts a failed "add account".

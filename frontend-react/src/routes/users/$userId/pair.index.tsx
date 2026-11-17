@@ -16,6 +16,11 @@ import { useMemo, useState } from 'react';
 import { API_CONFIG } from '@/lib/api/config';
 import { isAuthenticated } from '@/lib/auth/session';
 import { ACCOUNT_TYPES, type AccountType } from '@/lib/api/types';
+import {
+  PAIR_TOKEN_PARAM,
+  rememberPairToken,
+  rememberedPairToken,
+} from '@/lib/pairing/links';
 
 export const Route = createFileRoute('/users/$userId/pair/')({
   component: PairWearablePage,
@@ -24,15 +29,32 @@ export const Route = createFileRoute('/users/$userId/pair/')({
       typeof search.redirect_url === 'string' && search.redirect_url.length > 0
         ? search.redirect_url
         : undefined,
+    // The connect token a shareable pairing link carries.
+    [PAIR_TOKEN_PARAM]:
+      typeof search[PAIR_TOKEN_PARAM] === 'string' &&
+      search[PAIR_TOKEN_PARAM].length > 0
+        ? search[PAIR_TOKEN_PARAM]
+        : undefined,
   }),
 });
 
 function PairWearablePage() {
   const { userId } = Route.useParams();
-  const { redirect_url: redirectUrl } = Route.useSearch();
+  const { redirect_url: redirectUrl, [PAIR_TOKEN_PARAM]: linkToken } =
+    Route.useSearch();
+
+  // A signed-in developer needs no token; a participant's link brings one, kept
+  // for the tab so "connect another" from the success page still works.
+  const connectToken = useMemo(() => {
+    if (linkToken) {
+      rememberPairToken(userId, linkToken);
+      return linkToken;
+    }
+    return rememberedPairToken(userId);
+  }, [userId, linkToken]);
 
   const { connectionState, connectingProvider, error, connect, reset } =
-    useOAuthConnect({ userId, redirectUrl });
+    useOAuthConnect({ userId, redirectUrl, connectToken });
 
   const { data: apiProviders, isLoading } = useOAuthProviders(true, true);
   const { data: connections } = useUserConnections(userId, isAuthenticated());

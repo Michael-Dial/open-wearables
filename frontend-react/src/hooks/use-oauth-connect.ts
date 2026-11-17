@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { API_CONFIG } from '@/lib/api/config';
+import { getToken } from '@/lib/auth/session';
 
 export type OAuthConnectionState = 'idle' | 'connecting' | 'success' | 'error';
 
@@ -16,6 +17,11 @@ export interface UseOAuthConnectOptions {
   redirectPath?: string;
   /** Developer's app redirect URL (passed through to success page) */
   redirectUrl?: string;
+  /**
+   * Connect token from a shareable pairing link. Without one the signed-in
+   * developer's session authorizes the request.
+   */
+  connectToken?: string;
   onSuccess?: (providerId: string) => void;
   onError?: (error: string) => void;
 }
@@ -60,8 +66,15 @@ export interface UseOAuthConnectReturn {
 export function useOAuthConnect(
   options: UseOAuthConnectOptions
 ): UseOAuthConnectReturn {
-  const { userId, redirectUri, redirectPath, redirectUrl, onSuccess, onError } =
-    options;
+  const {
+    userId,
+    redirectUri,
+    redirectPath,
+    redirectUrl,
+    connectToken,
+    onSuccess,
+    onError,
+  } = options;
 
   const [connectionState, setConnectionState] =
     useState<OAuthConnectionState>('idle');
@@ -107,8 +120,17 @@ export function useOAuthConnect(
           params.set('account_email', account.accountEmail);
         }
 
+        const headers: Record<string, string> = {};
+        const sessionToken = getToken();
+        if (connectToken) {
+          headers['X-Open-Wearables-Connect-Token'] = connectToken;
+        } else if (sessionToken) {
+          headers['Authorization'] = `Bearer ${sessionToken}`;
+        }
+
         const response = await fetch(
-          `${API_CONFIG.baseUrl}/api/v1/oauth/${providerId}/authorize?${params}`
+          `${API_CONFIG.baseUrl}/api/v1/oauth/${providerId}/authorize?${params}`,
+          { headers }
         );
 
         if (!response.ok) {
@@ -134,7 +156,15 @@ export function useOAuthConnect(
         onError?.(errorMessage);
       }
     },
-    [userId, redirectUri, redirectPath, redirectUrl, onSuccess, onError]
+    [
+      userId,
+      redirectUri,
+      redirectPath,
+      redirectUrl,
+      connectToken,
+      onSuccess,
+      onError,
+    ]
   );
 
   const reset = useCallback(() => {

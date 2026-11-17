@@ -1,5 +1,8 @@
 'use client';
 
+import { fetchPairingLink } from '@/lib/pairing/links';
+import { toast } from 'sonner';
+
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
@@ -151,7 +154,13 @@ export function UsersTable({
   };
 
   const handleCopyPairLink = async (userId: string) => {
-    const pairLink = `${window.location.origin}${ROUTES.users}/${userId}/pair`;
+    let pairLink: string;
+    try {
+      pairLink = await fetchPairingLink(userId);
+    } catch {
+      toast.error('Could not create a pairing link');
+      return;
+    }
     const success = await copyToClipboard(
       pairLink,
       'Pairing link copied to clipboard'
