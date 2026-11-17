@@ -1604,6 +1604,14 @@ class DataSourceRepository(
         db_session.commit()
         return result.rowcount
 
+    @staticmethod
+    def provider_of(creator: Any) -> ProviderName:
+        """The creator's explicit provider when valid, else the one inferred from its source."""
+        if creator.provider:
+            with contextlib.suppress(ValueError):
+                return ProviderName(creator.provider)
+        return ProviderName.from_source_string(creator.source)
+
     def infer_provider_from_source(self, source: str | None) -> ProviderName:
         """Infer provider from source string.
 

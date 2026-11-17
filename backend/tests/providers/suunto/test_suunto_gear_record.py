@@ -25,7 +25,13 @@ RACE_2 = {
 
 
 def _workout(workout_id: int, start_ms: int, gear: dict[str, Any] | None) -> dict[str, Any]:
-    workout: dict[str, Any] = {"workoutId": workout_id, "activityId": 3, "startTime": start_ms, "totalTime": 600.0}
+    workout: dict[str, Any] = {
+        "workoutId": workout_id,
+        "workoutKey": f"key-{workout_id}",
+        "activityId": 3,
+        "startTime": start_ms,
+        "totalTime": 600.0,
+    }
     if gear is not None:
         # Race 2 and later ship gear inside SummaryExtension, as the live capture does.
         workout["extensions"] = [{"type": "SummaryExtension", "gear": gear}]

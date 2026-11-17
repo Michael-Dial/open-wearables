@@ -65,6 +65,7 @@ export const API_ENDPOINTS = {
     `/api/v1/users/${userId}/import/apple/xml/s3/multipart/abort`,
   userInvitationCode: (userId: string) =>
     `/api/v1/users/${userId}/invitation-code`,
+  userConnectToken: (userId: string) => `/api/v1/users/${userId}/connect-token`,
   userBeatCapture: (userId: string) => `/api/v1/users/${userId}/beat-capture`,
   userBeatCaptureWindows: (userId: string) =>
     `/api/v1/users/${userId}/beat-capture/windows`,
