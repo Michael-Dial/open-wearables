@@ -60,6 +60,7 @@ from app.repositories.local_day import OFFSET_REACH
 from app.repositories.repositories import (
     CrudRepository,
     SourceRanking,
+    platform_conditions,
     source_filter_conditions,
     timeline_key_column,
     utc_bucket_start,
@@ -1089,6 +1090,7 @@ class DataPointSeriesRepository(
         if types:
             query = query.filter(self.model.series_type_definition_id.in_([get_series_type_id(t) for t in types]))
         query = query.filter(*source_filter_conditions(params, self.model.data_source_id))
+        query = query.filter(*platform_conditions(params.platform, self.model.provider_metadata))
         if relay_plan is not None:
             # Applied here rather than in the service so every read path - raw, bucketed
             # and the probes that size a page - drops the same rows. A page whose count

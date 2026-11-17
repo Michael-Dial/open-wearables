@@ -56,6 +56,24 @@ Existing Fitbit users must first [move their Fitbit account to their Google Acco
 | **Polling (pull)** | Open Wearables periodically fetches data via the Health API (Celery Beat), driven by the [fetch mode](#data-granularity-and-fetch-modes) below. |
 | **Webhooks (notify-only)** | Google sends a lightweight ping naming the changed `dataType` and time intervals; Open Wearables then fetches the changed data over REST. Requires a project-level [subscriber registration](#webhook-subscriber-registration). |
 
+### Health Connect data through the API
+
+Health Connect has no cloud API of its own: it lives on the phone. What the Google Health app syncs up from it is stored in Google's cloud, and the Health API marks each such point `dataSource.platform = HEALTH_CONNECT` ([reference](https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints)). A `google_health` connection therefore reads Health Connect data with no mobile SDK involved, provided the user has turned on Health Connect sync in the Google Health app and the app that wrote the data is allowed to write that data type.
+
+Each sample, workout and sleep session from Google Health carries a `provenance` object with Google's values verbatim:
+
+| Field | Meaning |
+|-------|---------|
+| `platform` | The platform that uploaded the point into Google's cloud: `HEALTH_CONNECT`, `FITBIT`, `HEALTH_KIT`, `FIT`, `FITBIT_WEB_API`, `NEST`, `GOOGLE_WEB_API`, `GOOGLE_PARTNER_INTEGRATION` |
+| `recording_method` | `MANUAL` (typed by a person), `PASSIVELY_MEASURED`, `ACTIVELY_MEASURED` or `DERIVED` |
+| `writing_app` | Package name of the app that wrote the point, when Google states it |
+
+To read only the Health Connect points, pass `platform=HEALTH_CONNECT` (case-insensitive) to `/timeseries`, `/export/series`, `/events/workouts` or `/events/sleep`. The platform is recorded on each row, so reads that do not see single rows refuse the filter with a 400 rather than ignore it: `/timeseries` at `1day`, `1week` or `1month` (read from per-source aggregates) or with a `source_selection` other than `all`, and `/events/sleep` with `source_selection=per_period`.
+
+<Note>
+This is the cloud copy of Health Connect data, separate from the `health_connect` provider, which holds what the mobile SDK read on the phone. A user with both connected has two copies of the same readings, each reached through a different path. Reconciled points (`GOOGLE_USE_RECONCILE=true`) carry no `dataSource`, so their `provenance` is null and `platform=` matches none of them.
+</Note>
+
 ## Data granularity and fetch modes
 
 The Health API exposes the same underlying data through three different operations. Open Wearables reads every 24/7 metric at native resolution, picking the operation per the `GOOGLE_USE_RECONCILE` flag.

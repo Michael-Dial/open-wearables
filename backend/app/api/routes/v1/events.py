@@ -22,6 +22,7 @@ from app.services.event_record_service import event_record_service
 from app.services.workout_export_service import MAX_PAD_SECONDS, CsvExport, SampleLayout, workout_export_service
 from app.utils.dates import DateTimeQueryParam, parse_query_datetime, parse_query_end_datetime
 from app.utils.pagination import DEFAULT_PAGE_SIZE, PageLimitQueryParam
+from app.utils.platform_filter import PlatformQuery, refuse_platform_unless
 
 router = APIRouter()
 
@@ -100,6 +101,7 @@ def list_workouts(
     data_source_id: UUID | None = None,
     include_redundant_relays: IncludeRedundantRelaysQuery = False,
     source_selection: SessionSourceSelectionQuery = None,
+    platform: PlatformQuery = None,
 ) -> PaginatedResponse[Workout]:
     """Returns workout sessions."""
     params = EventRecordQueryParams(
@@ -113,6 +115,7 @@ def list_workouts(
         source=source,
         device_model=device_model,
         data_source_id=data_source_id,
+        platform=platform,
         include_redundant_relays=include_redundant_relays,
     )
     return event_record_service.get_workouts(
@@ -295,8 +298,15 @@ def list_sleep_sessions(
     is_nap: IsNapQuery = None,
     source_selection: SleepSourceSelectionQuery = None,
     filter_by_priority: FilterByPriorityQuery = False,
+    platform: PlatformQuery = None,
 ) -> PaginatedResponse[SleepSession]:
     """Returns sleep sessions (including naps)."""
+    selection = _sleep_selection(source_selection, filter_by_priority)
+    # per_period picks each night's winning source from every source, before any filter, so a
+    # night won by another platform would come back empty instead of with this platform's session.
+    refuse_platform_unless(
+        platform, selection is not SourceSelection.PER_PERIOD, "use source_selection=all or per_session."
+    )
     params = EventRecordQueryParams(
         start_datetime=parse_query_datetime(start_date),
         end_datetime=parse_query_end_datetime(end_date),
@@ -308,10 +318,9 @@ def list_sleep_sessions(
         data_source_id=data_source_id,
         include_redundant_relays=include_redundant_relays,
         is_nap=is_nap,
+        platform=platform,
     )
-    return event_record_service.get_sleep_sessions(
-        db, user_id, params, source_selection=_sleep_selection(source_selection, filter_by_priority), include=include
-    )
+    return event_record_service.get_sleep_sessions(db, user_id, params, source_selection=selection, include=include)
 
 
 @router.get("/users/{user_id}/events/workouts/{workout_id}/fit")

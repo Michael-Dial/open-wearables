@@ -1,6 +1,7 @@
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -46,6 +47,20 @@ def source_filter_conditions(
     if params.data_source_id:
         conditions.append(data_source_id_column == params.data_source_id)
     return conditions
+
+
+def platform_conditions(
+    platform: str | None,
+    provider_metadata_column: InstrumentedAttribute[dict[str, Any] | None],
+) -> list[ColumnElement[bool]]:
+    """Rows a provider says were uploaded through ``platform`` (``PlatformFilterParams``).
+
+    Read from the row's ``provider_metadata``, where Google Health keeps its ``dataSource.platform``.
+    A row that states no platform never matches.
+    """
+    if not platform:
+        return []
+    return [provider_metadata_column["platform"].astext == platform]
 
 
 # Rank of a provider or device type missing from the priority tables

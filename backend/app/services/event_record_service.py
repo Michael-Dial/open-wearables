@@ -68,6 +68,7 @@ from app.schemas.sync_status import DataTypeKind
 from app.schemas.utils import (
     PaginatedResponse,
     Pagination,
+    SourceProvenance,
     TimeseriesMetadata,
 )
 from app.schemas.utils import (
@@ -1147,6 +1148,7 @@ class EventRecordService(
                 zone_offset=record.zone_offset,
                 duration_seconds=record.duration_seconds,
                 source=self._map_source(data_source),
+                provenance=SourceProvenance.from_provider_metadata(record.provider_metadata),
                 entry_source=details.entry_source if details else None,
                 intensity=details.intensity if details else None,
                 calories_kcal=calories,
@@ -1359,6 +1361,7 @@ class EventRecordService(
                 end_time=record.end_datetime,
                 zone_offset=record.zone_offset,
                 source=self._map_source(data_source),
+                provenance=SourceProvenance.from_provider_metadata(record.provider_metadata),
                 duration_seconds=record.duration_seconds or 0,
                 sleep_duration_seconds=sleep_duration_seconds,
                 time_in_bed_seconds=time_in_bed_seconds,

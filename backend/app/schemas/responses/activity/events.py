@@ -8,7 +8,7 @@ from app.algorithms.sleep_onset import SleepOnsetMetrics
 from app.schemas.enums import EntrySource, WorkoutIntensity
 from app.schemas.model_crud.activities import SleepStage
 from app.schemas.model_crud.activities.zones import HRZones, PowerZones
-from app.schemas.utils import SourceMetadata
+from app.schemas.utils import SourceMetadata, SourceProvenance
 
 from .summaries import SleepStagesSummary
 
@@ -40,6 +40,14 @@ class Workout(BaseModel):
     zone_offset: str | None = None
     duration_seconds: int | None = None
     source: SourceMetadata
+    provenance: SourceProvenance | None = Field(
+        None,
+        description=(
+            "How the provider says the record reached it: the platform that uploaded it into the provider's "
+            "cloud (Google Health: `HEALTH_CONNECT`, `FITBIT`, ...), how it was recorded and the app that wrote "
+            "it. Null when the provider states none."
+        ),
+    )
     entry_source: EntrySource | None = Field(
         None,
         description="How the workout was recorded, normalized across providers.",
@@ -142,6 +150,14 @@ class SleepSession(BaseModel):
     end_time: datetime
     zone_offset: str | None = None
     source: SourceMetadata
+    provenance: SourceProvenance | None = Field(
+        None,
+        description=(
+            "How the provider says the record reached it: the platform that uploaded it into the provider's "
+            "cloud (Google Health: `HEALTH_CONNECT`, `FITBIT`, ...), how it was recorded and the app that wrote "
+            "it. Null when the provider states none."
+        ),
+    )
     duration_seconds: int = Field(
         ...,
         description=(

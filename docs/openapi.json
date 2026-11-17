@@ -3584,6 +3584,27 @@
             }
           },
           {
+            "name": "platform",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only rows whose provider states they were uploaded through this platform, matched on the row's `provenance.platform` (case-insensitive). `HEALTH_CONNECT` reads the Health Connect data that reached Google's cloud and arrived through a `google_health` connection, with no mobile SDK involved. Only Google Health states a platform today, so every other provider's rows are left out when this is set.",
+              "examples": [
+                "HEALTH_CONNECT"
+              ],
+              "title": "Platform"
+            },
+            "description": "Only rows whose provider states they were uploaded through this platform, matched on the row's `provenance.platform` (case-insensitive). `HEALTH_CONNECT` reads the Health Connect data that reached Google's cloud and arrived through a `google_health` connection, with no mobile SDK involved. Only Google Health states a platform today, so every other provider's rows are left out when this is set."
+          },
+          {
             "name": "include_redundant_relays",
             "in": "query",
             "required": false,
@@ -3700,7 +3721,7 @@
           "External: Timeseries"
         ],
         "summary": "Export Series",
-        "description": "Stream every raw time-series row of one user over a window, in one response.\n\nThe bulk counterpart of `/timeseries?resolution=raw`: the same rows, with the same\nfields, same window bounds (`start_time` inclusive, `end_time` exclusive) and the\nsame `types` parsing, but no page size and no cursor. A study-wide recompute is one\nrequest per participant instead of thousands of 1000-row pages. Rows are read\nthrough a server-side cursor and written as they arrive, so a window of any size\nis bounded by the client's throughput, not by the server's memory.\n\n**Every source's rows are returned.** No priority filtering and no relay\ndeduplication is applied, unlike the default `/timeseries` read: a method\ncomparison needs both arms, the maker's own feed and the copy an aggregator\nrelayed, and both units of one model worn together. Tell them apart by\n`source.data_source_id` (NDJSON) or the `data_source_id` column (CSV); the `route`\nand `route_kind` fields say which feed of a source wrote each row.\n\nOrdered by `timestamp`, then `data_source_id`. The row count is not announced up\nfront - counting would scan the window once more before the first row is sent.",
+        "description": "Stream every raw time-series row of one user over a window, in one response.\n\nThe bulk counterpart of `/timeseries?resolution=raw`: the same rows, with the same\nfields, same window bounds (`start_time` inclusive, `end_time` exclusive) and the\nsame `types` parsing, but no page size and no cursor. A study-wide recompute is one\nrequest per participant instead of thousands of 1000-row pages. Rows are read\nthrough a server-side cursor and written as they arrive, so a window of any size\nis bounded by the client's throughput, not by the server's memory.\n\n**Every source's rows are returned.** No priority filtering and no relay\ndeduplication is applied, unlike the default `/timeseries` read: a method\ncomparison needs both arms, the maker's own feed and the copy an aggregator\nrelayed, and both units of one model worn together. Tell them apart by\n`source.data_source_id` (NDJSON) or the `data_source_id` column (CSV); the `route`\nand `route_kind` fields say which feed of a source wrote each row, and `provenance`\nthe platform that uploaded it into the provider's cloud, where the provider says.\n\nOrdered by `timestamp`, then `data_source_id`. The row count is not announced up\nfront - counting would scan the window once more before the first row is sent.",
         "operationId": "export_series_api_v1_users__user_id__export_series_get",
         "security": [
           {
@@ -3791,6 +3812,27 @@
               "default": "ndjson"
             },
             "description": "`ndjson` (default) or `csv`."
+          },
+          {
+            "name": "platform",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only rows whose provider states they were uploaded through this platform, matched on the row's `provenance.platform` (case-insensitive). `HEALTH_CONNECT` reads the Health Connect data that reached Google's cloud and arrived through a `google_health` connection, with no mobile SDK involved. Only Google Health states a platform today, so every other provider's rows are left out when this is set.",
+              "examples": [
+                "HEALTH_CONNECT"
+              ],
+              "title": "Platform"
+            },
+            "description": "Only rows whose provider states they were uploaded through this platform, matched on the row's `provenance.platform` (case-insensitive). `HEALTH_CONNECT` reads the Health Connect data that reached Google's cloud and arrived through a `google_health` connection, with no mobile SDK involved. Only Google Health states a platform today, so every other provider's rows are left out when this is set."
           },
           {
             "name": "X-Open-Wearables-API-Key",
@@ -4548,6 +4590,27 @@
               "title": "Source Selection"
             },
             "description": "`all` returns every source's sessions. `per_session` drops a session when the sessions of one source ranked higher by provider, then device type priority, cover at least `SESSION_DUPLICATE_OVERLAP` of it (default 0.5); sessions nothing better covers stay, and equally ranked sources never hide each other. Source filters narrow which sessions compete. Defaults to `all`."
+          },
+          {
+            "name": "platform",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only rows whose provider states they were uploaded through this platform, matched on the row's `provenance.platform` (case-insensitive). `HEALTH_CONNECT` reads the Health Connect data that reached Google's cloud and arrived through a `google_health` connection, with no mobile SDK involved. Only Google Health states a platform today, so every other provider's rows are left out when this is set.",
+              "examples": [
+                "HEALTH_CONNECT"
+              ],
+              "title": "Platform"
+            },
+            "description": "Only rows whose provider states they were uploaded through this platform, matched on the row's `provenance.platform` (case-insensitive). `HEALTH_CONNECT` reads the Health Connect data that reached Google's cloud and arrived through a `google_health` connection, with no mobile SDK involved. Only Google Health states a platform today, so every other provider's rows are left out when this is set."
           },
           {
             "name": "X-Open-Wearables-API-Key",
@@ -5547,6 +5610,27 @@
             },
             "description": "Same as source_selection=per_period: the highest-priority source's sessions per sleep date.",
             "deprecated": true
+          },
+          {
+            "name": "platform",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only rows whose provider states they were uploaded through this platform, matched on the row's `provenance.platform` (case-insensitive). `HEALTH_CONNECT` reads the Health Connect data that reached Google's cloud and arrived through a `google_health` connection, with no mobile SDK involved. Only Google Health states a platform today, so every other provider's rows are left out when this is set.",
+              "examples": [
+                "HEALTH_CONNECT"
+              ],
+              "title": "Platform"
+            },
+            "description": "Only rows whose provider states they were uploaded through this platform, matched on the row's `provenance.platform` (case-insensitive). `HEALTH_CONNECT` reads the Health Connect data that reached Google's cloud and arrived through a `google_health` connection, with no mobile SDK involved. Only Google Health states a platform today, so every other provider's rows are left out when this is set."
           },
           {
             "name": "X-Open-Wearables-API-Key",
@@ -28238,6 +28322,17 @@
           "source": {
             "$ref": "#/components/schemas/SourceMetadata"
           },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the provider says the record reached it: the platform that uploaded it into the provider's cloud (Google Health: `HEALTH_CONNECT`, `FITBIT`, ...), how it was recorded and the app that wrote it. Null when the provider states none."
+          },
           "duration_seconds": {
             "type": "integer",
             "title": "Duration Seconds",
@@ -29610,6 +29705,52 @@
         "title": "SourceObservationResponse",
         "description": "One distinct description of a data source's hardware and software, and when it held.\n\nEvery field is what the platform sent, verbatim; null means it sent nothing for that\nfield, never that the value was empty. A firmware or app update shows as a new row\nwhose recorded span starts where the previous one's ends."
       },
+      "SourceProvenance": {
+        "properties": {
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform",
+            "description": "The platform that uploaded the reading into the provider's cloud, verbatim. Google Health: `HEALTH_CONNECT`, `FITBIT`, `HEALTH_KIT`, `FIT`, `FITBIT_WEB_API`, `NEST`, `GOOGLE_WEB_API`, `GOOGLE_PARTNER_INTEGRATION`.",
+            "example": "HEALTH_CONNECT"
+          },
+          "recording_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Method",
+            "description": "How the value was produced, verbatim: Google Health's `MANUAL` (typed by a person), `PASSIVELY_MEASURED`, `ACTIVELY_MEASURED` or `DERIVED`.",
+            "example": "PASSIVELY_MEASURED"
+          },
+          "writing_app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Writing App",
+            "description": "Package name of the app that wrote the reading, where the provider states it.",
+            "example": "com.garmin.android.apps.connectmobile"
+          }
+        },
+        "type": "object",
+        "title": "SourceProvenance",
+        "description": "How one reading reached its provider, as the provider's own record of it says.\n\nOnly Google Health states this today. Its ``dataSource`` names the platform that\nuploaded each point into Google's cloud, so a Health Connect reading read through\nthe Google Health API shows ``platform: HEALTH_CONNECT``. That is the cloud copy of\nHealth Connect data, as opposed to the ``health_connect`` provider, which holds what\nthe mobile SDK read from the phone. Values are Google's, verbatim."
+      },
       "StorageEstimate": {
         "properties": {
           "live_data_bytes": {
@@ -30841,6 +30982,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/SourceMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceProvenance"
               },
               {
                 "type": "null"
@@ -32471,6 +32622,17 @@
           },
           "source": {
             "$ref": "#/components/schemas/SourceMetadata"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the provider says the record reached it: the platform that uploaded it into the provider's cloud (Google Health: `HEALTH_CONNECT`, `FITBIT`, ...), how it was recorded and the app that wrote it. Null when the provider states none."
           },
           "entry_source": {
             "anyOf": [

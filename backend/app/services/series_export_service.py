@@ -17,7 +17,7 @@ from collections.abc import Iterable, Iterator
 from enum import StrEnum
 
 from app.schemas.responses.activity import TimeSeriesSample
-from app.schemas.utils import SourceMetadata
+from app.schemas.utils import SourceMetadata, SourceProvenance
 
 
 class ExportFormat(StrEnum):
@@ -34,10 +34,16 @@ MEDIA_TYPES: dict[ExportFormat, str] = {
 # yielded chunk as its own frame, and a night of 1 Hz data is tens of thousands of lines.
 _ROWS_PER_CHUNK = 500
 
-# The row's own fields, in schema order, minus the nested attribution object - that is
-# flattened into the columns below. Read off the schema so a field added to a
-# `/timeseries` row is a column here without a second list to keep in step.
-SAMPLE_COLUMNS: tuple[str, ...] = tuple(name for name in TimeSeriesSample.model_fields if name != "source")
+# The nested objects of a row, each flattened into columns of its own below.
+_NESTED = frozenset({"source", "provenance"})
+
+# The row's own fields, in schema order, minus the nested objects. Read off the schema so
+# a field added to a `/timeseries` row is a column here without a second list to keep in step.
+SAMPLE_COLUMNS: tuple[str, ...] = tuple(name for name in TimeSeriesSample.model_fields if name not in _NESTED)
+
+# The row's provenance (platform, recording_method, writing_app), one column each, under the
+# schema's own names; read off the schema for the same reason.
+PROVENANCE_COLUMNS: tuple[str, ...] = tuple(SourceProvenance.model_fields)
 
 # The attribution columns, the join keys first. These are a subset of ``SourceMetadata``
 # (fields and computed fields alike); ``_source_value`` reads them by name, so a name
@@ -59,7 +65,7 @@ SOURCE_COLUMNS: tuple[str, ...] = (
     "provider_device_id",
 )
 
-CSV_COLUMNS: tuple[str, ...] = SAMPLE_COLUMNS + SOURCE_COLUMNS
+CSV_COLUMNS: tuple[str, ...] = SAMPLE_COLUMNS + PROVENANCE_COLUMNS + SOURCE_COLUMNS
 
 
 def _csv_cell(value: object) -> str:
@@ -79,8 +85,9 @@ def _source_value(source: SourceMetadata | None, name: str) -> object:
 
 def flatten(sample: TimeSeriesSample) -> list[str]:
     """A sample as one CSV row, in ``CSV_COLUMNS`` order."""
-    row = sample.model_dump(mode="json", exclude={"source"})
+    row = sample.model_dump(mode="json", exclude=set(_NESTED))
     cells = [_csv_cell(row[name]) for name in SAMPLE_COLUMNS]
+    cells.extend(_csv_cell(getattr(sample.provenance, name, None)) for name in PROVENANCE_COLUMNS)
     cells.extend(_csv_cell(_source_value(sample.source, name)) for name in SOURCE_COLUMNS)
     return cells
 

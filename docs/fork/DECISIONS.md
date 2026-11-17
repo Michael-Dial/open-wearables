@@ -1982,6 +1982,25 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   would stop the other's late night from ever being fetched. Both checks now use the bare date and stay
   within the account being synced.
 
+## Health Connect through the Google Health API: `provenance` on each row, `platform=` to select it
+
+- **Area**: backend, docs
+- **Status**: active
+- **On conflict**: keep ours (`SourceProvenance`, `PlatformFilterParams`, `platform_conditions`, the
+  `provenance` field on `TimeSeriesSample`, `Workout` and `SleepSession`, the CSV export's provenance columns)
+- **Why**: Before upstream's provider split (#1634) one `google` provider held both the mobile SDK's Health
+  Connect uploads and the Google Health API, so Health Connect data reached through the cloud was read under
+  the same name as the SDK's. After the split the cloud copy lives under `google_health`, filed under one data
+  source per device with `source = google_health_api`, and the only trace of its route is Google's
+  `dataSource.platform`, kept in each row's `provider_metadata` since the source-provenance change but never
+  returned or filterable. A study that reads Health Connect without the SDK could not tell those points from
+  Fitbit's. Each Google sample, workout and sleep session now returns `provenance` (platform, recording method,
+  writing app, verbatim), and `platform=` selects rows by it on `/timeseries`, `/export/series`,
+  `/events/workouts` and `/events/sleep`. It is a row condition kept out of `SourceFilterParams` on purpose:
+  those also narrow queries over `DataSource` alone and over per-source aggregates, which cannot see a row's
+  platform, so the reads that cannot apply it (period resolutions, priority selections, per-night sleep) refuse
+  it with a 400 rather than return every platform's rows or an empty series. Nothing is re-keyed and no data
+  source is split; the split itself is left as upstream made it.
 
 ## Polar profile thresholds and per-exercise loads are kept, each in its own series
 
