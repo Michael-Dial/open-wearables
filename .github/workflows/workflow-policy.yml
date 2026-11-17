@@ -1,0 +1,40 @@
+# Written by Michael-Dial/app-store-release ci-policy/sync.py (policy 05258732bc). Do not edit this
+# copy: change ci-policy/ there and re-run sync.py. Checks every workflow in this repository
+# against the org's CI rules (the "CI workflow rules" section of CLAUDE.md).
+name: Workflow policy
+
+on:
+  pull_request:
+    paths: [".github/workflows/**", ".github/ci-policy/**", "ci-policy/**"]
+  push:
+    branches: [main]
+    paths: [".github/workflows/**", ".github/ci-policy/**", "ci-policy/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Workflow policy
+    # Seconds of Linux; hosted so it never waits behind the self-hosted pool.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet pyyaml
+      - name: Check workflows
+        env:
+          PRIVATE: ${{ github.event.repository.private }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python .github/ci-policy/check_workflows.py --private "$PRIVATE" --default-branch "$DEFAULT_BRANCH"
+      # Only in app-store-release, where the policy's source lives.
+      - name: Test the policy and confirm this copy matches its source
+        if: hashFiles('ci-policy/check_workflows.py') != ''
+        run: |
+          python -m unittest discover -s ci-policy
+          cmp ci-policy/check_workflows.py .github/ci-policy/check_workflows.py \
+            || { echo "::error::.github/ci-policy is stale; run ci-policy/sync.py apply ."; exit 1; }
