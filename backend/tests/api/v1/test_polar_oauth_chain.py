@@ -40,8 +40,18 @@ def _state_of(auth_url: str) -> OAuthState:
     return OAuthState.model_validate(data)
 
 
+@pytest.fixture(autouse=True)
+def _allow_app_example(monkeypatch: pytest.MonkeyPatch) -> None:
+    """authorize only takes an allowlisted redirect_uri (upstream #2098)."""
+    monkeypatch.setattr(settings, "oauth_redirect_allowlist", "https://app.example")
+
+
+def _headers() -> dict[str, str]:
+    return api_key_headers(ApiKeyFactory().plain_key)
+
+
 def _authorize(client: TestClient, **params: str) -> str:
-    response = client.get("/api/v1/oauth/polar/authorize", params=params)
+    response = client.get("/api/v1/oauth/polar/authorize", params=params, headers=_headers())
     assert response.status_code == 200
     return response.json()["authorization_url"]
 
@@ -112,7 +122,7 @@ class TestAuthorizeStartsWithV4:
     def test_connecting_v4_directly_is_unchanged(self, client: TestClient, db: Session) -> None:
         user = UserFactory()
 
-        response = client.get("/api/v1/oauth/polar_v4/authorize", params={"user_id": str(user.id)})
+        response = client.get("/api/v1/oauth/polar_v4/authorize", params={"user_id": str(user.id)}, headers=_headers())
 
         url = response.json()["authorization_url"]
         assert url.startswith(V4_AUTHORIZE)
