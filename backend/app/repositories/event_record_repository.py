@@ -38,7 +38,13 @@ from app.models import DataSource, EventRecord, EventRecordAggregate, SeriesSamp
 from app.repositories.data_source_repository import SOURCE_ID_FIELDS, DataSourceRepository
 from app.repositories.data_type_coverage_repository import data_type_coverage_repository
 from app.repositories.local_day import utc_midnight
-from app.repositories.repositories import CrudRepository, SourceRanking, source_filter_conditions, utc_bucket_start
+from app.repositories.repositories import (
+    CrudRepository,
+    SourceRanking,
+    platform_conditions,
+    source_filter_conditions,
+    utc_bucket_start,
+)
 from app.schemas.data_type_coverage import CoverageSpan
 from app.schemas.enums import (
     ComputedBy,
@@ -732,6 +738,7 @@ class EventRecordRepository(
             filters.append(_nap_condition(query_params.is_nap))
 
         filters.extend(source_filter_conditions(query_params, EventRecord.data_source_id))
+        filters.extend(platform_conditions(query_params.platform, EventRecord.provider_metadata))
 
         if relay_plan is not None:
             # The aggregator's copy of a maker that is also connected directly, for the
@@ -1047,6 +1054,7 @@ class EventRecordRepository(
             DataSource.user_id == UUID(user_id),
             EventRecord.category == query_params.category,
             *source_filter_conditions(query_params, EventRecord.data_source_id),
+            *platform_conditions(query_params.platform, EventRecord.provider_metadata),
         ]
         if relay_plan is not None:
             # Rank on the rows the caller will actually receive. Without this a redundant

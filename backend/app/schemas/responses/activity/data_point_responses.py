@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.schemas.enums import ComputedBy, SeriesType
-from app.schemas.utils import SourceMetadata
+from app.schemas.utils import SourceMetadata, SourceProvenance
 from app.utils.dates import ZoneOffset
 
 
@@ -27,6 +27,10 @@ class TimeSeriesSample(BaseModel):
     value: float | int
     unit: str
     source: SourceMetadata | None = None
+    # How the provider says the reading reached it, verbatim: Google Health's dataSource
+    # platform (HEALTH_CONNECT, FITBIT, ...), recording method and writing app. None when the
+    # row states none - every provider but Google Health. Raw samples only.
+    provenance: SourceProvenance | None = None
     # True = daily total. False/None = not a daily total (summable sample); None is a
     # legacy row and is treated as False by the aggregation.
     is_daily_total: bool | None = None

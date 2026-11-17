@@ -10,7 +10,7 @@ from app.schemas.enums import DeviceType, PeriodKind, Resolution, SampleRoute, S
 from app.utils.dates import ZoneOffset, iso_to_timezone
 from app.utils.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
-from .source_filters import SourceFilterParams
+from .source_filters import PlatformFilterParams, SourceFilterParams
 
 
 def _offset(zone_offset: object) -> object:
@@ -128,7 +128,7 @@ class StepSampleCreate(TimeSeriesSampleCreate):
     series_type: Literal[SeriesType.steps] = SeriesType.steps  # ty:ignore[incompatible-mutable-override]
 
 
-class TimeSeriesQueryParams(SourceFilterParams):
+class TimeSeriesQueryParams(SourceFilterParams, PlatformFilterParams):
     """Filters for retrieving time series samples."""
 
     start_datetime: datetime | None = Field(None, description="Lower bound (inclusive) for recorded timestamp")
