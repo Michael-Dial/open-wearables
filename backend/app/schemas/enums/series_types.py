@@ -81,6 +81,14 @@ class SeriesType(str, Enum):
     vo2_max = "vo2_max"
     six_minute_walk_test_distance = "six_minute_walk_test_distance"
     cardiovascular_age = "cardiovascular_age"
+    # One value per workout, from the activity's FIT file (session and zone messages): what the
+    # device reported for that workout. The thresholds are the settings in effect when it was
+    # recorded (auto-detected or typed in, the file does not say), not a test result.
+    aerobic_training_effect = "aerobic_training_effect"  # FIT session.total_training_effect (0-5)
+    anaerobic_training_effect = "anaerobic_training_effect"  # FIT session.total_anaerobic_training_effect (0-5)
+    training_load_peak = "training_load_peak"  # FIT session.training_load_peak (Garmin's activity Training Load)
+    threshold_heart_rate = "threshold_heart_rate"  # FIT time_in_zone / zones_target threshold_heart_rate
+    functional_threshold_power = "functional_threshold_power"  # FIT time_in_zone / zones_target FTP
 
     # =========================================================================
     # ACTIVITY - Basic (IDs 80-99)
@@ -326,6 +334,11 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (60, SeriesType.vo2_max, "ml_kg_min"),
     (61, SeriesType.six_minute_walk_test_distance, "meters"),
     (62, SeriesType.cardiovascular_age, "years"),
+    (63, SeriesType.aerobic_training_effect, "score"),
+    (64, SeriesType.anaerobic_training_effect, "score"),
+    (65, SeriesType.training_load_peak, "score"),
+    (66, SeriesType.threshold_heart_rate, "bpm"),
+    (67, SeriesType.functional_threshold_power, "watts"),
     # -------------------------------------------------------------------------
     # ACTIVITY - Basic (IDs 80-99)
     # -------------------------------------------------------------------------
@@ -500,6 +513,11 @@ SERIES_TYPE_DESCRIPTION_BY_ENUM: dict[SeriesType, str] = {
     SeriesType.garmin_body_battery: "Intraday body battery readings (0-100), one sample per measurement",
     SeriesType.distance: "Distance of a whole workout, whatever its type; per-sport distance samples have own types",
     SeriesType.elevation_gain: "Total ascent of a whole workout; elevation holds the altitude itself",
+    SeriesType.aerobic_training_effect: "Aerobic Training Effect of one workout, from its FIT file",
+    SeriesType.anaerobic_training_effect: "Anaerobic Training Effect of one workout, from its FIT file",
+    SeriesType.training_load_peak: "Training load of one workout as the device reports it, from its FIT file",
+    SeriesType.threshold_heart_rate: "Threshold HR setting in effect for one workout (FIT); not a test result",
+    SeriesType.functional_threshold_power: "FTP setting in effect for one workout (FIT); not a test result",
     SeriesType.polar_aerobic_threshold: "Polar profile setting, as of the profile's last change; source not stated",
     SeriesType.polar_anaerobic_threshold: "Polar profile setting, as of the profile's last change; source not stated",
     SeriesType.polar_profile_vo2_max: "Polar profile setting (test result or typed in, not stated), not an estimate",

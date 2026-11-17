@@ -56,6 +56,8 @@ class SampleRoute(StrEnum):
     GARMIN_SKIN_TEMP = "garmin.skin_temp"
     # Any FIT file's record messages (Garmin activityFiles today)
     FIT_RECORDS = "fit.records"
+    # A FIT file's one-per-workout figures (session Training Effect and load, thresholds in effect)
+    FIT_SESSION = "fit.session"
     # Polar AccessLink
     POLAR_CONTINUOUS_HR = "polar.continuous_hr"
     POLAR_SLEEP = "polar.sleep"
@@ -122,6 +124,7 @@ SAMPLE_ROUTE_DEFINITIONS: list[tuple[int, SampleRoute, RouteKind]] = [
     (11, SampleRoute.GARMIN_USER_METRICS, RouteKind.SUMMARY),
     (12, SampleRoute.GARMIN_SKIN_TEMP, RouteKind.SUMMARY),
     (13, SampleRoute.FIT_RECORDS, RouteKind.WORKOUT),
+    (14, SampleRoute.FIT_SESSION, RouteKind.SUMMARY),
     (20, SampleRoute.POLAR_CONTINUOUS_HR, RouteKind.INTRADAY),
     (21, SampleRoute.POLAR_SLEEP, RouteKind.WINDOW),
     (22, SampleRoute.POLAR_DAILY_ACTIVITY, RouteKind.WINDOW),

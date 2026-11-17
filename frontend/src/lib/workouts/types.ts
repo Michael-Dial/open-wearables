@@ -2,10 +2,22 @@ import type { SourceMetadata } from '$lib/events/types';
 
 /** Mirrors backend `HRZones` / `PowerZones` (app/schemas/model_crud/activities/zones.py). */
 export type HRZone = { zone: number; seconds: number; max_bpm: number | null };
-export type HRZones = { zones: HRZone[]; max_hr: number | null; threshold_hr: number | null };
+export type HRZones = {
+	zones: HRZone[];
+	max_hr: number | null;
+	threshold_hr: number | null;
+	resting_hr: number | null;
+	/** What the boundaries are a percentage of, verbatim from the FIT file (e.g. `percent_lthr`); null when not stated. */
+	calc_type: string | null;
+};
 
 export type PowerZone = { zone: number; seconds: number; max_watts: number | null };
-export type PowerZones = { zones: PowerZone[]; ftp_watts: number | null };
+export type PowerZones = {
+	zones: PowerZone[];
+	ftp_watts: number | null;
+	/** `percent_ftp` or `custom`, verbatim from the FIT file; null when not stated. */
+	calc_type: string | null;
+};
 
 /**
  * Mirrors backend `Workout`. Almost everything is nullable because no provider

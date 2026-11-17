@@ -170,6 +170,11 @@ The `types` parameter in the timeseries endpoint accepts the following values:
 | `garmin_fitness_age` | years | Garmin fitness age estimate |
 | `garmin_body_battery` | % | Garmin body battery (0-100) |
 | `garmin_vo2_max_cycling` | mL/kg/min | Garmin cycling VO2max estimate (`vo2_max` holds the running one) |
+| `aerobic_training_effect` | score | Aerobic Training Effect (0–5) of one workout, from its FIT file (session value) |
+| `anaerobic_training_effect` | score | Anaerobic Training Effect (0–5) of one workout, from its FIT file (session value) |
+| `training_load_peak` | score | The workout's training load as the device reports it (FIT `training_load_peak`; Garmin's activity Training Load) |
+| `threshold_heart_rate` | bpm | Threshold HR setting in effect for the workout (FIT); Garmin's lactate threshold HR when zones are on %LTHR. A setting, not a test result |
+| `functional_threshold_power` | W | FTP setting in effect for the workout (FIT). A setting, not a test result |
 | `polar_aerobic_threshold` | bpm | Polar profile aerobic threshold, as of the profile's last change; whether measured or typed in is not stated |
 | `polar_anaerobic_threshold` | bpm | Polar profile anaerobic threshold, same caveat |
 | `polar_profile_vo2_max` | mL/kg/min | Polar profile VO2max setting (fitness test or typed in); not `vo2_max` |

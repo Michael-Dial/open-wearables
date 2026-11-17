@@ -23271,6 +23271,28 @@
               }
             ],
             "title": "Threshold Hr"
+          },
+          "resting_hr": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resting Hr"
+          },
+          "calc_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calc Type"
           }
         },
         "type": "object",
@@ -26156,6 +26178,17 @@
               }
             ],
             "title": "Ftp Watts"
+          },
+          "calc_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calc Type"
           }
         },
         "type": "object",
@@ -27826,6 +27859,11 @@
           "vo2_max",
           "six_minute_walk_test_distance",
           "cardiovascular_age",
+          "aerobic_training_effect",
+          "anaerobic_training_effect",
+          "training_load_peak",
+          "threshold_heart_rate",
+          "functional_threshold_power",
           "steps",
           "active_energy",
           "basal_energy",

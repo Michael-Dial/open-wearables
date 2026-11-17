@@ -113,6 +113,12 @@ AGGREGATION_METHOD_BY_TYPE: dict[SeriesType, AggregationMethod] = {
     SeriesType.garmin_fitness_age: AggregationMethod.AVG,
     SeriesType.garmin_body_battery: AggregationMethod.AVG,
     SeriesType.garmin_vo2_max_cycling: AggregationMethod.AVG,
+    # ── Per-workout figures from FIT files ──
+    SeriesType.aerobic_training_effect: AggregationMethod.AVG,
+    SeriesType.anaerobic_training_effect: AggregationMethod.AVG,
+    SeriesType.training_load_peak: AggregationMethod.SUM,
+    SeriesType.threshold_heart_rate: AggregationMethod.AVG,
+    SeriesType.functional_threshold_power: AggregationMethod.AVG,
     # ── Polar-specific ──
     SeriesType.polar_aerobic_threshold: AggregationMethod.AVG,
     SeriesType.polar_anaerobic_threshold: AggregationMethod.AVG,

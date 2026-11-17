@@ -37,6 +37,7 @@ from app.schemas.model_crud.activities import (
     HealthScoreCreate,
     MenstrualCycleDetailCreate,
     ScoreComponent,
+    SessionValue,
     SleepStage,
     TimeSeriesSampleCreate,
 )
@@ -2014,6 +2015,40 @@ class Garmin247Data(Base247DataTemplate):
             fields["power_zones"] = power_zones
         self.event_record_detail_repo.update_workout_fields(db, record.id, fields)
 
+    def _save_fit_session_values(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        activity_id: str,
+        figures: dict[SeriesType, Decimal],
+    ) -> int:
+        """File the FIT file's one-per-workout figures against the workout they describe.
+
+        Same lookup and same no-op as ``_save_fit_workout_fields``: with no stored workout there is
+        nothing to file them against, and a figure attached to a guessed workout is worse than none.
+        """
+        if not figures:
+            return 0
+        record = self.event_record_repo.get_by_external_id(db, user_id, activity_id, source=self.provider_name)
+        if record is None:
+            return 0
+        values = [
+            TimeSeriesSampleCreate(
+                route=SampleRoute.FIT_SESSION,
+                id=uuid4(),
+                user_id=user_id,
+                source=self.provider_name,
+                recorded_at=record.start_datetime,
+                zone_offset=record.zone_offset,
+                value=value,
+                series_type=series_type,
+                external_id=activity_id,
+                session=SessionValue(record_id=record.id),
+            )
+            for series_type, value in figures.items()
+        ]
+        return int(self.data_point_repo.bulk_create(db, values))
+
     def _save_fit_file_key(
         self,
         db: DbSession,
@@ -2231,6 +2266,17 @@ class Garmin247Data(Base247DataTemplate):
                                     activity_id=activity_id,
                                     error=str(e),
                                 )
+                        try:
+                            self._save_fit_session_values(db, user_id, activity_id, fit_result.session_metrics)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to save FIT session values",
+                                provider="garmin",
+                                task="process_items_batch",
+                                user_id=str(user_id),
+                                activity_id=activity_id,
+                                error=str(e),
+                            )
                         fit_samples: list[TimeSeriesSampleCreate] = []
                         if settings.ingest_workout_samples:
                             fit_samples = [
@@ -2245,6 +2291,10 @@ class Garmin247Data(Base247DataTemplate):
                             activity_id=activity_id,
                             segments=len(fit_result.segments),
                             samples=len(fit_samples),
+                            # Names and numbers only, never values: which figures the file carried, and
+                            # which undocumented messages (Garmin's physiological metrics are reported in 140).
+                            session_figures=sorted(series_type.value for series_type in fit_result.session_metrics),
+                            undocumented_messages={str(k): v for k, v in fit_result.undocumented_messages.items()},
                         )
 
                     case "moveIQActivities":

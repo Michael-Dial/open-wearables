@@ -23,6 +23,11 @@ WORKOUT_DETAIL_STATS: dict[str, tuple[SeriesType, StatColumn]] = {
 # provider_metrics, keyed by series type, from the provider's session value in its aggregation column.
 WORKOUT_PROVIDER_METRICS: frozenset[SeriesType] = frozenset(
     {
+        SeriesType.aerobic_training_effect,
+        SeriesType.anaerobic_training_effect,
+        SeriesType.training_load_peak,
+        SeriesType.threshold_heart_rate,
+        SeriesType.functional_threshold_power,
         SeriesType.polar_running_index,
         SeriesType.polar_training_load,
         SeriesType.polar_cardio_load,
