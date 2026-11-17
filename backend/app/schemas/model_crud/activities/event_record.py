@@ -11,7 +11,7 @@ from app.schemas.enums import DeviceType, EntrySource, EventCategory, SeriesType
 from app.utils.dates import ZoneOffset
 from app.utils.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
-from .source_filters import SourceFilterParams
+from .source_filters import PlatformFilterParams, SourceFilterParams
 
 
 class WorkoutInclude(StrEnum):
@@ -128,7 +128,7 @@ class EventRecordResponse(EventRecordBase):
     data_source_id: UUID | None
 
 
-class EventRecordQueryParams(SourceFilterParams):
+class EventRecordQueryParams(SourceFilterParams, PlatformFilterParams):
     """Filtering and sorting parameters for event records."""
 
     # Pagination

@@ -46,6 +46,7 @@ from app.schemas.utils import (
     PaginatedResponse,
     Pagination,
     SourceMetadata,
+    SourceProvenance,
     TimeseriesMetadata,
 )
 from app.services.aggregate_backfill_service import days_from_samples
@@ -164,6 +165,7 @@ def _to_sample(
         value=float(value),
         unit=get_series_type_unit(series_type),
         source=source,
+        provenance=SourceProvenance.from_provider_metadata(provider_metadata),
         is_daily_total=is_daily_total,
         # The window the provider stated in the record's metadata, else the one upstream records
         # on every windowed sample (window_seconds): the same quantity, kept under the fork's name.

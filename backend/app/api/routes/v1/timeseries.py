@@ -14,6 +14,7 @@ from app.services import ApiKeyDep, heart_rate_sensor_service, timeseries_servic
 from app.services.series_export_service import MEDIA_TYPES, ExportFormat, body_for
 from app.utils.dates import DateTimeQueryParam, parse_query_datetime, parse_query_end_datetime
 from app.utils.pagination import DEFAULT_PAGE_SIZE, PageLimitQueryParam
+from app.utils.platform_filter import PlatformQuery, refuse_platform_unless
 
 router = APIRouter()
 
@@ -75,6 +76,7 @@ def get_timeseries(
     source: str | None = None,
     device_model: str | None = None,
     data_source_id: UUID | None = None,
+    platform: PlatformQuery = None,
     include_redundant_relays: Annotated[
         bool,
         Query(
@@ -109,6 +111,19 @@ def get_timeseries(
     """Returns granular time series data (biometrics or activity)."""
     if source_selection is None:
         source_selection = SourceSelection.PER_RANGE if filter_by_priority else SourceSelection.ALL
+    # Day, week and month values are read from per-source aggregates, which hold no platform,
+    # and the priority selections pick a winning source before any row is seen, so a winner
+    # with none of the platform's rows would return an empty series. Refused rather than wrong.
+    refuse_platform_unless(
+        platform,
+        resolution not in PERIOD_RESOLUTIONS,
+        "use resolution raw or a sub-day resolution, not 1day, 1week or 1month.",
+    )
+    refuse_platform_unless(
+        platform,
+        source_selection is SourceSelection.ALL,
+        "use source_selection=all.",
+    )
     if source_selection is SourceSelection.PER_PERIOD and resolution is Resolution.RAW:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -135,6 +150,7 @@ def get_timeseries(
         source=source,
         device_model=device_model,
         data_source_id=data_source_id,
+        platform=platform,
         include_redundant_relays=include_redundant_relays,
     )
     return timeseries_service.get_timeseries(db, user_id, types, params, source_selection=source_selection)
@@ -170,6 +186,7 @@ def export_series(
         Query(description="Only these data sources (repeat the parameter). Every source when omitted."),
     ] = [],
     format: Annotated[ExportFormat, Query(description="`ndjson` (default) or `csv`.")] = ExportFormat.NDJSON,
+    platform: PlatformQuery = None,
 ) -> StreamingResponse:
     """Stream every raw time-series row of one user over a window, in one response.
 
@@ -185,7 +202,8 @@ def export_series(
     comparison needs both arms, the maker's own feed and the copy an aggregator
     relayed, and both units of one model worn together. Tell them apart by
     `source.data_source_id` (NDJSON) or the `data_source_id` column (CSV); the `route`
-    and `route_kind` fields say which feed of a source wrote each row.
+    and `route_kind` fields say which feed of a source wrote each row, and `provenance`
+    the platform that uploaded it into the provider's cloud, where the provider says.
 
     Ordered by `timestamp`, then `data_source_id`. The row count is not announced up
     front - counting would scan the window once more before the first row is sent.
@@ -193,6 +211,7 @@ def export_series(
     params = TimeSeriesQueryParams(
         start_datetime=parse_query_datetime(start_time),
         end_datetime=parse_query_end_datetime(end_time),
+        platform=platform,
     )
     samples = timeseries_service.iter_export_samples(db, user_id, types, params, data_source_id)
     filename = f"series_{user_id}_{params.start_datetime:%Y%m%dT%H%M%S}_{params.end_datetime:%Y%m%dT%H%M%S}.{format}"

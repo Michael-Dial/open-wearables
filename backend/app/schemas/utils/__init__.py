@@ -16,6 +16,7 @@ from .pagination import (
     PaginatedResponse,
     Pagination,
 )
+from .provenance import SourceProvenance
 from .query_params import (
     FilterParams,
 )
@@ -37,5 +38,6 @@ __all__ = [
     "HiddenRelayInfo",
     "RelayDedupMetadata",
     "SourceMetadata",
+    "SourceProvenance",
     "TimeseriesMetadata",
 ]
