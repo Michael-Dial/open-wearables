@@ -12,9 +12,34 @@ ACTIVITY_SERIES: dict[str, SeriesType] = {
     "exercise_time_minutes": SeriesType.exercise_time,
 }
 
+# Profile settings (PhysicalInfoJSON attribute → SeriesType) from /v3/users/physical-info. Their own
+# series: Polar does not say whether a figure was measured, typed in or defaulted.
+PHYSICAL_INFO_SERIES: dict[str, SeriesType] = {
+    "aerobic_threshold": SeriesType.polar_aerobic_threshold,
+    "anaerobic_threshold": SeriesType.polar_anaerobic_threshold,
+    "vo2_max": SeriesType.polar_profile_vo2_max,
+    "maximum_heart_rate": SeriesType.polar_profile_max_heart_rate,
+    "resting_heart_rate": SeriesType.polar_profile_resting_heart_rate,
+}
+
+# Per-exercise figures (/v3/exercises), each filed as a session value of its workout.
+# ExerciseJSON attribute → SeriesType, then TrainingLoadProJSON attribute → SeriesType.
+EXERCISE_SESSION_SERIES: dict[str, SeriesType] = {
+    "running_index": SeriesType.polar_running_index,
+    "training_load": SeriesType.polar_training_load,
+}
+TRAINING_LOAD_PRO_SERIES: dict[str, SeriesType] = {
+    "cardio_load": SeriesType.polar_cardio_load,
+    "muscle_load": SeriesType.polar_muscle_load,
+    "perceived_load": SeriesType.polar_perceived_load,
+}
+
 TIMESERIES: frozenset[SeriesType] = frozenset(
     {
         *ACTIVITY_SERIES.values(),  # /v3/users/activities
+        *PHYSICAL_INFO_SERIES.values(),  # /v3/users/physical-info
+        *EXERCISE_SESSION_SERIES.values(),  # /v3/exercises (session values)
+        *TRAINING_LOAD_PRO_SERIES.values(),  # /v3/exercises training_load_pro (session values)
         SeriesType.heart_rate,  # /v3/users/sleep + /v3/users/continuous-heart-rate + /v3/users/wrist-ecg
         # /v3/users/nightly-recharge 5-min windows + /v3/users/spo2 + /v3/users/wrist-ecg
         SeriesType.heart_rate_variability_rmssd,

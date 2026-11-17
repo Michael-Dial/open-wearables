@@ -19,6 +19,18 @@ WORKOUT_DETAIL_STATS: dict[str, tuple[SeriesType, StatColumn]] = {
     "elev_high": (SeriesType.elevation, "max"),
 }
 
+# Per-workout figures a provider computes that have no workout_details column: returned as the workout's
+# provider_metrics, keyed by series type, from the provider's session value in its aggregation column.
+WORKOUT_PROVIDER_METRICS: frozenset[SeriesType] = frozenset(
+    {
+        SeriesType.polar_running_index,
+        SeriesType.polar_training_load,
+        SeriesType.polar_cardio_load,
+        SeriesType.polar_muscle_load,
+        SeriesType.polar_perceived_load,
+    }
+)
+
 # Workout statistics arriving as samples that get no session row: legacy SDK totalEnergyBurned (undecided) and
 # totalDistance, whose sample series is distance_walking_running while the workout's distance series is distance.
 UNDECIDED_WORKOUT_SERIES: frozenset[SeriesType] = frozenset(

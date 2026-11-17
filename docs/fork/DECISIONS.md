@@ -1982,3 +1982,30 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   would stop the other's late night from ever being fetched. Both checks now use the bare date and stay
   within the account being synced.
 
+
+## Polar profile thresholds and per-exercise loads are kept, each in its own series
+
+- **Area**: backend, docs
+- **Status**: active; upstreamable
+- **On conflict**: keep ours (`polar_*` series ids 250-259, `PHYSICAL_INFO_SERIES`,
+  `EXERCISE_SESSION_SERIES` and `TRAINING_LOAD_PRO_SERIES` in `polar/coverage.py`,
+  `Polar247Data.normalize_physical_info`, `PolarWorkouts._session_values`, routes 31 and 32, and the
+  workout's `provider_metrics` with `WORKOUT_PROVIDER_METRICS` and `get_workout_provider_metrics`)
+- **Why**: AccessLink states the user's aerobic and anaerobic thresholds, VO2max and maximum and resting
+  heart rate (`GET /v3/users/physical-info`), and per exercise a running index, a training load and Training
+  Load Pro's cardio, muscle and perceived load (`/v3/exercises`). None was stored: the exercise schema parsed
+  the per-exercise figures and dropped them, and physical info was never fetched.
+  The profile figures are settings, not measurements. Polar dates the profile (`modified`), not the field,
+  and states no source for any of them (only `weight_source`), so a threshold from a fitness test and one
+  typed in or left at an age default are indistinguishable. Each therefore has its own `polar_*` series and
+  never shares one with a measured value: `polar_profile_resting_heart_rate` is not `resting_heart_rate`,
+  `polar_profile_vo2_max` is not `vo2_max`. Each row is stamped at `modified`, so an unchanged threshold is
+  re-stamped when the weight changes; a row means "the setting as of then".
+  The per-exercise figures are session values of the workout they describe, in event_record_aggregate.
+  Nothing returned a provider's session value outside the fixed workout_details statistics, so the workout
+  response gains `provider_metrics` (additive): the provider's own figure per series, absent when not
+  reported. The interpretation labels and `user-rpe` are not kept, as an aggregate row holds one number.
+  Keys are read in both spellings, as the exercise samples are (entry above): the spec writes kebab-case and
+  `/v3/exercises` has sent snake_case. A Training Load Pro object whose loads all parse to nothing while it
+  holds unread keys logs an error with `alert=True`, naming the keys. Written against the spec; not yet seen
+  in a live payload. An exercise skipped because a v4 session holds it files no figures.

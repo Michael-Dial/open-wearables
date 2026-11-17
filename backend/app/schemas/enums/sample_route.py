@@ -68,6 +68,8 @@ class SampleRoute(StrEnum):
     POLAR_EXERCISE = "polar.exercise"
     POLAR_PPI = "polar.ppi"
     POLAR_RR_IMPORT = "polar.rr_import"
+    POLAR_PHYSICAL_INFO = "polar.physical_info"
+    POLAR_EXERCISE_SUMMARY = "polar.exercise_summary"
     # Oura
     OURA_HEARTRATE = "oura.heartrate"
     OURA_SLEEP = "oura.sleep"
@@ -131,6 +133,8 @@ SAMPLE_ROUTE_DEFINITIONS: list[tuple[int, SampleRoute, RouteKind]] = [
     (28, SampleRoute.POLAR_EXERCISE, RouteKind.WORKOUT),
     (29, SampleRoute.POLAR_PPI, RouteKind.INTRADAY),
     (30, SampleRoute.POLAR_RR_IMPORT, RouteKind.WORKOUT),
+    (31, SampleRoute.POLAR_PHYSICAL_INFO, RouteKind.INTRADAY),
+    (32, SampleRoute.POLAR_EXERCISE_SUMMARY, RouteKind.SUMMARY),
     (40, SampleRoute.OURA_HEARTRATE, RouteKind.INTRADAY),
     (41, SampleRoute.OURA_SLEEP, RouteKind.WINDOW),
     (42, SampleRoute.OURA_ACTIVITY, RouteKind.WINDOW),

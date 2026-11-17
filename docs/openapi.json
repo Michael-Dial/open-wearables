@@ -27881,6 +27881,16 @@
           "garmin_fitness_age",
           "garmin_body_battery",
           "garmin_vo2_max_cycling",
+          "polar_aerobic_threshold",
+          "polar_anaerobic_threshold",
+          "polar_profile_vo2_max",
+          "polar_profile_max_heart_rate",
+          "polar_profile_resting_heart_rate",
+          "polar_running_index",
+          "polar_training_load",
+          "polar_cardio_load",
+          "polar_muscle_load",
+          "polar_perceived_load",
           "withings_pulse_wave_velocity",
           "withings_metabolic_age",
           "dietary_energy_consumed",
@@ -32683,6 +32693,20 @@
               }
             ],
             "title": "Segments"
+          },
+          "provider_metrics": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/WorkoutMetricValue"
+            },
+            "type": "object",
+            "title": "Provider Metrics",
+            "description": "Figures the provider computed for this workout that have no field above, keyed by series type, as the provider reported them (Polar: running index, training load, cardio, muscle and perceived load). A figure the provider did not report is absent, never zero.",
+            "example": {
+              "polar_running_index": {
+                "unit": "score",
+                "value": 51
+              }
+            }
           }
         },
         "type": "object",
@@ -32865,6 +32889,24 @@
         ],
         "title": "WorkoutIntensity",
         "description": "Unified subjective intensity of a workout, independent of the reporting provider."
+      },
+      "WorkoutMetricValue": {
+        "properties": {
+          "value": {
+            "type": "number",
+            "title": "Value"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "unit"
+        ],
+        "title": "WorkoutMetricValue"
       },
       "WorkoutTotals": {
         "properties": {

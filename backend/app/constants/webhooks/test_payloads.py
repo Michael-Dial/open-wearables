@@ -383,6 +383,25 @@ EXAMPLE_PAYLOADS: dict[str, dict] = {
     WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING: _ts_payload(
         WebhookEventType.SERIES_GARMIN_VO2_MAX_CYCLING, "garmin_vo2_max_cycling", "garmin", "mL/kg/min", 49.0
     ),
+    WebhookEventType.SERIES_POLAR_AEROBIC_THRESHOLD: _ts_payload(
+        WebhookEventType.SERIES_POLAR_AEROBIC_THRESHOLD, "polar_aerobic_threshold", "polar", "bpm", 140.0
+    ),
+    WebhookEventType.SERIES_POLAR_ANAEROBIC_THRESHOLD: _ts_payload(
+        WebhookEventType.SERIES_POLAR_ANAEROBIC_THRESHOLD, "polar_anaerobic_threshold", "polar", "bpm", 170.0
+    ),
+    WebhookEventType.SERIES_POLAR_PROFILE_VO2_MAX: _ts_payload(
+        WebhookEventType.SERIES_POLAR_PROFILE_VO2_MAX, "polar_profile_vo2_max", "polar", "mL/kg/min", 50.0
+    ),
+    WebhookEventType.SERIES_POLAR_PROFILE_MAX_HEART_RATE: _ts_payload(
+        WebhookEventType.SERIES_POLAR_PROFILE_MAX_HEART_RATE, "polar_profile_max_heart_rate", "polar", "bpm", 190.0
+    ),
+    WebhookEventType.SERIES_POLAR_PROFILE_RESTING_HEART_RATE: _ts_payload(
+        WebhookEventType.SERIES_POLAR_PROFILE_RESTING_HEART_RATE,
+        "polar_profile_resting_heart_rate",
+        "polar",
+        "bpm",
+        60.0,
+    ),
     # Steps & calories
     WebhookEventType.SERIES_STEPS: _ts_payload(WebhookEventType.SERIES_STEPS, "steps", "garmin", "count", 8432.0),
     WebhookEventType.SERIES_ACTIVE_ENERGY: _ts_payload(

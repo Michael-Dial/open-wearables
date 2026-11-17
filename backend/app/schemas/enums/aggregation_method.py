@@ -113,6 +113,18 @@ AGGREGATION_METHOD_BY_TYPE: dict[SeriesType, AggregationMethod] = {
     SeriesType.garmin_fitness_age: AggregationMethod.AVG,
     SeriesType.garmin_body_battery: AggregationMethod.AVG,
     SeriesType.garmin_vo2_max_cycling: AggregationMethod.AVG,
+    # ── Polar-specific ──
+    SeriesType.polar_aerobic_threshold: AggregationMethod.AVG,
+    SeriesType.polar_anaerobic_threshold: AggregationMethod.AVG,
+    SeriesType.polar_profile_vo2_max: AggregationMethod.AVG,
+    SeriesType.polar_profile_max_heart_rate: AggregationMethod.AVG,
+    SeriesType.polar_profile_resting_heart_rate: AggregationMethod.AVG,
+    SeriesType.polar_running_index: AggregationMethod.AVG,
+    # A day's load is the sum of its sessions' loads.
+    SeriesType.polar_training_load: AggregationMethod.SUM,
+    SeriesType.polar_cardio_load: AggregationMethod.SUM,
+    SeriesType.polar_muscle_load: AggregationMethod.SUM,
+    SeriesType.polar_perceived_load: AggregationMethod.SUM,
     # ── Withings-specific ──
     SeriesType.withings_pulse_wave_velocity: AggregationMethod.AVG,
     SeriesType.withings_metabolic_age: AggregationMethod.AVG,
