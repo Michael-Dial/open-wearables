@@ -27,8 +27,27 @@ Both endpoints take an optional `connection_id`:
 
 | | |
 | --- | --- |
-| omitted | The user's existing `manual` connection, or a new one classified `reference` and labelled "Reference instruments (manual import)". A person can reclassify it afterwards; the import never puts the classification back. |
+| omitted | The user's `manual` connection classified `reference` (or their only `manual` connection, whatever it is classified), or a new one classified `reference` and labelled "Reference instruments (manual import)". A person can reclassify it afterwards; the import never puts the classification back. When the user holds several `manual` connections and not exactly one is classified `reference`, the import is a 409 and writes nothing. |
 | given | That connection, which must belong to this user and be a `manual` one. Anything else is a 404, never a different account. |
+
+### Records that are not a reference
+
+A device the participant wears, recorded live by a study's own app (a watch or band
+broadcasting its heart rate), has no provider either, but it is not a reference: filed
+under the `reference` connection it would be scored as the criterion. Give it a
+connection of its own classification, then name that connection on every import:
+
+```
+PUT /api/v1/users/{user_id}/import/manual/accounts/validation
+{ "account_label": "Devices under test (manual import)" }
+→ { "connection_id": "…", "account_type": "validation", "account_label": "…", "created": true }
+```
+
+One `manual` connection per classification; the call is idempotent and finds it again.
+The first non-reference connection comes with the `reference` one, so an import that
+names no connection never lands on a device under test. The body is optional; an
+existing connection keeps its label. A caller that depends on this checks for the
+route first: an instance without it answers 404 or 405.
 
 One connection holds every reference instrument of the user; the instruments are kept
 apart as data sources. `device_label` becomes the data source's `device_model` *and*
@@ -236,3 +255,5 @@ the reference. Send only one value per series per night, or the summary is their
 | 400 | A stage ends before it starts, neither or both of `stages` and `totals`, totals that do not fit the window, `sleep_end` before `sleep_start`, a naive timestamp, an unknown `series_type`, an empty label, a `provenance` that is not a slug. Nothing is written. |
 | 401 | No API key or developer token. |
 | 404 | The user does not exist, or `connection_id` is not a `manual` connection of this user. |
+| 409 | No `connection_id`, and the user holds several `manual` connections but not exactly one classified `reference`. Nothing is written. |
+| 422 | An `account_type` OW does not know (`PUT …/accounts/{account_type}`). |

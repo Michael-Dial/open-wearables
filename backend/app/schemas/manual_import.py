@@ -186,3 +186,19 @@ class ManualSeriesImportResult(BaseModel):
     received: int
     inserted: int = Field(description="Rows that did not exist at that (source, type, second).")
     updated: int = Field(description="Rows that already existed; refreshed where the value differed, kept otherwise.")
+
+
+class ManualAccountEnsure(BaseModel):
+    account_label: str | None = Field(
+        None,
+        min_length=1,
+        max_length=255,
+        description="The label a new account is given; an existing account keeps its own.",
+    )
+
+
+class ManualAccount(BaseModel):
+    connection_id: UUID
+    account_type: str | None
+    account_label: str | None
+    created: bool = Field(description="Whether this call created the account.")
