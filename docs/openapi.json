@@ -10456,7 +10456,7 @@
           "External: Manual Reference Import"
         ],
         "summary": "Import Manual Sleep Stages",
-        "description": "Import one scored night from a reference instrument that has no provider.\n\nFor PSG exports, Kubios outputs and EEG headband files: the stages land as one\nsleep record with `sleep_stage_intervals`, exactly as a night relayed through\nApple Health is stored, on the user's `manual` connection (created with\n`account_type` `reference` if there is none) and under a data source named by\n`device_label`. Read it back with `/users/{user_id}/events/sleep?include=stages`.\n\nThe instrument's stage labels are kept verbatim (`vendor_stage`); a label that is\nnot one of OW's words is filed with `stage` = `unknown` and no totals, because\nfolding N1/N2/N3 to light/deep is the consumer's rule. Re-importing the same\nnight (same `external_id`, or the same label and start when none is given)\nreplaces the record. Two instruments scoring one night are two records.\n\n400 when the body is inconsistent; 404 when `connection_id` is not a manual\nconnection of this user.",
+        "description": "Import one scored night from a reference instrument that has no provider.\n\nFor PSG exports, Kubios outputs and EEG headband files: the stages land as one\nsleep record with `sleep_stage_intervals`, exactly as a night relayed through\nApple Health is stored, on the user's `manual` connection (created with\n`account_type` `reference` if there is none) and under a data source named by\n`device_label`. Read it back with `/users/{user_id}/events/sleep?include=stages`.\n\nThe instrument's stage labels are kept verbatim (`vendor_stage`); a label that is\nnot one of OW's words is filed with `stage` = `unknown` and no totals, because\nfolding N1/N2/N3 to light/deep is the consumer's rule. Re-importing the same\nnight (same `external_id`, or the same label and start when none is given)\nreplaces the record. Two instruments scoring one night are two records.\n\n400 when the body is inconsistent; 404 when `connection_id` is not a manual\nconnection of this user; 409 when none is named and the user holds several\nmanual accounts but not exactly one classified `reference`.",
         "operationId": "import_manual_sleep_stages_api_v1_users__user_id__import_manual_sleep_stages_post",
         "security": [
           {
@@ -10551,7 +10551,7 @@
           "External: Manual Reference Import"
         ],
         "summary": "Import Manual Series",
-        "description": "Import time-series samples from a reference instrument that has no provider.\n\nRows go through the same upsert every provider uses, keyed on (data source,\nseries type, second), so sending a file twice changes nothing and a corrected\nvalue replaces the old one. They read back from `/users/{user_id}/timeseries`\nand the bulk export with `route` `manual.samples`, or `manual.windows` when\n`interval_seconds` was given, which is also stored on each row.\n\n404 when `connection_id` is not a manual connection of this user.",
+        "description": "Import time-series samples from a reference instrument that has no provider.\n\nRows go through the same upsert every provider uses, keyed on (data source,\nseries type, second), so sending a file twice changes nothing and a corrected\nvalue replaces the old one. They read back from `/users/{user_id}/timeseries`\nand the bulk export with `route` `manual.samples`, or `manual.windows` when\n`interval_seconds` was given, which is also stored on each row.\n\n404 when `connection_id` is not a manual connection of this user; 409 when\nnone is named and the user holds several manual accounts but not exactly one\nclassified `reference`.",
         "operationId": "import_manual_series_api_v1_users__user_id__import_manual_series_post",
         "security": [
           {
@@ -10603,6 +10603,116 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ManualSeriesImportResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblem"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/import/manual/accounts/{account_type}": {
+      "put": {
+        "tags": [
+          "External: Manual Reference Import"
+        ],
+        "summary": "Ensure Manual Account",
+        "description": "The user's `manual` account of one classification, created if there is none.\n\nFor records with no provider that are not a reference: a device the participant\nwears, recorded live by a study's own app, is a device under test (`validation`),\nand filing it under the `reference` account would score it as the criterion. Ensure\nits account here, then name it as `connection_id` on every import. Idempotent: one\naccount per classification, found again on every call. A caller that needs this\naccount checks for the route first; an instance without it answers 404 or 405, and\nwrites nothing.",
+        "operationId": "ensure_manual_account_api_v1_users__user_id__import_manual_accounts__account_type__put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "account_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AccountType"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ManualAccountEnsure"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualAccount"
                 }
               }
             }
@@ -24611,6 +24721,70 @@
         },
         "type": "object",
         "title": "Macros"
+      },
+      "ManualAccount": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Connection Id"
+          },
+          "account_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Type"
+          },
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created",
+            "description": "Whether this call created the account."
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id",
+          "account_type",
+          "account_label",
+          "created"
+        ],
+        "title": "ManualAccount"
+      },
+      "ManualAccountEnsure": {
+        "properties": {
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label",
+            "description": "The label a new account is given; an existing account keeps its own."
+          }
+        },
+        "type": "object",
+        "title": "ManualAccountEnsure"
       },
       "ManualSampleIn": {
         "properties": {

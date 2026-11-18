@@ -509,6 +509,101 @@ class TestSeries:
         assert _connections(client, user, api_key_header) == []
 
 
+class TestManualAccounts:
+    """A device the participant wears, recorded by a study's app, is not a reference.
+
+    Its rows filed under the `reference` account would be scored as the criterion, which
+    once written looks exactly like a reference night. So it gets a manual account of its
+    own classification, every write to it names that account, and a write that names none
+    still lands on the reference, or is refused when there is no single reference to land on.
+    """
+
+    def _ensure(
+        self, client: TestClient, user: User, headers: dict[str, str], account_type: str, **body: object
+    ) -> dict:
+        response = client.put(
+            f"/api/v1/users/{user.id}/import/manual/accounts/{account_type}", headers=headers, json=body or None
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def test_a_validation_account_is_its_own_and_found_again(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        reference = _import_series(client, user, api_key_header)["connection_id"]
+        first = self._ensure(client, user, api_key_header, "validation")
+        again = self._ensure(client, user, api_key_header, "validation", account_label="ignored")
+        assert first["created"] is True
+        assert again["created"] is False
+        assert first["connection_id"] == again["connection_id"] != reference
+        assert first["account_type"] == "validation"
+        assert first["account_label"] == "Devices under test (manual import)"
+        by_id = {c["id"]: c for c in _connections(client, user, api_key_header)}
+        assert by_id[reference]["account_type"] == "reference"
+        assert by_id[first["connection_id"]]["account_type"] == "validation"
+
+    def test_rows_named_to_it_land_there_and_unnamed_rows_stay_on_the_reference(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        reference = _import_series(client, user, api_key_header)["connection_id"]
+        device = self._ensure(client, user, api_key_header, "validation", account_label="Whoop 4.0")
+        assert device["account_label"] == "Whoop 4.0"
+        named = _import_series(
+            client, user, api_key_header, device_label="WHOOP 4C0123456", connection_id=device["connection_id"]
+        )
+        assert named["connection_id"] == device["connection_id"]
+        unnamed = _import_series(client, user, api_key_header, device_label="Polar H10 253AC921")
+        assert unnamed["connection_id"] == reference
+
+    def test_a_first_device_account_never_takes_an_unnamed_write(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        device = self._ensure(client, user, api_key_header, "validation")
+        types = sorted(c["account_type"] for c in _connections(client, user, api_key_header))
+        assert types == ["reference", "validation"]
+        unnamed = _import_series(client, user, api_key_header)
+        assert unnamed["connection_id"] != device["connection_id"]
+
+    def test_the_reference_is_found_by_its_type(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        reference = _import_series(client, user, api_key_header)["connection_id"]
+        found = self._ensure(client, user, api_key_header, "reference")
+        assert found == {
+            "connection_id": reference,
+            "account_type": "reference",
+            "account_label": found["account_label"],
+            "created": False,
+        }
+
+    def test_an_unnamed_write_is_refused_when_no_single_reference_answers(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        # Two manual accounts a person classified, neither of them the reference.
+        UserConnectionFactory(user=user, provider="manual", account_type="validation", access_token=None)
+        UserConnectionFactory(user=user, provider="manual", account_type="testing", access_token=None)
+        db.commit()
+        response = client.post(
+            f"/api/v1/users/{user.id}/import/manual/series",
+            headers=api_key_header,
+            json={"device_label": KUBIOS, "series_type": "heart_rate", "samples": _samples(5)},
+        )
+        assert response.status_code == 409, response.text
+        assert "connection_id" in response.json()["detail"]
+
+    def test_an_unknown_classification_or_user_is_refused(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        bad = client.put(f"/api/v1/users/{user.id}/import/manual/accounts/criterion", headers=api_key_header)
+        assert bad.status_code == 422, bad.text
+        missing = client.put(f"/api/v1/users/{uuid4()}/import/manual/accounts/validation", headers=api_key_header)
+        assert missing.status_code == 404, missing.text
+
+    def test_it_needs_a_credential(self, client: TestClient, db: Session, user: User) -> None:
+        response = client.put(f"/api/v1/users/{user.id}/import/manual/accounts/validation")
+        assert response.status_code == 401, response.text
+
+
 class TestManualProviderIsUnlisted:
     """A `manual` connection is an ordinary row to the code that walks every connection, and
     nothing a person connects or an admin configures."""

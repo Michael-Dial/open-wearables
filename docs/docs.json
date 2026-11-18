@@ -337,7 +337,8 @@
             "group": "Manual Reference Import",
             "pages": [
               "POST /api/v1/users/{user_id}/import/manual/sleep-stages",
-              "POST /api/v1/users/{user_id}/import/manual/series"
+              "POST /api/v1/users/{user_id}/import/manual/series",
+              "PUT /api/v1/users/{user_id}/import/manual/accounts/{account_type}"
             ]
           },
           {

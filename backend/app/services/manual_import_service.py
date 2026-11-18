@@ -13,7 +13,7 @@ also filed as `stage`, and totals are computed only when every label was. A fore
 alphabet gets null totals, never figures derived from a fold the consumer owns.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -22,6 +22,7 @@ from app.constants.sleep import SleepStageType
 from app.database import DbSession
 from app.models import DataSource, UserConnection
 from app.repositories.data_source_repository import DataSourceRepository
+from app.schemas.auth import ConnectionStatus
 from app.schemas.enums import AccountType, EventCategory, ProviderName, SampleRoute
 from app.schemas.manual_import import (
     ManualSeriesImport,
@@ -36,6 +37,7 @@ from app.schemas.model_crud.activities import (
     TimeSeriesSampleCreate,
 )
 from app.services.event_record_service import event_record_service
+from app.services.outgoing_webhooks.events import on_connection_created
 from app.services.timeseries_service import timeseries_service
 from app.services.user_connection_service import user_connection_service
 from app.services.user_service import user_service
@@ -51,6 +53,17 @@ _ASLEEP = (SleepStageType.SLEEPING, SleepStageType.LIGHT, SleepStageType.DEEP, S
 
 class ManualConnectionNotFoundError(LookupError):
     """The named connection is not a `manual` connection of this user (the route maps it to 404)."""
+
+
+class ManualConnectionAmbiguousError(LookupError):
+    """No connection was named and the user's manual accounts give no single answer (the route maps it to 409)."""
+
+
+# The label a manual account is born with when the caller names none.
+ACCOUNT_LABELS: dict[str, str] = {
+    AccountType.REFERENCE.value: REFERENCE_ACCOUNT_LABEL,
+    AccountType.VALIDATION.value: "Devices under test (manual import)",
+}
 
 
 def _canonical_stage(label: str) -> SleepStageType:
@@ -102,6 +115,17 @@ class ManualImportService:
         """
         user_service.get(db_session, user_id, raise_404=True)
         if connection_id is None:
+            accounts = user_connection_service.get_accounts_for_provider(db_session, user_id, MANUAL_PROVIDER)
+            if len(accounts) > 1:
+                # A second manual account (a device under test, `ensure_account`) means "the user's manual
+                # connection" no longer names one; the reference is the one an unnamed write always meant.
+                references = [a for a in accounts if a.account_type == AccountType.REFERENCE.value]
+                if len(references) != 1:
+                    raise ManualConnectionAmbiguousError(
+                        f"This user holds {len(accounts)} manual accounts and {len(references)} classified "
+                        "reference; name the one to file under with connection_id"
+                    )
+                return references[0]
             return user_connection_service.ensure_sdk_connection(
                 db_session,
                 user_id,
@@ -113,6 +137,67 @@ class ManualImportService:
         if connection is None or connection.provider != MANUAL_PROVIDER:
             raise ManualConnectionNotFoundError(f"No manual connection {connection_id} for this user")
         return connection
+
+    def ensure_account(
+        self, db_session: DbSession, user_id: UUID, account_type: AccountType, account_label: str | None = None
+    ) -> tuple[UserConnection, bool]:
+        """The user's manual account classified `account_type`, created if there is none: one per type.
+
+        A device the participant wears, recorded live by a study's app (a watch or band broadcasting
+        its heart rate), has no provider either, but it is not a reference: its rows filed under the
+        `reference` account would be scored as the criterion. So it gets its own manual account,
+        classified for what it is (`validation`), and every write names that account by
+        `connection_id`. Returns the account and whether it was created now. An account a person
+        reclassified is found under its new type; the oldest wins when two share a type. The first
+        non-reference account comes with the reference account, so a write that names no account
+        never lands on a device under test.
+        """
+        user_service.get(db_session, user_id, raise_404=True)
+        accounts = user_connection_service.get_accounts_for_provider(db_session, user_id, MANUAL_PROVIDER)
+        for account in accounts:
+            if account.account_type == account_type.value:
+                return account, False
+        if account_type == AccountType.REFERENCE and len(accounts) == 1 and accounts[0].account_type is None:
+            # An unclassified first account is the one unnamed reference writes have been filing under.
+            return accounts[0], False
+        if account_type != AccountType.REFERENCE and not accounts:
+            # A write that names no account takes the user's only manual account, whatever it is classified.
+            # Were this the first, an unnamed reference write would land on a device under test; the
+            # reference account is made first, so an unnamed write always has the reference to land on.
+            self.resolve_connection(db_session, user_id, None)
+        now = datetime.now(timezone.utc)
+        connection = UserConnection(
+            id=uuid4(),
+            user_id=user_id,
+            provider=MANUAL_PROVIDER,
+            account_email=None,
+            account_label=account_label
+            or ACCOUNT_LABELS.get(account_type.value, f"{account_type.value} (manual import)"),
+            account_type=account_type.value,
+            access_token=None,
+            refresh_token=None,
+            token_expires_at=None,
+            status=ConnectionStatus.ACTIVE,
+            created_at=now,
+            updated_at=now,
+        )
+        db_session.add(connection)
+        db_session.commit()
+        db_session.refresh(connection)
+        self.logger.info(
+            "Manual account created",
+            action="manual_account_created",
+            user_id=str(user_id),
+            connection_id=str(connection.id),
+            account_type=account_type.value,
+        )
+        on_connection_created(
+            user_id=user_id,
+            provider=MANUAL_PROVIDER,
+            connection_id=connection.id,
+            connected_at=connection.created_at.isoformat(),
+        )
+        return connection, True
 
     def _data_source_of(self, db_session: DbSession, user_id: UUID, connection: UserConnection, label: str) -> UUID:
         source = self.data_source_repo.get_by_connection_identity(
