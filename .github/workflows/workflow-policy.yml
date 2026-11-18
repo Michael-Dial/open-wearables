@@ -1,14 +1,14 @@
-# Written by Michael-Dial/app-store-release ci-policy/sync.py (policy 05258732bc). Do not edit this
+# Written by Michael-Dial/app-store-release ci-policy/sync.py (policy 760c0a7043). Do not edit this
 # copy: change ci-policy/ there and re-run sync.py. Checks every workflow in this repository
 # against the org's CI rules (the "CI workflow rules" section of CLAUDE.md).
 name: Workflow policy
 
 on:
   pull_request:
-    paths: [".github/workflows/**", ".github/ci-policy/**", "ci-policy/**"]
+    paths: [".github/workflows/**", ".github/ci-policy/**", ".github/scripts/**", "ci-policy/**", "ci-fallback/**"]
   push:
     branches: [main]
-    paths: [".github/workflows/**", ".github/ci-policy/**", "ci-policy/**"]
+    paths: [".github/workflows/**", ".github/ci-policy/**", ".github/scripts/**", "ci-policy/**", "ci-fallback/**"]
   workflow_dispatch:
 
 permissions:
@@ -35,6 +35,12 @@ jobs:
       - name: Test the policy and confirm this copy matches its source
         if: hashFiles('ci-policy/check_workflows.py') != ''
         run: |
+          python -m pip install --quiet -r ci-policy/requirements.txt
           python -m unittest discover -s ci-policy
+          python -m unittest discover -s ci-fallback
           cmp ci-policy/check_workflows.py .github/ci-policy/check_workflows.py \
             || { echo "::error::.github/ci-policy is stale; run ci-policy/sync.py apply ."; exit 1; }
+          for f in ios_route.py ios_remote.py circleci_run.py; do
+            cmp "ci-fallback/$f" ".github/scripts/$f" \
+              || { echo "::error::.github/scripts/$f is stale; run ci-policy/sync.py apply ."; exit 1; }
+          done
