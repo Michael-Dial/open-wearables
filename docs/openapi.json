@@ -14659,6 +14659,22 @@
               }
             }
           },
+          "429": {
+            "description": "Too many failed attempts for this email",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "title": "Too Many Requests",
+                  "status": 429,
+                  "detail": "Too many failed login attempts",
+                  "code": "TOO_MANY_REQUESTS"
+                }
+              }
+            }
+          },
           "4XX": {
             "description": "Client error",
             "content": {
@@ -19485,7 +19501,7 @@
           "System: Provider Webhooks (Deprecated)"
         ],
         "summary": "Garmin Webhook Ping Compat",
-        "description": "Deprecated: POST /api/v1/garmin/webhooks/ping.\n\nUse POST /api/v1/providers/garmin/webhooks instead.",
+        "description": "Deprecated: POST /api/v1/garmin/webhooks/ping.\n\nUse POST /api/v1/providers/garmin/webhooks/{callback token} instead.",
         "operationId": "garmin_webhook_ping_compat_api_v1_garmin_webhooks_ping_post",
         "responses": {
           "200": {
@@ -19530,7 +19546,7 @@
           "System: Provider Webhooks (Deprecated)"
         ],
         "summary": "Garmin Webhook Push Compat",
-        "description": "Deprecated: POST /api/v1/garmin/webhooks/push.\n\nUse POST /api/v1/providers/garmin/webhooks instead.",
+        "description": "Deprecated: POST /api/v1/garmin/webhooks/push.\n\nUse POST /api/v1/providers/garmin/webhooks/{callback token} instead.",
         "operationId": "garmin_webhook_push_compat_api_v1_garmin_webhooks_push_post",
         "responses": {
           "200": {

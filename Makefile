@@ -34,7 +34,7 @@ down:	## Kills running instance
 	$(DOCKER_COMMAND) down
 
 test:	## Run the tests.
-	cd backend && uv run pytest -v --cov=app
+	cd backend && uv run pytest --cov=app --failed-first
 
 migrate:  ## Apply all migrations
 	$(DOCKER_EXEC) $(ALEMBIC_CMD) upgrade head
@@ -55,6 +55,9 @@ downgrade:  ## Revert the last migration
 
 reset_db:  ## Truncate all tables in the database (WARNING: deletes all data)
 	$(DOCKER_EXEC) uv run python scripts/reset_database.py
+
+garmin_webhook_url:  ## Print the webhook URL to set for every data type in the Garmin portal
+	@$(DOCKER_EXEC) uv run python scripts/garmin_webhook_url.py
 
 frontend_install:  ## Install frontend dependencies
 	cd frontend && bun install --frozen-lockfile
