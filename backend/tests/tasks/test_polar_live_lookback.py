@@ -69,7 +69,7 @@ def _recharge(day: date) -> dict[str, Any]:
 class TestLateUploadedNight:
     @patch("app.integrations.celery.tasks.sync_vendor_data_task.SessionLocal")
     def test_a_night_uploaded_after_its_day_is_still_fetched_once(
-        self, mock_session_local: MagicMock, db: Session, mock_celery_tasks: MagicMock
+        self, mock_session_local: MagicMock, db: Session
     ) -> None:
         now = datetime.now(timezone.utc)
         night = (now - timedelta(days=2)).date()

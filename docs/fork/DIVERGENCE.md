@@ -6,12 +6,12 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-11-17 20:30 UTC |
-| Our ref | `HEAD` — baf518d8 (2026-11-17) Merge pull request #136 from Michael-Dial/claude/beautiful-pascal-elmet7 |
-| Upstream `main` | f0ab04ad (2026-11-17) feat: OAuth redirect allowlist (#2098) |
-| Last common commit | 7702bd9e (2026-11-16) feat: add the previous_day_activity health score category (#2070) |
-| Commits we are ahead | 269 |
-| Upstream commits not merged | 5 |
+| Generated | 2026-11-20 14:24 UTC |
+| Our ref | `HEAD` — 96ec21d6 (2026-11-18) Merge pull request #139 from Michael-Dial/claude/funny-cerf-flkdyc |
+| Upstream `main` | 3dd1eac0 (2026-11-20) test: fix flaky parallel test runs |
+| Last common commit | f0ab04ad (2026-11-17) feat: OAuth redirect allowlist (#2098) |
+| Commits we are ahead | 276 |
+| Upstream commits not merged | 38 |
 | Latest sync tag | upstream-sync/2026-11-04 |
 
 ## How to use this
@@ -28,17 +28,17 @@ git diff upstream-sync/2026-11-04..HEAD
 git show upstream/main:<path>
 
 # which of our commits touched a file
-git log --oneline 7702bd9e9e4314cea2cd44c96fa7726f5ae89766..HEAD -- <path>
+git log --oneline f0ab04adcaa25825530247fbd22c4cdef1012997..HEAD -- <path>
 ```
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
 
-> **5 upstream commits are not merged yet.** The table below compares against the
+> **38 upstream commits are not merged yet.** The table below compares against the
 > last common commit, so it does not include changes upstream has made since.
 
 ## Diverged files
 
-731 files: 3 deleted, 475 fork-only, 253 modified.
+736 files: 3 deleted, 479 fork-only, 254 modified.
 
 ### `backend`
 
@@ -57,7 +57,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/api/routes/v1/import_manual.py` | fork-only | — |
 | `backend/app/api/routes/v1/import_xml.py` | modified | +52/-1 |
 | `backend/app/api/routes/v1/meta.py` | modified | +5/-1 |
-| `backend/app/api/routes/v1/oauth.py` | modified | +211/-10 |
+| `backend/app/api/routes/v1/oauth.py` | modified | +214/-9 |
 | `backend/app/api/routes/v1/summaries.py` | modified | +83/-4 |
 | `backend/app/api/routes/v1/sync_data.py` | modified | +6/-1 |
 | `backend/app/api/routes/v1/timeseries.py` | modified | +144/-4 |
@@ -105,9 +105,9 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/models/workout_details.py` | modified | +6/-0 |
 | `backend/app/repositories/beat_capture_repository.py` | fork-only | — |
 | `backend/app/repositories/data_point_series_repository.py` | modified | +337/-82 |
-| `backend/app/repositories/data_source_repository.py` | modified | +1398/-343 |
+| `backend/app/repositories/data_source_repository.py` | modified | +1405/-342 |
 | `backend/app/repositories/device_repository.py` | fork-only | — |
-| `backend/app/repositories/event_record_repository.py` | modified | +699/-150 |
+| `backend/app/repositories/event_record_repository.py` | modified | +716/-161 |
 | `backend/app/repositories/health_score_repository.py` | modified | +164/-34 |
 | `backend/app/repositories/heart_rate_sensor_repository.py` | fork-only | — |
 | `backend/app/repositories/provider_credential_repository.py` | fork-only | — |
@@ -421,7 +421,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/repositories/test_data_source_per_account.py` | fork-only | — |
 | `backend/tests/repositories/test_data_source_repository.py` | modified | +368/-44 |
 | `backend/tests/repositories/test_device_type_priority_repository.py` | modified | +4/-2 |
-| `backend/tests/repositories/test_event_record_repository.py` | modified | +2/-0 |
+| `backend/tests/repositories/test_event_record_repository.py` | modified | +43/-1 |
 | `backend/tests/repositories/test_health_score_repository.py` | modified | +47/-0 |
 | `backend/tests/repositories/test_multi_account_connections.py` | fork-only | — |
 | `backend/tests/repositories/test_provider_priority_repository.py` | modified | +8/-4 |
@@ -482,8 +482,8 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `docs/dev-guides/workout-export.mdx` | fork-only | — |
 | `docs/developer-portal/settings/credentials.mdx` | modified | +41/-0 |
 | `docs/developer-portal/settings/providers.mdx` | modified | +36/-6 |
-| `docs/docs.json` | modified | +20/-1 |
-| `docs/openapi.json` | modified | +19638/-10110 |
+| `docs/docs.json` | modified | +21/-1 |
+| `docs/openapi.json` | modified | +20088/-10386 |
 | `docs/providers/coverage.mdx` | modified | +41/-5 |
 | `docs/providers/fitbit-api-integration.mdx` | modified | +1/-1 |
 | `docs/providers/garmin-api-integration.mdx` | modified | +18/-1 |
@@ -699,6 +699,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `frontend-react/src/lib/constants/upload.ts` | fork-only | — |
 | `frontend-react/src/lib/errors/api-error.ts` | fork-only | — |
 | `frontend-react/src/lib/errors/handler.ts` | fork-only | — |
+| `frontend-react/src/lib/pairing/links.ts` | fork-only | — |
 | `frontend-react/src/lib/query/client.ts` | fork-only | — |
 | `frontend-react/src/lib/query/keys.ts` | fork-only | — |
 | `frontend-react/src/lib/utils.ts` | fork-only | — |
@@ -787,6 +788,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | File | Status | +/- |
 |---|---|---|
 | `AGENTS.md` | modified | +63/-0 |
+| `CLAUDE.md` | modified | +29/-0 |
 | `Makefile` | modified | +13/-0 |
 | `docker-compose.prod.yml` | fork-only | — |
 ### `tooling`
@@ -794,8 +796,11 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | File | Status | +/- |
 |---|---|---|
 | `.ai/skills/upstream-sync/SKILL.md` | fork-only | — |
+| `.github/ci-policy/VERSION` | fork-only | — |
+| `.github/ci-policy/check_workflows.py` | fork-only | — |
 | `.github/workflows/build.yml` | fork-only | — |
 | `.github/workflows/ci.yml` | modified | +105/-0 |
 | `.github/workflows/promote-osu.yml` | fork-only | — |
 | `.github/workflows/publish-images.yml` | deleted | +0/-221 |
+| `.github/workflows/workflow-policy.yml` | fork-only | — |
 | `.gitignore` | modified | +12/-0 |

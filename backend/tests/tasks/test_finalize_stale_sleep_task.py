@@ -25,7 +25,6 @@ class TestFinalizeStaleSleepsTask:
         mock_session_local: MagicMock,
         mock_redis_client_func: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Verify task completes successfully when no active sleep sessions exist."""
         # Arrange
@@ -54,7 +53,6 @@ class TestFinalizeStaleSleepsTask:
         mock_load_state: MagicMock,
         mock_finish_sleep: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Verify task finalizes sleep sessions older than threshold."""
         # Arrange
@@ -106,7 +104,6 @@ class TestFinalizeStaleSleepsTask:
         mock_load_state: MagicMock,
         mock_finish_sleep: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Verify task does not finalize recent sleep sessions."""
         # Arrange
@@ -156,7 +153,6 @@ class TestFinalizeStaleSleepsTask:
         mock_redis_client_func: MagicMock,
         mock_load_state: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Verify task gracefully handles users with no sleep state."""
         # Arrange
@@ -189,7 +185,6 @@ class TestFinalizeStaleSleepsTask:
         mock_load_state: MagicMock,
         mock_finish_sleep: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Verify task processes multiple users with stale sessions."""
         # Arrange
@@ -270,7 +265,6 @@ class TestFinalizeStaleSleepsTask:
         mock_finish_sleep: MagicMock,
         mock_log_error: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Verify task continues processing other users if one finalization fails."""
         # Arrange
@@ -345,7 +339,6 @@ class TestFinalizeStaleSleepsTask:
         mock_redis_client_func: MagicMock,
         mock_load_state: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Verify task skips users whose sleep state cannot be parsed from Redis."""
         # Arrange

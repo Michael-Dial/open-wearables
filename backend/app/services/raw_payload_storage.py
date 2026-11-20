@@ -51,6 +51,10 @@ def configure(
     _s3_prefix = s3_prefix
     _fit_files_enabled = False
     _fit_files_dir = None
+    # A reconfiguration starts clean: a client left from an earlier S3 setup would
+    # otherwise keep serving get_fit_file after storage was turned off.
+    _s3_bucket = None
+    _s3_client = None
 
     # FIT files to the local filesystem: no S3 needed.
     if fit_files_enabled and fit_files_dir:

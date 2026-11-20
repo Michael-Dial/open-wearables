@@ -45,7 +45,6 @@ class TestTwoAccountsWithOneProvider:
         mock_get_provider: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         user = UserFactory()
         left = UserConnectionFactory(
@@ -74,7 +73,6 @@ class TestTwoAccountsWithOneProvider:
         mock_get_provider: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Two accounts under one "garmin" key would mean one silently overwrote the other."""
         user = UserFactory()
@@ -101,7 +99,6 @@ class TestTwoAccountsWithOneProvider:
         mock_get_provider: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """Existing consumers read result["providers_synced"]["garmin"]."""
         user = UserFactory()
@@ -123,7 +120,6 @@ class TestTwoAccountsWithOneProvider:
         mock_get_provider: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """A freshly connected account is backfilled without re-pulling its siblings."""
         user = UserFactory()
@@ -147,7 +143,6 @@ class TestTwoAccountsWithOneProvider:
         mock_get_provider: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
-        mock_celery_app: MagicMock,
     ) -> None:
         """A Celery worker reuses threads; a leaked scope would bind the next task."""
         user = UserFactory()

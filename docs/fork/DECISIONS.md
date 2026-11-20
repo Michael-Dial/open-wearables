@@ -2078,3 +2078,38 @@ summaries, workout statistics and `/timeseries` at `1day`/`1week`/`1month` from 
   "connect another" still works. Links copied before this release carry no token and stop working. The
   callback now returns to `redirect_uri` with `status`, so the React success page shows the error page
   unless `status=success`, and the user page toasts a failed "add account".
+
+## Garmin webhook token: the client ID still comes from stored provider credentials
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (`provider_credentials.text("garmin_client_id")` in
+  `garmin/webhook_handler.py`, in both `verify_signature` and `report_rejected_webhook_url`)
+- **Why**: upstream #2064 authenticates Garmin webhooks with a token in the callback path and logs a
+  rejected request that carries our `garmin-client-id`. Upstream reads the client ID from `settings`; the
+  fork keeps provider credentials editable from the dashboard, so both checks read the stored value.
+  The tokenless URLs stay accepted while `GARMIN_ACCEPT_WEBHOOKS_WITHOUT_TOKEN` is true (upstream's
+  default); set the token URL in the Garmin portal (`make garmin_webhook_url`), then turn it off.
+
+## Worker start script: upstream's version replaces the fork's
+
+- **Area**: backend
+- **Status**: superseded upstream
+- **On conflict**: take theirs (`scripts/start/worker.sh`, `tests/scripts/test_worker_start_script.py`)
+- **Why**: the fork stopped the container when either Celery worker exited, so a dead I/O worker could
+  not leave SDK uploads queued with nothing consuming them. Upstream #2100 does the same for any number of
+  workers (`wait -n`), with extension queues, so the fork's polling loop and its tests are dropped.
+
+## Test infrastructure follows upstream; raw payload storage reconfigures cleanly
+
+- **Area**: backend tests
+- **Status**: active
+- **On conflict**: merge both
+- **Why**: upstream now runs tests in parallel (xdist), in random order (pytest-randomly), strict, with the
+  database and Redis set up only for tests that ask. Fork-only tests were adjusted, not skipped: the
+  provider-credentials fixture asks for `db` only when a credential is read; removed fixtures
+  (`mock_celery_app`, `mock_celery_tasks`) are dropped from fork tests that only listed them; exact
+  response dicts include the fork's `created_by`; autospec'd mocks receive `self`. Random order exposed
+  `raw_payload_storage.configure()` keeping an S3 client from an earlier configuration, which
+  `get_fit_file` then read from with storage turned off; `configure()` now resets the client and bucket.
+  Production calls it once at startup, so behaviour there is unchanged.

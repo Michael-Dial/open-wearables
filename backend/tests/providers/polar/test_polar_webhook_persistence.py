@@ -106,7 +106,7 @@ def test_process_payload_commits_after_saving(db: Session) -> None:
         original_commit()
 
     with (
-        patch.object(Polar247Data, "_make_api_request", return_value=DAY_RESPONSE),
+        patch.object(Polar247Data, "_make_api_request", autospec=True, return_value=DAY_RESPONSE),
         patch.object(Polar247Data, "fetch_and_save_from_webhook", recording_fetch),
         patch.object(db, "commit", recording_commit),
     ):
@@ -125,7 +125,7 @@ def test_process_payload_rolls_back_on_error(db: Session) -> None:
     rolled_back: list[str] = []
 
     with (
-        patch.object(Polar247Data, "fetch_and_save_from_webhook", side_effect=RuntimeError("boom")),
+        patch.object(Polar247Data, "fetch_and_save_from_webhook", autospec=True, side_effect=RuntimeError("boom")),
         patch.object(db, "rollback", lambda: rolled_back.append("rollback")),
     ):
         result = handler.process_payload(db, _webhook_payload(), "test-trace")
@@ -143,7 +143,7 @@ def test_process_payload_passes_a_dead_grant_to_the_task(db: Session) -> None:
     dead_grant = ReauthRequiredError("polar", UUID(str(user.id)), "reconnection required")
 
     with (
-        patch.object(Polar247Data, "fetch_and_save_from_webhook", side_effect=dead_grant),
+        patch.object(Polar247Data, "fetch_and_save_from_webhook", autospec=True, side_effect=dead_grant),
         pytest.raises(ReauthRequiredError),
     ):
         handler.process_payload(db, _webhook_payload(), "test-trace")
@@ -154,7 +154,7 @@ def test_activity_summary_webhook_requests_activity_zones(db: Session) -> None:
     data_247 = PolarStrategy().data_247
     assert isinstance(data_247, Polar247Data)
 
-    with patch.object(Polar247Data, "_make_api_request", return_value={}) as request:
+    with patch.object(Polar247Data, "_make_api_request", autospec=True, return_value={}) as request:
         data_247.fetch_and_save_from_webhook(
             db, UUID(str(user.id)), PolarWebhookEventType.ACTIVITY_SUMMARY, "/v3/users/activities/2026-09-10"
         )
